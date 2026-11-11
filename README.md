@@ -11,7 +11,7 @@
 
 **picasso는 이러한 차이를 표준 계약, 능력 프로파일, 실행 근거로 다루는 로봇 미들웨어 PoC입니다.** 기종별 코드는 어댑터로 격리하고 공통 실행 구조를 공유합니다. 실물 장비가 없어도 `mimic`으로 계약과 장애 상황을 시험하고, 프로파일·바인딩 변경의 영향을 레지스트리에서 확인할 수 있습니다.
 
-이 저장소는 계약과 실행 코어를 제공합니다. MES 주문 접수와 운영 화면은 [picasso-ops](https://github.com/picasso-robotics/mission-ops), LLM을 활용한 근거 설명은 [picasso-narrator](https://github.com/picasso-robotics/incident-narrator)가 담당합니다. **실물 로봇 연결은 아직 검증하지 않았습니다.**
+이 저장소는 계약과 실행 코어를 제공합니다. MES 주문 접수와 운영 화면은 [mission-ops](https://github.com/picasso-robotics/mission-ops), LLM을 활용한 근거 설명은 [incident-narrator](https://github.com/picasso-robotics/incident-narrator)가 담당합니다. **실물 로봇 연결은 아직 검증하지 않았습니다.**
 
 ## 대표 시나리오
 
@@ -43,8 +43,8 @@
 | 저장소 | 책임 | 연결 방식 |
 |---|---|---|
 | **picasso** | 계약·능력 협상·공통 실행·어댑터·레지스트리 | 이 저장소 |
-| [picasso-ops](https://github.com/picasso-robotics/mission-ops) | 미션 정의와 상위 주문 매핑, 영속 접수, 공유 자원 조정, 운영 UI | 고정 커밋의 picasso를 라이브러리로 사용 |
-| [picasso-narrator](https://github.com/picasso-robotics/incident-narrator) | 사건과 운영 근거의 설명, 계산된 후보에 대한 권고 | 내보낸 파일과 별도 진단 계약 사용 |
+| [mission-ops](https://github.com/picasso-robotics/mission-ops) | 미션 정의와 상위 주문 매핑, 영속 접수, 공유 자원 조정, 운영 UI | 고정 커밋의 picasso를 라이브러리로 사용 |
+| [incident-narrator](https://github.com/picasso-robotics/incident-narrator) | 사건과 운영 근거의 설명, 계산된 후보에 대한 권고 | 내보낸 파일과 별도 진단 계약 사용 |
 
 picasso의 빌드와 코드는 두 소비자 저장소를 참조하지 않습니다. HTTP 주문 API는 Ops에 있으며, Core 자체가 MES·WMS 연결 제품을 제공하는 것은 아닙니다. 소비자별 기능과 검증 범위는 각 저장소의 README를 따릅니다.
 
@@ -106,7 +106,7 @@ JDK 21과 Docker가 필요합니다. Docker는 buf 래퍼와 Testcontainers의 P
 ./gradlew build -Dpicasso.negative.strict=true "-Dpicasso.buf=C:/Program Files/Git/bin/bash.exe|tools/buf"
 ```
 
-위 명령은 전체 빌드·검증 명령이며, 실행 시간과 Docker 준비가 필요합니다. 운영 화면으로 흐름을 확인하려면 [picasso-ops 실행 안내](https://github.com/picasso-robotics/mission-ops#띄우기)를 따르세요.
+위 명령은 전체 빌드·검증 명령이며, 실행 시간과 Docker 준비가 필요합니다. 운영 화면으로 흐름을 확인하려면 [mission-ops 실행 안내](https://github.com/picasso-robotics/mission-ops#띄우기)를 따르세요.
 
 문서와 구현의 수치·링크·완료 기준만 대조할 때는 다음과 같이 실행합니다.
 
@@ -152,4 +152,4 @@ CLI 옵션과 프로파일 입력은 [mimic](mimic/README.md), [client](client/R
 
 [Apache License 2.0](LICENSE). 벤더 독점 SDK는 포함하지 않습니다. 어댑터의 벤더 API 인용은 심볼명과 해시 매니페스트로 관리합니다.
 
-> 마지막 대조: 2026-11-10 · sha256:824e5eb6e5b1 · 열림: C-3, §15.81
+> 마지막 대조: 2026-11-11 · sha256:3d27d2e3f15b · 열림: C-3, §15.81
