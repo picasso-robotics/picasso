@@ -58,7 +58,7 @@ internal fun Middleware.sendCancel(execution: Execution) {
 }
 
 /** 도는 단위의 취소([sendCancel])에서 한쪽이 실패했다 — 보내는 중인 다른 쪽이 답해도 «닿았다» 로 내리지 않게 한다. */
-internal fun Middleware.markOtherFailed(execution: Execution) {
+private fun Middleware.markOtherFailed(execution: Execution) {
     execution.cancelInFlight?.takeIf { it.site == CancelFlight.Site.SEND }?.otherFailed = true
     execution.fleetCancelInFlight?.otherFailed = true
 }
@@ -67,7 +67,7 @@ internal fun Middleware.markOtherFailed(execution: Execution) {
  * 플릿에 운반 취소를 보낸다([sendCancel], §15.237). 포트가 잠금 밖에서 보내면([AmrFleetPort.issueCancel]) [FleetCancelIssue.Pending]
  * 을 받고 [Execution.fleetCancelInFlight] 에 둔다. 아니면 [AmrFleetPort.cancel] 을 지금 부른다. 이미 보내는 중이면 새로 보내지 않는다.
  */
-internal fun Middleware.cancelFleet(execution: Execution, handle: TransportHandle): FleetCancelIssue {
+private fun Middleware.cancelFleet(execution: Execution, handle: TransportHandle): FleetCancelIssue {
     if (execution.fleetCancelInFlight != null) return FleetCancelIssue.Pending
     val reference = execution.active?.takeIf { it.route == Route.FLEET }?.taskId ?: handle.id
     val result = fleet.issueCancel(reference, handle) ?: try {
@@ -79,7 +79,7 @@ internal fun Middleware.cancelFleet(execution: Execution, handle: TransportHandl
     return result
 }
 
-internal fun Middleware.cancelNotReached(execution: Execution, failure: RuntimeException) {
+private fun Middleware.cancelNotReached(execution: Execution, failure: RuntimeException) {
     execution.cancelUnsent = true
     val cause = "${failure::class.simpleName}: ${failure.message}"
     if (execution.notedCancelUnsent != cause) {
@@ -88,7 +88,7 @@ internal fun Middleware.cancelNotReached(execution: Execution, failure: RuntimeE
     }
 }
 
-internal fun Middleware.cancelReached(execution: Execution) {
+private fun Middleware.cancelReached(execution: Execution) {
     if (execution.cancelUnsent) {
         execution.cancelUnsent = false
         execution.notedCancelUnsent = null
@@ -129,7 +129,7 @@ internal fun Middleware.pollCancel(execution: Execution): Boolean {
     return robot || fleet
 }
 
-internal fun Middleware.pollFleetCancel(execution: Execution): Boolean {
+private fun Middleware.pollFleetCancel(execution: Execution): Boolean {
     val flight = execution.fleetCancelInFlight ?: return false
     val result = fleet.issueCancel(flight.reference, flight.handle)
         ?: FleetCancelIssue.Failed(IllegalStateException("플릿 포트가 보내는 중인 운반 ${flight.reference} 취소의 결과를 주지 않는다"))
@@ -147,7 +147,7 @@ internal fun Middleware.pollFleetCancel(execution: Execution): Boolean {
     return false
 }
 
-internal fun Middleware.pollRobotCancel(execution: Execution): Boolean {
+private fun Middleware.pollRobotCancel(execution: Execution): Boolean {
     val flight = execution.cancelInFlight ?: return false
     val result = robots.issueCancel(flight.robot, flight.handle)
         ?: CancelIssue.Failed(IllegalStateException("robot=${flight.robot} 의 포트가 보내는 중인 취소의 결과를 주지 않는다"))
@@ -158,7 +158,7 @@ internal fun Middleware.pollRobotCancel(execution: Execution): Boolean {
 }
 
 /** 잠금 밖에서 보낸 취소의 결과로 그 자리의 뒷일을 한다. 그 사이 단위가 다른 자리로 갔으면 결과만 버린다. */
-internal fun Middleware.settleCancel(execution: Execution, flight: CancelFlight, result: CancelIssue) {
+private fun Middleware.settleCancel(execution: Execution, flight: CancelFlight, result: CancelIssue) {
     val unit = flight.unitId?.let { id -> execution.units.firstOrNull { it.unitId == id } }
     when (flight.site) {
         CancelFlight.Site.SEND -> when (result) {

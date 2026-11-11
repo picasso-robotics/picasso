@@ -324,14 +324,14 @@ internal fun Middleware.attachTransportForCancel(execution: Execution): Boolean 
  * @return 늘 참 — 이번 라운드에 정착하지 않는다.
  */
 /** 미리 읽지 않는 플릿에는 지금 찾는다. 던지면 [FleetRead.Failed] 다. */
-internal fun Middleware.findNow(reference: String): FleetRead<TransportHandle?> = try {
+private fun Middleware.findNow(reference: String): FleetRead<TransportHandle?> = try {
     FleetRead.Read(fleet.find(reference), now(), now())
 } catch (e: RuntimeException) {
     FleetRead.Failed(e)
 }
 
 /** 미리 읽지 않는 플릿에는 지금 읽는다. 던지면 [FleetRead.Failed] 다. */
-internal fun Middleware.statusNow(handle: TransportHandle): FleetRead<TransportStatus> = try {
+private fun Middleware.statusNow(handle: TransportHandle): FleetRead<TransportStatus> = try {
     FleetRead.Read(fleet.status(handle), now(), now())
 } catch (e: RuntimeException) {
     FleetRead.Failed(e)

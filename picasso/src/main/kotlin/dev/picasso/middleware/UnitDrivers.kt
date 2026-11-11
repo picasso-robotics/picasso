@@ -28,7 +28,7 @@ import java.time.Duration
  * 2. **잴 수 있는데 안 움직이면 알린다.** 실패로 적지 않고 상태도 안 바꾼다. 느린 것과 멈춘 것을 우리가
  *    못 가르기 때문이고, 그래서 판단은 사람의 것이다.
  */
-internal fun Middleware.noteProgress(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse) {
+private fun Middleware.noteProgress(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse) {
     val basis = update.progressBasis
     val measured = basis.kind == ProgressKind.PROGRESS_KIND_MEASURED
     if (unit.progressObservable == null) {
@@ -139,7 +139,7 @@ internal fun Middleware.pumpRobotUnit(execution: Execution, unit: ExecutionUnit)
  *
  * @return 늘 거짓 — 단위는 이 펌프에서 종착하지 않는다.
  */
-internal fun Middleware.loseStream(execution: Execution, unit: ExecutionUnit, handle: TaskHandle, why: String): Boolean {
+private fun Middleware.loseStream(execution: Execution, unit: ExecutionUnit, handle: TaskHandle, why: String): Boolean {
     robots.release(execution.robotOf(unit), handle)
     execution.handle = null
     unit.state = UnitState.IN_DOUBT
@@ -161,7 +161,7 @@ internal fun Middleware.loseStream(execution: Execution, unit: ExecutionUnit, ha
  * 기대에 맞는지는 **설비가 새 버전의 기대에 대고** 판정한다 — 요구 등급이 E0 라도 설비를 묻고(`strict`), 설비가
  * 없으면 `UNVERIFIED` 다. 실패·중단은 버전과 무관한 물리 사실이라 그대로 옮기되 어느 버전의 것인지를 남긴다.
  */
-internal fun Middleware.settleLate(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse): Boolean {
+private fun Middleware.settleLate(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse): Boolean {
     unit.observeHold(update.hold)
     unit.annotate("late event: revision ${update.revision} ${update.state.name} arrived under revision ${unit.revision}")
     when (update.state) {
@@ -319,7 +319,7 @@ internal fun Middleware.pumpFleetUnit(execution: Execution, unit: ExecutionUnit)
     return true
 }
 
-internal fun Middleware.holdOf(status: TransportStatus, unit: ExecutionUnit): HoldState =
+private fun Middleware.holdOf(status: TransportStatus, unit: ExecutionUnit): HoldState =
     if (status.holding) {
         HoldState.newBuilder().setKind(HoldKind.HOLD_KIND_HOLDING).setObjectRef(status.observedContainer ?: unit.unitId).build()
     } else {

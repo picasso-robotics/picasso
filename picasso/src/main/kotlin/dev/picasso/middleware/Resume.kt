@@ -139,7 +139,7 @@ internal fun Middleware.restore(execution: Execution, record: JudgmentRecord): I
  * 판단은 보통의 보류와 같다. [resolve] 가 보류를 풀고 판단 기록에 실으며, 판단은 이 인시던트에 붙는다.
  * 봉인은 [resume] 이 끝에서 한 번 한다 — 첫 [pump] 전에도 판단 화면이 이 인시던트를 읽는다.
  */
-internal fun Middleware.reopenHold(execution: Execution, unit: ExecutionUnit, r: UnitRecord, verdict: UnitVerdict, at: Instant) {
+private fun Middleware.reopenHold(execution: Execution, unit: ExecutionUnit, r: UnitRecord, verdict: UnitVerdict, at: Instant) {
     execution.trail(
         RESUME_HOLD_REOPENED,
         "${unit.unitId}: 기록의 운영자 보류를 이 인스턴스의 인시던트로 다시 연다, robot=${execution.robotOf(unit)} " +
@@ -185,7 +185,7 @@ internal fun Middleware.rebuildFrom(execution: Execution, snapshots: Map<String,
 }
 
 /** [taskId] 가 [base] 의 태스크면 재작업 횟수, 아니면 널. 접미사가 없으면 0 이다. */
-internal fun Middleware.attemptOf(taskId: String, base: String): Int? {
+private fun Middleware.attemptOf(taskId: String, base: String): Int? {
     if (taskId == base) return 0
     if (!taskId.startsWith(base)) return null
     return RETRY_SUFFIX.matchEntire(taskId.substring(base.length))?.groupValues?.get(1)?.toIntOrNull()

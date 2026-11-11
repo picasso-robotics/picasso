@@ -150,7 +150,7 @@ internal fun Middleware.resolveDoubt(execution: Execution, unit: ExecutionUnit):
  *
  * @return 붙었는가.
  */
-internal fun Middleware.attachFromSnapshot(execution: Execution, unit: ExecutionUnit): Boolean {
+private fun Middleware.attachFromSnapshot(execution: Execution, unit: ExecutionUnit): Boolean {
     val robot = execution.robotOf(unit)
     val view = views[robot]?.takeIf { it.observable } ?: return false
     val state = view.tasks[unit.taskId] ?: return false
@@ -177,7 +177,7 @@ internal fun Middleware.attachFromSnapshot(execution: Execution, unit: Execution
  *
  * @return 운영자 보류에 두었는가.
  */
-internal fun Middleware.holdRevisionAhead(execution: Execution, unit: ExecutionUnit): Boolean {
+private fun Middleware.holdRevisionAhead(execution: Execution, unit: ExecutionUnit): Boolean {
     val view = views[execution.robotOf(unit)]?.takeIf { it.observable } ?: return false
     if (view.tasks[unit.taskId] == null) return false
     val held = view.taskRevisions[unit.taskId]?.takeIf { it > unit.revision } ?: return false

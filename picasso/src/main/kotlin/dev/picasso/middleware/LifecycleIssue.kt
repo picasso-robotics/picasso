@@ -155,7 +155,7 @@ internal fun Middleware.settleIssue(execution: Execution, flight: InFlight, issu
  * 첫 출발의 결과. 요청 시각은 포트가 실제로 보낸 시각으로 고친다 — 재기동 전 요청 시각을 넘겨받은 시도면 그대로 둔다(§15.221).
  * **보내는 중에 걸린 취소는 접수를 본 뒤 보낸다**(§15.237). 미확정이면 [resolveDoubt] 의 취소 길로, 보내지 않았으면 지울 것이 없다.
  */
-internal fun Middleware.settleStart(execution: Execution, unit: ExecutionUnit, flight: InFlight, issue: Issue) {
+private fun Middleware.settleStart(execution: Execution, unit: ExecutionUnit, flight: InFlight, issue: Issue) {
     val restore = checkNotNull(flight.restore)
     when (issue) {
         Issue.Pending -> Unit
@@ -236,7 +236,7 @@ internal fun Middleware.settleDispatch(execution: Execution, flight: FleetFlight
 }
 
 /** 첫 맡기기의 결과. 요청 시각과 보내는 중에 걸린 취소는 로봇의 첫 출발([settleStart])과 같은 규칙이다. */
-internal fun Middleware.settleFleetStart(execution: Execution, unit: ExecutionUnit, restore: StartRestore, issue: DispatchIssue) {
+private fun Middleware.settleFleetStart(execution: Execution, unit: ExecutionUnit, restore: StartRestore, issue: DispatchIssue) {
     when (issue) {
         DispatchIssue.Pending -> Unit
         is DispatchIssue.NotSent -> startNotSent(execution, unit, restore)
@@ -261,7 +261,7 @@ internal fun Middleware.settleFleetStart(execution: Execution, unit: ExecutionUn
  * **보내지 않았다**(§15.237) — 포트가 하위로 보내지 않은 것을 안다. 미확정이 아니다. 단위는 `PENDING` 그대로 두고 도는 단위를
  * 비운다. 다음 라운드가 결함·허가 게이트를 다시 지나 처음부터 낸다 — 요청 시각도 그때 다시 찍혀 실제로 보낸 시각이 된다.
  */
-internal fun Middleware.startNotSent(execution: Execution, unit: ExecutionUnit, restore: StartRestore) {
+private fun Middleware.startNotSent(execution: Execution, unit: ExecutionUnit, restore: StartRestore) {
     execution.active = null
     unit.taskId = restore.taskId
     unit.requestedAt = restore.requestedAt
@@ -274,7 +274,7 @@ internal fun Middleware.startNotSent(execution: Execution, unit: ExecutionUnit, 
  * **요청은 갔는데 답이 없다.** 접수됐는지 모른다 — 다시 보내지 않는다(물리 작업이 둘이 될 수 있다). 해소는 13.2 의 순서로
  * [resolveDoubt] 가 한다. 상류에는 미확정이라는 사실을 드러낸다(16장).
  */
-internal fun Middleware.startInDoubt(execution: Execution, unit: ExecutionUnit) {
+private fun Middleware.startInDoubt(execution: Execution, unit: ExecutionUnit) {
     unit.state = UnitState.IN_DOUBT
     execution.physicalState = PhysicalState.IN_DOUBT
     if (execution.notedDoubt != unit.unitId) {

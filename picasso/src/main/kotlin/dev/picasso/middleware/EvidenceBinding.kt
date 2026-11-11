@@ -206,7 +206,7 @@ internal fun Middleware.reworkAsNewAttempt(unit: ExecutionUnit) {
  * 이 실행에 있으며 `FAILED` 이고 태스크를 썼다(시도된 실패). 선행이 `UNVERIFIED`·`ABORTED` 이거나 점검 자신이 시도 뒤에 실패한
  * 단위는 이 경로의 범위 밖이다.
  */
-internal fun Middleware.skippedPair(execution: Execution, unit: ExecutionUnit): ExecutionUnit? {
+private fun Middleware.skippedPair(execution: Execution, unit: ExecutionUnit): ExecutionUnit? {
     if (unit.state != UnitState.FAILED || unit.failureClass != PREDECESSOR_NOT_DONE || unit.taskId.isNotEmpty()) return null
     val predecessor = execution.units.firstOrNull { it.unitId == unit.after } ?: return null
     if (predecessor.state != UnitState.FAILED || predecessor.taskId.isEmpty()) return null
@@ -258,7 +258,7 @@ internal fun Middleware.resolveSkipped(execution: Execution, unitId: String, dec
  * - 두 단위의 기체를 쥔 다른 활성 실행이 없어야 한다. `PARTIAL` 은 기체를 쥔 채라 그 사이 다른 실행이 서지 않지만 `FAILED` 는
  *   기체를 내주므로 그 사이 다른 실행이 섰을 수 있다.
  */
-internal fun Middleware.skippedReworkRefusal(execution: Execution, skipped: ExecutionUnit, travel: ExecutionUnit): String? {
+private fun Middleware.skippedReworkRefusal(execution: Execution, skipped: ExecutionUnit, travel: ExecutionUnit): String? {
     val state = execution.physicalState
     if (state == PhysicalState.ABORTED) return "취소한 실행의 대상은 재작업하지 않는다 — 새 작업 지시로 낸다"
     if ((state != PhysicalState.PARTIAL && state != PhysicalState.FAILED) || execution.units.any { it.state in OPEN_UNIT_STATES }) {
