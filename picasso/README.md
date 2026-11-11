@@ -12,7 +12,13 @@
 |---|---|
 | `Model.kt` | **정준 도메인 모델**: 2차원 상태기계(`PhysicalState` 및 `TaskState`), 4단계 근거 등급(`E0`~`E3`), `ExecutionUnit`, ISA-95 대응 `JobOrder`/`JobResponse`, `CancelReport` |
 | `LogicalCapability.kt` | 상위 논리적 케이퍼빌리티 인터페이스 및 3대 구현체 (`PrepareSequencedRack`, `DeliverContainer`, `InspectAsset`), 케이퍼빌리티 단위 타임아웃 구성 (유효 시간 윈도우 δ, `IN_DOUBT` 유예 기간, 진행 정체 유예) |
-| `Middleware.kt` | 코어 상태 엔진: 작업 수락 → 분해 및 조합 → 실행 디스패치 → 근거 결합 판정 → 상위 통보. 단일 틱 구동 함수 `pump()` 기반의 결정론적 전이. 공개 API 와 접합부를 잇는 조율은 여기 남고, 배정 게이트의 판정과 제안·인시던트 두 장부는 아래 셋에 위임합니다 |
+| `Middleware.kt` | 코어 상태 엔진: 작업 수락 → 분해 및 조합 → 실행 디스패치 → 근거 결합 판정 → 상위 통보. 단일 틱 구동 함수 `pump()` 기반의 결정론적 전이. 상태(실행 표·`Execution`), 라운드 순서(`pump`·`pumpRound`·`abort`), 관측·통보, 공개 API 와 접합부를 잇는 조율은 여기 남고, 상태 없는 하위 절차는 아래 아홉 파일에 같은 클래스의 확장(`fun Middleware.`)으로 둡니다. 배정 게이트의 판정과 제안·인시던트 두 장부는 아래 셋에 위임합니다 |
+| `Resume.kt` | 재개와 판단 기록의 비공개 절차(`Middleware` 확장) |
+| `Revision.kt` | 리비전 개정과 개정 갱신의 송신·정산(`Middleware` 확장) |
+| `LifecycleIssue.kt` · `LifecycleDoubt.kt` · `LifecycleCancelAttach.kt` · `LifecycleCancel.kt` | 명령 생애: 발행, 미확정 해소, 취소용 붙이기, 취소 송신·폴링. 서로를 부르는 하위 상태기계 하나를 넷으로 나눈 것(`Middleware` 확장) |
+| `ClockSkew.kt` | 지금 읽기와 발신자 시계 차 구간(`Middleware` 확장) |
+| `UnitDrivers.kt` | 경로별 단위 구동: 로봇 스킬, 설비 신호, 플릿 운반(`Middleware` 확장) |
+| `EvidenceBinding.kt` | 근거 결합과 운영자 판단의 보조(`Middleware` 확장) |
 | `AdmissionGate.kt` | 배정 게이트(설계안 §7): `admits` 와 그 아래 술어 다섯. 피어 시스템 접합부(배정·공간)의 작업 수락 판정 |
 | `RemedyDesk.kt` | 탐색 기록·제안·보류·진단·승인 장부와 승인 판정(설계안 §6.4, ADR 43·44·45). 승인 뒤의 작업 수락은 `Middleware` 가 조율 |
 | `IncidentLog.kt` | 인시던트 번들의 봉인·조회, 사후 검토의 기록과 지표, 운영자 판단 부착(설계안 §4) |
@@ -61,4 +67,4 @@
 
 본 모듈의 단위/통합 테스트는 외부 상위 시스템과 현장 설비를 모사한 테스트 대역(`CellMimic`, `AmrFleetMimic`)을 기반으로 동작합니다. 따라서 테스트 스위트의 성공은 설계 가정 하에서의 시스템 일관성을 증명하며, 물리 실제 하드웨어 환경과의 실제 연동 검증 등급은 [`docs/verification.md`](../docs/verification.md)의 10·11번 항목에 명시되어 있습니다.
 
-> 마지막 대조: 2026-11-05 · sha256:7ffa7897aec0 · 열림: §15.126
+> 마지막 대조: 2026-11-12 · sha256:7d16baa8f142 · 열림: §15.126
