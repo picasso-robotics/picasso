@@ -221,3 +221,27 @@
 - R1(취소 축)은 §2.2 의 «취소(R1)» 묶음과 송신 묶음의 취소 둘을 옮긴다. 표시 (a)(b)(e) 는 취소 축의 전이 표에 칸으로 드러날 것이다. R1 안에서 고치지 않는다(계획서 §5).
 - 표시 (c) 는 취소와 무관한 끊김 축의 일이다. 별도 fix 로 둔다.
 - 재설계 PR 은 `LifecycleCombinationTest` 를 바꾸지 않고 초록으로 지나야 한다. 바꿔야 하면 그 PR 은 동작을 바꾼 것이다.
+
+## 6. R1 뒤 (§15.301)
+
+R1 이 «취소(R1)» 묶음 아홉과 송신 묶음의 취소 둘을 `CancelAxes.kt` 의 네 축으로 바꿨다. §2.2 표의 행은 아래 축의 데이터가 됐다. 옛 이름은 시험이 읽도록 계산 속성(`get()`)으로 남았다.
+
+| 옛 필드 | 축 | 값 |
+|---|---|---|
+| `cancelRequested` `cancelRefusal` `lastCancel` | `cancelIntent: CancelIntent` | `None` · `Requested` · `Refused(code)` · `Reported(report)` |
+| `cancelUnsent` `notedCancelUnsent` `unreachedCancelSince` | `cancelDelivery: CancelDelivery` | `Clear` · `Unsent(cause, linkSince)` |
+| `doubtCancelHold` `unattachedCancelSince` `notedUnattached` | `cancelWait: CancelWait` | `None` · `Attaching(since, noted)` · `Held(unitId)` |
+| `cancelInFlight` `fleetCancelInFlight` | `cancelSending: CancelSending` | `Idle` · `Robot` · `Fleet` · `Both` |
+
+함께 서는 축의 조합(그래서 축이 넷이다):
+
+| 조합 | 서는 자리 |
+|---|---|
+| 보내는 중 × 닿지 않음 | 도는 단위의 취소를 로봇·플릿에 함께 보내고 한쪽이 던졌는데 다른 쪽이 나가는 중(`markOtherFailed`) |
+| 보내는 중 × 보류에 묶임 | 보류 중 다시 보내기(`resendHeldCancel`, 자리 `HELD`) |
+| 보내는 중 × 붙기 전 대기 | 붙기 전 취소가 잠금 밖에서 나가는 중(`attachForCancel`, 자리 `ATTACH`) |
+| 닿지 않음 × 보류에 묶임 | 보류에 묶이는 네 자리 전부(`holdUnsentCancel` `holdUnreachedCancel` `attachTransportForCancel` `waitUnattached`) |
+| 이상 없음 × 보류에 묶임 | 보류 중 다시 보낸 취소가 답을 받은 뒤(`heldCancelAnswered`) |
+| 보내는 중 × 응답 냄 | 끝난 실행에 남은 잠금 밖 취소(`forget` 이 이빅션을 막는다) |
+
+숨은 조합(옛 코드에서만 서고 새 타입은 걷는 것)은 §15.301 에 적었다. 걷힌 표시 `doubtCancelHold` 가 붙기 전 대기와 함께 서던 것, 끊김 시각이 닿은 뒤에도 남던 것이다.
