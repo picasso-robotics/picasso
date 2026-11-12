@@ -1,5 +1,6 @@
 package dev.picasso.middleware
 
+import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.contracts.v1.Event
 import dev.picasso.contracts.v1.Fault
 import dev.picasso.middleware.Middleware.Companion.ACKNOWLEDGED_FAULT_CLEARED
@@ -135,3 +136,52 @@ private fun Middleware.forgetAcknowledged(execution: Execution, robotId: String,
 /** 결함의 정체 — 모드 이름과 참조. 미믹의 `FaultRegistry` 가 같은 열쇠로 중복을 막는다. */
 internal fun faultKey(fault: Fault): String =
     fault.errorType + fault.referencesList.joinToString(prefix = "[", postfix = "]") { "${it.key}=${it.value}" }
+
+/**
+ * **연결이 끊기면 도는 단위의 결과는 미확정이다.** 계약이 OFFLINE 과 CONNECTION_BROKEN 을 가른다(완료 기준 5);
+ * HIBERNATING 은 침묵하지만 정상이다(§4.7). 되돌아오면 스냅샷으로 태스크 상태를 다시 세워 이어 간다 —
+ * 재실행이 아니다. 어느 쪽도 상류에 한 번씩 알린다(16장 — 결과가 아직 확인되지 않았다는 사실).
+ * **스냅숏을 못 읽는 것도 유예가 지나면 끊김이다**(§15.242). 하위가 다시 뜨지 않고 끊기면 포트가 던지지도 끊김을 말하지도 않는다.
+ *
+ * 라운드 머리([Middleware.pumpRound])가 송신 결과와 취소 다시 보내기 뒤, 미룬 갱신 앞에서 부른다(§15.306).
+ */
+internal fun Middleware.trackLink(execution: Execution) {
+    val runningRobotUnit = execution.active?.takeIf { it.route == Route.ROBOT && it.state == UnitState.RUNNING }
+    val view = runningRobotUnit?.let { views[execution.robotOf(it)] }
+    val unseenSince = view?.takeIf { !it.observable }?.lastObservedAt
+        ?.takeIf { !now().isBefore(it.plus(execution.capability.linkLossWindow)) }
+    if (unseenSince != null && runningRobotUnit != null && !execution.linkBroken) {
+        execution.linkBroken = true
+        execution.trail("LINK_BROKEN", "snapshot unreadable since $unseenSince while ${runningRobotUnit.unitId} is running — result unconfirmed")
+        execution.physicalState = PhysicalState.IN_DOUBT
+        notify(execution)
+    }
+    if (view != null && view.observable && runningRobotUnit != null) {
+        val down = view.connection == ConnectionState.CONNECTION_STATE_CONNECTION_BROKEN ||
+            view.connection == ConnectionState.CONNECTION_STATE_OFFLINE
+        if (down && !execution.linkBroken) {
+            execution.linkBroken = true
+            execution.trail("LINK_BROKEN", "${view.connection.name} while ${runningRobotUnit.unitId} is running — result unconfirmed")
+            execution.physicalState = PhysicalState.IN_DOUBT
+            notify(execution)
+        } else if (!down && execution.linkBroken) {
+            execution.linkBroken = false
+            val downstream = view.tasks[runningRobotUnit.taskId]?.name ?: "(not in snapshot)"
+            execution.trail("LINK_RESTORED", "snapshot says ${runningRobotUnit.taskId}=$downstream — resuming tracking, no re-execution")
+            runningRobotUnit.annotate("link restored; snapshot state $downstream")
+            execution.physicalState = if (execution.cancelRequested) PhysicalState.CANCELING else PhysicalState.RUNNING
+            notify(execution)
+        }
+    }
+    // **끊긴 채 단위가 미확정으로 갔어도 링크가 돌아오면 끊김을 걷는다**(§15.306 (c)). 결과의 확정은 미확정 해소가 한다 — 실행
+    // 상태는 그대로 둔다. 걷지 않으면 끊김 표시가 실행 끝까지 남아 사건 번들이 그것을 싣는다.
+    val doubtRobotUnit = execution.active?.takeIf { it.route == Route.ROBOT && it.state == UnitState.IN_DOUBT }
+    val doubtView = doubtRobotUnit?.let { views[execution.robotOf(it)] }
+    if (execution.linkBroken && doubtView != null && doubtView.observable &&
+        doubtView.connection != ConnectionState.CONNECTION_STATE_CONNECTION_BROKEN &&
+        doubtView.connection != ConnectionState.CONNECTION_STATE_OFFLINE
+    ) {
+        execution.linkBroken = false
+        execution.trail("LINK_RESTORED", "snapshot readable again while ${doubtRobotUnit.unitId} is in doubt — doubt resolution continues")
+    }
+}

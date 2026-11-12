@@ -96,6 +96,10 @@ internal fun Middleware.revise(
             } else if (execution.command.fleetInFlight?.unitId == unit.unitId) {
                 // **맡기는 중인 운반 단위도 바꾸지 않는다**(§15.237). 플릿 계약에 갱신이 없다 — 도는 운반과 같은 규칙이다.
                 unit
+            } else if (execution.cancelRequested && execution.unattached[unit.unitId] == unit.attempt) {
+                // **붙기 전 단위는 기체에서 돌고 있다**(§15.306 (e)). 취소가 걸렸으면 도는 단위와 같이 그대로 둔다(§15.256) — 리비전을
+                // 올리면 붙기 전 취소의 핸들과 지연 이벤트의 판정이 기체와 어긋난다.
+                unit
             } else {
                 unit.replannedAs(replanned[unit.unitId]).also { it.revision = order.version }
             }

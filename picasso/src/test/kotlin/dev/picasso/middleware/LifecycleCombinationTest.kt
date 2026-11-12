@@ -10,6 +10,7 @@ import java.nio.file.Path
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -18,8 +19,8 @@ import kotlin.test.assertTrue
  * **명령 생애 조합의 특성화 시험**(재설계 R0, `docs/superpowers/plans/2026-11-12-middleware-r0-state-map.md` §3).
  *
  * 취소 × 미확정 × 링크 끊김 × 재기동 × 개정 가운데 다른 시험이 덮지 않는 조합에서 **지금 동작을 그대로** 적는다. 옳은 동작을 적는
- * 시험이 아니다. 재설계 PR(R1~R5)은 이 시험을 바꾸지 않고 초록으로 지나야 한다. 틀려 보이는 동작은 `R0 표시` 주석으로 남겼고,
- * 고치는 것은 별도 fix 다 — 그 fix 는 이 시험의 해당 단언을 같은 PR 에서 바꾼다.
+ * 시험이 아니다. 재설계 PR(R1~R5)은 이 시험을 바꾸지 않고 초록으로 지났다. R0 이 틀려 보인다고 표시한 다섯((a)~(e))은 §15.306 의
+ * fix 가 고쳤고, 그 PR 이 해당 단언을 고친 동작으로 바꿨다(주석 `§15.306 (x)`). 동작을 바꾸는 PR 은 여기의 단언을 같은 PR 에서 바꾼다.
  *
  * 기체는 4족 픽스처 `quadruped-b`, 업무는 점검 순회(이동 뒤 점검, 두 지점)다. 나간 명령과 그 답은 계약 클라이언트 바로 위의 [Wire] 가 센다.
  * 끊긴 동안([Wire.down]) 출발·취소는 기체에 닿지 않고 던지며, 스냅숏은 못 읽고, 갱신 스트림은 받은 것에서 멈춘다.
@@ -41,6 +42,9 @@ class LifecycleCombinationTest {
         /** 참이면 다음 `StartTask` 를 기체에 닿게 한 뒤 답을 잃는다. */
         var loseNextStart = false
 
+        /** 참이면 링크가 살아 있어도 `CancelTask` 가 기체에 닿지 않고 던진다. */
+        var failCancels = false
+
         private val seen = mutableMapOf<String, List<WatchTaskResponse>>()
 
         override fun start(robotId: String, taskId: String, revision: Int, skillType: String, parameters: Map<String, String>): StartTaskResponse {
@@ -57,6 +61,7 @@ class LifecycleCombinationTest {
         override fun cancel(robotId: String, handle: TaskHandle): CancelTaskResponse {
             cancels += handle.taskId to handle.revision
             if (down) throw IllegalStateException("link down: cancel did not reach the robot")
+            if (failCancels) throw IllegalStateException("cancel unanswered")
             return delegate.cancel(robotId, handle).also {
                 cancelAnswers += if (it.hasRejection()) it.rejection.code.name else it.state.name
             }
@@ -142,7 +147,7 @@ class LifecycleCombinationTest {
     // ── 취소 × 미확정 × 링크 끊김 × 개정
 
     @Test
-    fun `끊긴 채 개정 갱신을 잃은 단위에 건 취소는 링크가 돌아와도 붙지 않고 단위는 운영자 보류에 실행은 중단으로 닫힌다`() {
+    fun `끊긴 채 개정 갱신을 잃은 단위에 건 취소는 링크가 돌아오면 끝난 태스크에 키로 붙어 그 종료로 판정하고 중단으로 끝난다`() {
         World().use { w ->
             val exec = w.runUntilInspecting()
             w.breakLink(w.mw, w.wire, exec)
@@ -162,30 +167,61 @@ class LifecycleCombinationTest {
             w.drive { !exec.physicalState.pumps }
 
             assertEquals(PhysicalState.ABORTED, exec.physicalState)
-            // R0 표시(a): 단위가 운영자 보류인데 실행은 중단으로 닫혔다. 끊긴 채 닿지 않은 취소의 보류(§15.243)는 실행을 보류에 둔다
-            // (InDoubtTest «끊긴 기체에 건 취소가 유예 안에 닿지 않으면…»). 이 길은 doubtCancelHold 를 세우지 않는다.
-            assertEquals(UnitState.OPERATOR_HOLD, exec.unit().state)
-            assertEquals(listOf(INSPECT), w.mw.incidents().map { it.unitId })
-            // R0 표시(b): 링크가 돌아온 뒤 키 취소는 기체에 닿아 INVALID_TRANSITION(이미 SUCCEEDED)으로 답받았는데 «닿지 못했다» 로 적는다.
-            assertTrue("REJECTION_CODE_INVALID_TRANSITION" in w.wire.cancelAnswers, w.wire.cancelAnswers.toString())
-            val report = assertNotNull(w.mw.lastCancel(exec.executionId))
-            assertEquals(Middleware.CANCEL_NOT_SENT, report.refusal)
-            assertEquals(INSPECT, report.inProgressUnit)
-            // R0 표시(c): 링크가 돌아왔는데 끊김 표시가 남는다. 걷는 자리가 RUNNING 인 로봇 단위만 본다.
-            assertTrue(exec.linkBroken)
             assertEquals("SUCCEEDED", w.state(TASK), "기체는 끊긴 동안 점검을 마쳤다")
+            // §15.306 (b): 이미 끝난 태스크라는 거절(INVALID_TRANSITION)은 기체가 그 태스크를 안다는 답이다 — 키 핸들로 붙어 그 종료를 읽는다.
+            // 옛 리비전의 완료라 지연 이벤트이고, 새 판의 기대를 설비가 확인하지 못해 UNVERIFIED 다.
+            assertEquals(listOf("REJECTION_CODE_INVALID_TRANSITION"), w.wire.cancelAnswers, "붙은 뒤에 취소를 또 보냈다")
+            assertEquals(UnitState.UNVERIFIED, exec.unit().state)
+            assertTrue(exec.unit().note!!.contains("late event: revision 1 TASK_STATE_SUCCEEDED"), exec.unit().note)
+            val report = assertNotNull(w.mw.lastCancel(exec.executionId))
+            assertEquals("REJECTION_CODE_INVALID_TRANSITION", report.refusal, "닿아서 거절된 취소를 «닿지 못했다» 로 적었다")
+            assertEquals(null to INSPECT, report.inProgressUnit to report.stoppedAfter, "끝까지 간 단위를 중단된 단위로 적었다")
+            assertEquals(emptyList(), w.mw.incidents())
+            // §15.306 (c): 링크가 돌아오면 미확정 단위의 끊김 표시도 걷는다.
+            assertFalse(exec.linkBroken, "링크가 돌아왔는데 끊김 표시가 남았다")
             assertEquals(listOf(1, 2), w.wire.starts.filter { it.first == TASK }.map { it.second }, "링크가 돌아온 뒤 조회(재전송)가 나갔다")
             // 건 순간은 붙어 있던 핸들(리비전 1)로 나가 끊긴 선에서 던지고, 그 뒤는 키로 지은 핸들(리비전 2)이다.
             assertEquals(TASK to 1, w.wire.cancels.first())
             assertTrue(w.wire.cancels.drop(1).all { it == TASK to 2 }, "키 취소의 리비전: ${w.wire.cancels}")
-            assertTrue(exec.unit().note!!.contains("lookup unanswered within grace"), exec.unit().note)
+        }
+    }
+
+    @Test
+    fun `끊긴 채 개정 갱신을 잃은 단위에 건 취소가 링크가 돌아와도 닿지 않으면 단위와 실행을 운영자 보류에 둔다`() {
+        World().use { w ->
+            val exec = w.runUntilInspecting()
+            w.breakLink(w.mw, w.wire, exec)
+            w.mw.revise()
+            assertEquals(UnitState.IN_DOUBT, exec.unit().state)
+            assertNotNull(exec.handle, "시험의 전제: 갱신 전의 핸들이 남아 있다")
+
+            assertTrue(w.mw.cancel(exec.executionId))
+            w.wire.failCancels = true
+            w.wire.down = false
+            w.drive { exec.physicalState == PhysicalState.OPERATOR_HOLD || !exec.physicalState.pumps }
+
+            // §15.306 (a): 핸들이 있어도 그 핸들로 보낸 취소가 닿지 않은 채면, 미확정 유예가 끝나 단위를 보류에 둘 때 실행도 운영자 판단을
+            // 기다린다. 앞에서는 실행이 중단으로 닫혀 기체가 멈췄는지 모르는 채 내줬다.
+            assertEquals(PhysicalState.OPERATOR_HOLD, exec.physicalState, "닿지 않은 취소를 든 채 실행을 닫았다")
+            assertEquals(UnitState.OPERATOR_HOLD, exec.unit().state)
+            assertEquals(null, w.mw.lastCancel(exec.executionId), "닿지 않은 취소에 취소 응답이 나갔다")
+            assertEquals(listOf(INSPECT), w.mw.incidents().map { it.unitId })
+            assertTrue(exec.unit().note!!.contains("the cancel sent was not answered"), exec.unit().note)
+            // §15.306 (c): 단위가 미확정인 채 링크가 돌아와도 끊김 표시를 걷는다.
+            assertFalse(exec.linkBroken, "링크가 돌아왔는데 끊김 표시가 남았다")
+            assertTrue(exec.eventTrail.any { it.kind == Middleware.CANCEL_UNSENT }, exec.eventTrail.map { it.kind }.toString())
+
+            assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, INSPECT, OperatorDecision.CONFIRM_DONE, OPERATOR))
+            w.drive { !exec.physicalState.pumps }
+            assertEquals(PhysicalState.ABORTED, exec.physicalState)
+            assertEquals(Middleware.CANCEL_NOT_SENT, assertNotNull(w.mw.lastCancel(exec.executionId)).refusal)
         }
     }
 
     // ── 취소 × 재기동 × 개정 (붙기 전)
 
     @Test
-    fun `다시 지은 실행에 붙기 전 개정이 오고 취소가 걸리면 새 리비전으로 붙어 그 핸들로 취소하고 중단으로 끝난다`() {
+    fun `다시 지은 실행에 붙기 전 개정이 오고 취소가 걸리면 기체가 든 리비전의 핸들로 취소하고 중단으로 끝난다`() {
         World().use { w ->
             val (again, wire, exec) = w.rebuildWhileInspecting()
 
@@ -205,16 +241,16 @@ class LifecycleCombinationTest {
             assertEquals(PhysicalState.ABORTED, exec.physicalState)
             assertEquals(UnitState.ABORTED, exec.unit().state)
             assertEquals("CANCELLED", w.state(TASK))
-            // R0 표시(d): 기체에서 도는 것은 리비전 1 인데 단위는 2 이고 취소 핸들도 2 다. 미믹이 받아 주어 끝이 맞는다.
+            // §15.306 (d): 단위는 개정으로 리비전 2 지만 기체에서 도는 것은 1 이다 — 취소 핸들은 기체의 스냅숏이 보인 리비전으로 짓는다.
             assertEquals(2, exec.unit().revision)
-            assertEquals(listOf(TASK to 2), wire.cancels)
+            assertEquals(listOf(TASK to 1), wire.cancels)
             assertEquals(emptyList(), again.incidents())
             assertEquals(INSPECT, assertNotNull(again.lastCancel(exec.executionId)).inProgressUnit)
         }
     }
 
     @Test
-    fun `다시 지은 실행에 붙기 전 취소를 건 뒤 개정이 와도 붙기 전 단위의 리비전은 오르고 그 핸들로 취소해 중단으로 끝난다`() {
+    fun `다시 지은 실행에 붙기 전 취소를 건 뒤 개정이 오면 붙기 전 단위를 그대로 두고 기체의 리비전으로 취소해 중단으로 끝난다`() {
         World().use { w ->
             val (again, wire, exec) = w.rebuildWhileInspecting()
 
@@ -222,13 +258,14 @@ class LifecycleCombinationTest {
             again.revise()
             assertEquals(PhysicalState.CANCELING, exec.physicalState)
             assertEquals(UnitState.PENDING, exec.unit().state)
-            // R0 표시(e): 취소가 먼저 걸렸는데 리비전이 오른다. §15.256 의 «취소가 걸렸으면 그대로 둔다» 는 RUNNING·IN_DOUBT 만 본다.
-            assertEquals(2, exec.unit().revision)
+            // §15.306 (e): 취소가 먼저 걸렸으면 붙기 전 단위도 도는 단위처럼 개정이 바꾸지 않는다(§15.256).
+            assertEquals(1, exec.unit().revision)
+            assertEquals(2, exec.version, "시험의 전제: 개정은 받았다")
             assertEquals(emptyList(), wire.cancels, "붙기 전이라 취소가 아직 안 나갔다")
 
             again.pump()
             assertEquals(UnitState.RUNNING, exec.unit().state)
-            assertEquals(listOf(TASK to 2), wire.cancels)
+            assertEquals(listOf(TASK to 1), wire.cancels)
 
             w.drive(again) { !exec.physicalState.pumps }
             assertEquals(PhysicalState.ABORTED, exec.physicalState)
@@ -279,7 +316,7 @@ class LifecycleCombinationTest {
     // ── 다섯 축 전부
 
     @Test
-    fun `다시 지은 실행이 끊긴 채 개정 갱신을 잃고 취소가 걸리면 링크가 돌아와도 단위는 운영자 보류에 실행은 중단으로 닫힌다`() {
+    fun `다시 지은 실행이 끊긴 채 개정 갱신을 잃고 취소가 걸리면 링크가 돌아온 뒤 끝난 태스크에 키로 붙어 중단으로 끝난다`() {
         World().use { w ->
             val (again, wire, exec) = w.rebuildWhileInspecting()
             again.pump()
@@ -300,12 +337,12 @@ class LifecycleCombinationTest {
             w.drive(again) { !exec.physicalState.pumps }
 
             assertEquals(PhysicalState.ABORTED, exec.physicalState)
-            // R0 표시(a)(b)(c): 앞의 끊김 시험과 같다.
-            assertEquals(UnitState.OPERATOR_HOLD, exec.unit().state)
-            assertEquals(listOf(INSPECT), again.incidents().map { it.unitId })
-            assertTrue("REJECTION_CODE_INVALID_TRANSITION" in wire.cancelAnswers, wire.cancelAnswers.toString())
-            assertEquals(Middleware.CANCEL_NOT_SENT, assertNotNull(again.lastCancel(exec.executionId)).refusal)
-            assertTrue(exec.linkBroken)
+            // §15.306 (b)(c): 앞의 끊김 시험과 같다.
+            assertEquals(UnitState.UNVERIFIED, exec.unit().state)
+            assertEquals(emptyList(), again.incidents())
+            assertEquals(listOf("REJECTION_CODE_INVALID_TRANSITION"), wire.cancelAnswers)
+            assertEquals("REJECTION_CODE_INVALID_TRANSITION", assertNotNull(again.lastCancel(exec.executionId)).refusal)
+            assertFalse(exec.linkBroken)
             assertEquals("SUCCEEDED", w.state(TASK))
             assertEquals(listOf(TASK to 2, TASK to 2), wire.starts, "링크가 돌아온 뒤 조회(재전송)가 나갔다")
         }
@@ -316,6 +353,9 @@ class LifecycleCombinationTest {
         const val ORDER = "PATROL-9"
         const val INSPECT = "PUMP-01"
         const val TASK = "$ORDER#$INSPECT"
+
+        /** 판단하는 사람 — 운영자 판단은 사람만 낸다(ADR 47). */
+        val OPERATOR = Approver("op-1", ApproverKind.PERSON)
 
         fun order(version: Int) = JobOrder(
             jobOrderId = ORDER,
