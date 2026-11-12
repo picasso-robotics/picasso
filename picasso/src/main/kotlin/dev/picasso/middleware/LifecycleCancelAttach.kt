@@ -30,7 +30,7 @@ import dev.picasso.middleware.Middleware.Companion.UNATTACHED_UNSENT_CAUSE
  */
 internal fun CommandLifecycle.holdUnsentCancel(unit: ExecutionUnit) {
     with(mw) {
-        val keyed = unit.route == Route.ROBOT
+        val keyed = RouteDriver.of(unit.route).cancelsByKey
         val cause = if (keyed) KEYED_UNSENT_CAUSE else HOLD_UNSENT_CAUSE
         cancelDelivery = cancelDelivery.unsent(cause)
         cancelWait = CancelWait.Held(unit.unitId)
@@ -93,7 +93,7 @@ internal fun CommandLifecycle.attachByKey(unit: ExecutionUnit, handle: TaskHandl
  */
 internal fun CommandLifecycle.resendHeldCancel(unit: ExecutionUnit) {
     with(mw) {
-        if (unit.route != Route.ROBOT) return
+        if (!RouteDriver.of(unit.route).cancelsByKey) return
         val robot = execution.robotOf(unit)
         val view = views[robot]?.takeIf { it.observable } ?: return
         val state = view.tasks[unit.taskId] ?: return

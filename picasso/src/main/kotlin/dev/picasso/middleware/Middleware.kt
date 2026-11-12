@@ -1112,11 +1112,7 @@ class Middleware(
             val settled = when {
                 active.state == UnitState.IN_DOUBT -> execution.command.resolveDoubt(active)
                 active.state == UnitState.VERIFYING -> checkEvidence(execution, active)
-                else -> when (active.route) {
-                    Route.ROBOT -> execution.command.holdUnreachedCancel(active) || pumpRobotUnit(execution, active)
-                    Route.FLEET -> pumpFleetUnit(execution, active)
-                    Route.SIGNAL -> pumpSignalUnit(execution, active)
-                }
+                else -> RouteDriver.of(active.route).pump(execution.command, active)
             }
             if (!settled) return
             // 미룬 갱신이 끝내 안 나갔다 — 단위는 옛 리비전으로 끝났고 그 결과는 지연 이벤트로 새 판의 기대에 대고 확인됐다.
@@ -1145,7 +1141,7 @@ class Middleware(
         if (execution.cancelRequested && !execution.command.cancelWaitsOnHeldDoubt()) {
             // 다시 지은 실행이 아직 붙지 않은 태스크가 기체에 있으면 그것부터 멈춘다. 붙지 않은 채 정착하면 기체가 그 태스크를 하는
             // 동안 실행이 기체를 내준다. 플릿에 맡긴 운반도 같다(§15.254).
-            if (execution.command.attachForCancel() || execution.command.attachTransportForCancel()) return
+            if (RouteDriver.ATTACH_ORDER.any { it.attachForCancel(execution.command) }) return
             abort(execution, inProgress = null, hold = null, cleanup = "nothing_to_clean")
             return
         }
@@ -1685,7 +1681,7 @@ class Middleware(
             blockedBy = execution.blockedBy.map { canonicalClassOf(it) },
             // 기체 연결은 도는 단위가 묶인 기체의 것이다. 도는 단위가 없으면 실행의 기체다.
             connection = (views[execution.active?.let(execution::robotOf) ?: execution.robotId]?.takeIf { it.observable }?.connection ?: ConnectionState.CONNECTION_STATE_UNSPECIFIED).name,
-            autoResolvesInDoubt = units.all { lookupOf(it.route) == ExecutionLookup.CLIENT_REFERENCE },
+            autoResolvesInDoubt = units.all { RouteDriver.of(it.route).lookupKind(this) == ExecutionLookup.CLIENT_REFERENCE },
         )
         outbox += response
         execution.noticed.set(Notice.Attention, Attention.of(response.physicalState, response.blockedBy, response.inDoubtUnits))

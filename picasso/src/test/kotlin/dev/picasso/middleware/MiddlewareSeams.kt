@@ -31,7 +31,7 @@ internal object MiddlewareSeams {
             "resolveSkipped", "skippedReworkRefusal",
         ),
         "CommandPorts.kt" to listOf(
-            "transportOrderOf", "issueStart", "issueDispatch", "handleFor", "lookupOf", "unansweredAttach", "findNow", "statusNow",
+            "transportOrderOf", "issueStart", "issueDispatch", "handleFor", "unansweredAttach", "findNow", "statusNow",
         ),
     )
 

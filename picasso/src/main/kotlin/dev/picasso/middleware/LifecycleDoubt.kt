@@ -36,23 +36,14 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
     with(mw) {
         // **보내는 중인 조회가 있으면 그 결과부터 받는다**(§15.237). 그동안 스냅숏 부착도 키 취소도 하지 않는다 — 조회의 답이 이 단위를
         // 붙이거나 거부로 끝낼 수 있다.
-        inFlight?.takeIf { it.kind == InFlight.Kind.LOOKUP && it.unitId == unit.unitId }?.let { flight ->
-            val settled = settleIssue(flight, issueStart(flight))
-            if (inFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
-            return settled
-        }
-        fleetInFlight?.takeIf { it.kind == FleetFlight.Kind.LOOKUP && it.unitId == unit.unitId }?.let { flight ->
-            val settled = settleDispatch(flight, issueDispatch(flight.order))
-            if (fleetInFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
-            return settled
-        }
-        val lookup = lookupOf(unit.route)
+        val driver = RouteDriver.of(unit.route)
+        driver.settlePendingLookup(this@resolveDoubt, unit)?.let { return it }
+        val lookup = driver.lookupKind(mw)
         // ⓪ 스냅숏 부착 — 붙었으면 이 라운드는 여기까지다. 다음 라운드의 [pumpRobotUnit] 이 처음부터 되짚는다. 기체가 더 높은
-        // 리비전을 들었으면 붙지도 묻지도 않고 운영자에게 간다.
-        if (unit.route == Route.ROBOT && !execution.cancelRequested && holdRevisionAhead(unit)) return true
-        if (unit.route == Route.ROBOT && attachFromSnapshot(unit)) return false
+        // 리비전을 들었으면 붙지도 묻지도 않고 운영자에게 간다. 로봇 경로만 그 길이 있다([RouteDriver.resolveBeforeLookup]).
+        driver.resolveBeforeLookup(this@resolveDoubt, unit)?.let { return it }
         // ⓪′ 키로 지은 핸들로 취소 — 받으면 붙는다. 기체가 모른다고 해도 쉬고 있다는 증거가 아니다 — 아래 관측과 운영자로 간다.
-        val cancelling = unit.route == Route.ROBOT && execution.cancelRequested
+        val cancelling = driver.cancelsByKey && execution.cancelRequested
         // 잠금 밖에서 보내는 중이면 그 답을 받을 때까지 미확정인 채 둔다 — 아래 관측이 먼저 종결하면 붙을 자리가 사라진다.
         if (cancelling && (cancelByKey(unit) || execution.cancelInFlight != null)) return false
 
@@ -70,35 +61,13 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
             // 그래서 새 발행과 같은 게이트를 지난다(ADR 52). 막히면 조회 횟수를 쓰지 않고 미확정인 채 기다린다 — 유예가 다 갔어도
             // 한 번도 못 물었으면 계속 기다린다. 안 그러면 허가가 막은 동안에 운영자 판단으로 넘어가,
             // «하류가 답하지 않았다» 가 아닌 것이 그렇게 적힌다.
-            if (unit.route == Route.ROBOT && !issuable(execution, unit, WithheldIssue.IN_DOUBT_LOOKUP)) {
+            if (!driver.lookupPermitted(this@resolveDoubt, unit)) {
                 execution.physicalState = PhysicalState.IN_DOUBT
                 return false
             }
             unit.lookups += 1
             unit.lastLookupAt = now()
-            if (unit.route == Route.ROBOT) {
-                val flight = InFlight(
-                    InFlight.Kind.LOOKUP, unit.unitId, execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType,
-                    withOptionals(unit, unit.parameters), previous = unit.revision, restore = null,
-                )
-                val settled = settleIssue(flight, issueStart(flight))
-                if (inFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
-                return settled
-            }
-            if (unit.route == Route.FLEET) {
-                val flight = FleetFlight(FleetFlight.Kind.LOOKUP, unit.unitId, transportOrderOf(unit), restore = null)
-                val settled = settleDispatch(flight, issueDispatch(flight.order))
-                if (fleetInFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
-                return settled
-            }
-            val found = try {
-                lookupDownstream(unit)
-            } catch (_: CommandNotSent) {
-                return lookupNotSent(unit)
-            } catch (_: RuntimeException) {
-                false
-            }
-            return lookupFound(unit, found)
+            return driver.sendLookup(this@resolveDoubt, unit)
         }
 
         // ② 물리 관측 — 요청 시각부터의 신호만 이 요청의 것이다.
@@ -151,7 +120,7 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
  *
  * @return 붙었는가.
  */
-private fun CommandLifecycle.attachFromSnapshot(unit: ExecutionUnit): Boolean {
+internal fun CommandLifecycle.attachFromSnapshot(unit: ExecutionUnit): Boolean {
     with(mw) {
         val robot = execution.robotOf(unit)
         val view = views[robot]?.takeIf { it.observable } ?: return false
@@ -180,7 +149,7 @@ private fun CommandLifecycle.attachFromSnapshot(unit: ExecutionUnit): Boolean {
  *
  * @return 운영자 보류에 두었는가.
  */
-private fun CommandLifecycle.holdRevisionAhead(unit: ExecutionUnit): Boolean {
+internal fun CommandLifecycle.holdRevisionAhead(unit: ExecutionUnit): Boolean {
     with(mw) {
         val view = views[execution.robotOf(unit)]?.takeIf { it.observable } ?: return false
         if (view.tasks[unit.taskId] == null) return false
@@ -245,7 +214,7 @@ internal fun CommandLifecycle.lookupFound(unit: ExecutionUnit, found: Boolean): 
     }
 }
 
-/** [lookupDownstream] 의 로봇 경로가 받은 답을 적는다 — 핸들이면 잡고 참, 거부면 단위를 실패나 운영자 보류로 적고 거짓. */
+/** 로봇 출발·조회([settleStart]·[settleLookup])가 받은 답을 적는다 — 핸들이면 잡고 참, 거부면 단위를 실패나 운영자 보류로 적고 거짓. */
 internal fun CommandLifecycle.applyStartResponse(unit: ExecutionUnit, response: StartTaskResponse): Boolean = with(mw) {
     if (response.hasHandle()) {
         execution.handle = response.handle
@@ -267,21 +236,6 @@ internal fun CommandLifecycle.applyStartResponse(unit: ExecutionUnit, response: 
         }
         execution.markIncident(unit)
         false
-    }
-}
-
-/** 13.2 ① — 같은 참조로 다시 묻는다. 돌아오면 핸들을 잡고 참, 거절이면 단위를 실패로 적고 거짓, 답이 없으면 던진다. */
-internal fun CommandLifecycle.lookupDownstream(unit: ExecutionUnit): Boolean = with(mw) {
-    when (unit.route) {
-        Route.ROBOT -> applyStartResponse(
-            unit,
-            robots.start(execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType, withOptionals(unit, unit.parameters)),
-        )
-
-        Route.FLEET -> acceptTransport(unit, fleet.dispatch(transportOrderOf(unit)))
-
-        // 설비 대기는 하위에 보낼 요청이 없다 — 시작이 곧 기다림의 시작이고, 읽기는 [pumpSignalUnit] 이 한다.
-        Route.SIGNAL -> true
     }
 }
 

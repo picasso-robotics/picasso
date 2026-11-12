@@ -3140,6 +3140,16 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+304. **재설계 R4 — 경로마다 다른 일을 `RouteDriver` 의 구현으로 모은다(한계 대장 «§15.298»).**
+
+    `RouteDrivers.kt` 의 봉인 타입 `RouteDriver`(`Robot`·`Fleet`·`Signal`)가 명령 생애의 경로별 연산을 든다. 출발, 보내는 중인 조회 받기, 조회 앞의 해소(스냅숏 부착, 리비전 앞섬), 조회의 관문과 송신, 라운드 진행, 붙기 전 취소, 조회 종류, 키 취소 여부, 갱신 수용이다. `resolveDoubt`·`startUnit`·`holdUnsentCancel`·`resendHeldCancel` 과 `pumpRound`·`notify`·`revise` 는 `RouteDriver.of(unit.route)` 로 드라이버를 얻어 부른다. 생애 네 파일과 `CommandLifecycle.kt` 에는 경로 `when` 갈래가 없다. 새 시험 «명령 생애 파일에 경로별 when 갈래가 없다» 가 그것을 지키고, 갈래 하나를 넣으면 빨개진다(주입으로 확인). `lookupOf` 는 `RouteDriver.lookupKind` 가 됐다.
+
+    ★**닿지 않는 갈래를 찾았다.** `lookupDownstream` 의 로봇·플릿 갈래(로봇은 `StartTask` 를 같은 참조로 바로 부르고, 플릿은 `dispatch` 를 바로 부른다)는 부르는 두 자리(`startUnit`·`resolveDoubt`)가 그 경로를 먼저 돌려보내므로 한 번도 안 불렸다. 설비 대기 갈래만 살아 있었고 늘 참이었다. 죽은 갈래와 함께 그 함수를 지웠다. 설비 대기의 출발은 곧 `RUNNING` 이고 조회는 `lookupFound(unit, true)` 다. 동작은 같다.
+
+    ★**짝은 없어지지 않고 구현이 됐다.** 로봇·플릿 짝(`settleIssue`/`settleDispatch`, `cancelRobot`/`cancelFleet`, `pollRobotCancel`/`pollFleetCancel`, `attachForCancel`/`attachTransportForCancel`, `pumpRobotUnit`/`pumpFleetUnit`)은 두 계약이 달라 하나로 합치지 않았다. 로봇은 갱신과 키 취소가 있고, 플릿은 운반 핸들과 조회 없는 플릿이 있다. 계획서가 말한 «짝 0» 은 부르는 자리에서 짝을 고르는 갈래가 0 이라는 뜻으로 읽었다. 이제 넷째 경로는 `RouteDriver` 구현 하나로 붙는다. 경로가 정해진 함수 안의 거르기 셋(`it.route == Route.FLEET` 따위)은 남았다.
+
+    `TOTAL` 은 1,880 에서 실측 1,829 로 내렸다. 시험은 하나 늘었다(2,447 → 2,448).
+
 303. **재설계 R3 — 명령 생애를 실행마다의 객체 `CommandLifecycle` 로 옮긴다(한계 대장 «§15.298»).**
 
     명령 생애 넷(`LifecycleIssue` `LifecycleDoubt` `LifecycleCancelAttach` `LifecycleCancel`)의 `fun Middleware.x(execution, …)` 43개를 `fun CommandLifecycle.x(…)` 로 바꿨다. `CommandLifecycle` 은 실행마다 하나이고(`execution.command`) 제 상태를 든다. 취소의 네 축(§15.301)과 송신 기록 셋(보내는 중인 출발·맡기기, 미룬 갱신)이다. 확장은 포트와 자취·통보를 `with(mw)` 로 부른다. 실행을 읽지 않는 포트 보조 여덟(`transportOrderOf` `issueStart` `issueDispatch` `handleFor` `lookupOf` `unansweredAttach` `findNow` `statusNow`)은 새 접합부 `CommandPorts.kt` 로 갔다. 생애 넷은 접합부 목록을 떠났다. 거기에 `fun Middleware.` 가 다시 서면 `SeamPlacementTest` 가 빨개진다(주입으로 확인). 라운드 안의 순서는 `pumpRound` 에 그대로 있다(계획서 원칙 5).

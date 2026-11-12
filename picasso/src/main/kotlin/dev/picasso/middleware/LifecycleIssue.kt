@@ -80,34 +80,7 @@ internal fun CommandLifecycle.startUnit(unit: ExecutionUnit) {
         // 같은 태스크 id 로 보내면 기체에 있던 태스크에 붙는다 — 이제 이 인스턴스가 든 태스크다.
         execution.unattached.remove(unit.unitId)
         execution.active = unit
-        if (unit.route == Route.ROBOT) {
-            val flight = InFlight(
-                InFlight.Kind.START, unit.unitId, execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType,
-                withOptionals(unit, unit.parameters), previous = unit.revision, restore = restore,
-            )
-            settleIssue(flight, issueStart(flight))
-            return
-        }
-        if (unit.route == Route.FLEET) {
-            val flight = FleetFlight(FleetFlight.Kind.START, unit.unitId, transportOrderOf(unit), restore)
-            settleDispatch(flight, issueDispatch(flight.order))
-            return
-        }
-        val accepted = try {
-            lookupDownstream(unit)
-        } catch (_: CommandNotSent) {
-            startNotSent(unit, restore)
-            return
-        } catch (_: RuntimeException) {
-            startInDoubt(unit)
-            return
-        }
-        if (!accepted) {
-            execution.active = null
-            return
-        }
-        unit.state = UnitState.RUNNING
-        execution.physicalState = PhysicalState.RUNNING
+        RouteDriver.of(unit.route).start(this@startUnit, unit, restore)
     }
 }
 

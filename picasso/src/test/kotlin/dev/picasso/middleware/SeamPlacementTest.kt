@@ -81,4 +81,21 @@ class SeamPlacementTest {
         val shadowed = MiddlewareSeams.homes.values.flatten().filter { Regex("""\bfun (?:[A-Za-z]+\.)?$it\(""").containsMatchIn(core) }
         assertEquals(emptyList(), shadowed, "Middleware.kt 에 옮긴 절차와 같은 이름의 멤버가 있다 — 확장이 조용히 가려진다")
     }
+
+    /**
+     * **명령 생애는 경로를 갈라 묻지 않는다**(재설계 R4, §15.304). 경로마다 다른 일은 [RouteDriver] 의 구현에 있고, 생애 네 파일과
+     * [CommandLifecycle] 은 드라이버를 얻어 부른다. 여기에 `when (….route)` 나 `Route.X ->` 갈래가 다시 서면 넷째 경로가 올 때 그 갈래마다
+     * 한 벌씩 짝이 는다(계획서 §4). 경로가 정해진 함수 안의 거르기(`it.route == Route.FLEET`)는 갈래가 아니라 바늘에 안 건다.
+     */
+    @Test
+    fun `명령 생애 파일에 경로별 when 갈래가 없다`() {
+        val sources = MiddlewareSeams.sources()
+        val lifecycle = sources.filterKeys { it.startsWith("Lifecycle") || it == "CommandLifecycle.kt" }
+        assertEquals(5, lifecycle.size, "명령 생애 파일을 못 찾았다: ${lifecycle.keys}")
+        val branch = Regex("""when \([^)]*\.route\)|\bRoute\.(ROBOT|FLEET|SIGNAL)\s*(,|->)""")
+        val found = lifecycle.flatMap { (file, text) ->
+            text.lines().withIndex().filter { (_, line) -> branch.containsMatchIn(line) }.map { (i, line) -> "$file:${i + 1} ${line.trim()}" }
+        }
+        assertEquals(emptyList(), found, "명령 생애가 경로를 갈라 묻는다 — 갈래를 RouteDriver 의 구현으로 옮긴다")
+    }
 }
