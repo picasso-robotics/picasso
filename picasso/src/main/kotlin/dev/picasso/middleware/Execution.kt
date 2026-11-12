@@ -4,24 +4,38 @@ import dev.picasso.contracts.v1.Fault
 import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.WatchTaskResponse
 import java.time.Instant
+import java.util.Collections
 
 /** 실행 하나 — 주문·기체·단위 열·두 축의 상태. */
 class Execution internal constructor(
     val executionId: String,
-    var order: JobOrder,
-    /** 지금 이 일을 든 기체. **재할당으로 바뀐다** — 옮긴 이력은 자취에 남는다. */
-    var robotId: String,
+    order: JobOrder,
+    robotId: String,
     val capability: LogicalCapability,
     /**
      * 이 실행을 계획한 임무 버전. 코드 케이퍼빌리티면 `null` 이다. **생성 때 정해지고 바뀌지 않는다** —
      * 리비전도 [capability] 로 계획하므로, 활성 버전이 바뀌어도 이 실행은 이 버전으로 끝난다.
      */
     val missionVersion: Int?,
-    val units: MutableList<ExecutionUnit>,
+    units: List<ExecutionUnit>,
     assignedAt: Instant,
     /** 이 실행의 명령 생애를 짓는다. 생성 중에 한 번 부르며, 실행의 멤버를 읽지 않아야 한다(아직 다 서지 않았다). */
     commandOf: (Execution) -> CommandLifecycle,
 ) {
+    /** 지금의 작업 지시. 리비전이 바꾼다. */
+    var order: JobOrder = order
+        internal set
+
+    /** 지금 이 일을 든 기체. **재할당으로 바뀐다** — 옮긴 이력은 트레이스에 남는다. */
+    var robotId: String = robotId
+        internal set
+
+    /** 단위 열의 가변 뒷받침. 받은 목록을 복사해 쥔다 — 넘긴 쪽이 원본을 바꿔도 이 실행은 바뀌지 않는다. 리비전이 갈아 끼운다. */
+    internal val mutableUnits: MutableList<ExecutionUnit> = units.toMutableList()
+
+    /** 단위 열(계획 순서). 밖에서는 읽기만 한다 — [mutableUnits] 의 살아 있는 읽기 뷰다. */
+    val units: List<ExecutionUnit> = Collections.unmodifiableList(mutableUnits)
+
     var physicalState: PhysicalState = PhysicalState.REQUESTED
         internal set
 
@@ -88,10 +102,16 @@ class Execution internal constructor(
      * 운영자가 [release] 로 감수한 결함의 열쇠 — 같은 결함은 다시 막지 않는다. 새 결함은 막는다. 결함이 걷히면 열쇠를 놓으므로
      * 걷혔다가 같은 열쇠로 다시 생긴 결함도 새 결함이다([forgetAcknowledged], §15.248). 놓은 것은 트레이스에 남는다.
      */
-    val acknowledgedFaults: MutableSet<String> = linkedSetOf()
+    internal val mutableAcknowledgedFaults: MutableSet<String> = linkedSetOf()
+
+    /** [mutableAcknowledgedFaults] 의 살아 있는 읽기 뷰. */
+    val acknowledgedFaults: Set<String> = Collections.unmodifiableSet(mutableAcknowledgedFaults)
 
     /** 이 실행이 도는 동안 기체가 낸 이벤트와 이 층의 관측 — 감사 자취(보고서 7장 *실행 추적·이벤트 전달·감사 기록*). */
-    val eventTrail: MutableList<ObservedEvent> = mutableListOf()
+    internal val mutableEventTrail: MutableList<ObservedEvent> = mutableListOf()
+
+    /** [mutableEventTrail] 의 살아 있는 읽기 뷰. */
+    val eventTrail: List<ObservedEvent> = Collections.unmodifiableList(mutableEventTrail)
 
     /**
      * 이번 라운드에 미완료로 닫혔거나 운영자 판단에 선 단위. **라운드 끝에** 번들로 봉한다 —
@@ -124,11 +144,14 @@ class Execution internal constructor(
     internal val inherited: MutableMap<String, Int> = mutableMapOf()
 
     /** 지연 이벤트(15.1) — 옛 버전의 종착. 폐기하지 않는다. */
-    val lateEvents: MutableList<LateEvent> = mutableListOf()
+    internal val mutableLateEvents: MutableList<LateEvent> = mutableListOf()
+
+    /** [mutableLateEvents] 의 살아 있는 읽기 뷰. */
+    val lateEvents: List<LateEvent> = Collections.unmodifiableList(mutableLateEvents)
 
     internal fun noteLate(unit: ExecutionUnit, update: WatchTaskResponse, at: () -> Instant) {
         if (!noticed.note(Notice.Late(unit.unitId, update.revision, update.state.name), true)) return
-        lateEvents += LateEvent(unit.unitId, update.revision, unit.revision, update.state.name, at())
+        mutableLateEvents += LateEvent(unit.unitId, update.revision, unit.revision, update.state.name, at())
     }
 
     val completedUnits: List<String> get() = units.filter { it.state == UnitState.DONE }.map { it.unitId }

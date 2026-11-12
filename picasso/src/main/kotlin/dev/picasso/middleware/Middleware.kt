@@ -343,7 +343,7 @@ class Middleware(
             robotId = robotId,
             capability = active.capability,
             missionVersion = active.missionVersion,
-            units = planned.toMutableList(),
+            units = planned,
             assignedAt = now(),
             commandOf = { CommandLifecycle(this, it) },
         )
@@ -740,7 +740,7 @@ class Middleware(
 
     /** [at] 은 이 줄의 시각이다. 기본은 지금이고, 같은 시각을 다른 사실과 나눠 써야 하는 자리만 넘긴다([reopenHold]). */
     internal fun Execution.trail(kind: String, detail: String, at: Instant = now()) {
-        eventTrail += ObservedEvent(views[robotId]?.cursor ?: 0, at.toString(), kind, detail, local = true)
+        mutableEventTrail += ObservedEvent(views[robotId]?.cursor ?: 0, at.toString(), kind, detail, local = true)
     }
 
     private fun pump(execution: Execution) {
@@ -963,7 +963,7 @@ class Middleware(
     fun release(executionId: String): Boolean {
         val execution = executions[executionId] ?: return false
         if (execution.blockedBy.isEmpty()) return false
-        execution.blockedBy.forEach { execution.acknowledgedFaults += faultKey(it) }
+        execution.blockedBy.forEach { execution.mutableAcknowledgedFaults += faultKey(it) }
         execution.blockedBy = emptyList()
         execution.noticed.clear(Notice.Block)
         execution.physicalState = PhysicalState.RUNNING
