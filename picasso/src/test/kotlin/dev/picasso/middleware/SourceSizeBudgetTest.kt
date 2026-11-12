@@ -58,8 +58,14 @@ class SourceSizeBudgetTest {
         val lines = MiddlewareSeams.sources().getValue("Middleware.kt").split("\r\n", "\n")
 
         // 실행의 가변 필드. 취소·미확정 같은 생애가 여기에 널과 불리언으로 쌓였다(9/30 18개 → 11/12 32개 → R1 25개 → R2 20개).
-        val execution = block(lines, Regex("^    inner class Execution\\b"))
-        val fields = execution.count { Regex("^        (internal |private )?var ").containsMatchIn(it) }
+        // 실행은 S2(§15.308)부터 최상위 클래스라 Execution.kt 를 읽는다. 전처럼 생성자의 var(order·robotId)도 센다.
+        val execution = block(
+            MiddlewareSeams.sources().getValue("Execution.kt").split("\r\n", "\n"),
+            Regex("^class Execution\\b"),
+            end = "}",
+            file = "Execution.kt",
+        )
+        val fields = execution.count { Regex("^    (internal |private )?var ").containsMatchIn(it) }
         assertTrue(fields > 0, "실행의 가변 필드를 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
         assertTrue(fields <= EXECUTION_VARS, "실행의 가변 필드 $fields > $EXECUTION_VARS. $ADVICE")
 
@@ -107,6 +113,8 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-13 의존 정비 S2 실측: Middleware.kt 765, 합 1,728. Execution 이 최상위 Execution.kt 로 나가 세는 범위 밖으로 갔다(§15.308) —
+        // 코드가 준 것이 아니다. 실행의 가변 필드 13·컬렉션 10 은 Execution.kt 에서 그대로 센다.
         // 2026-11-12 R0 표시 다섯의 fix(§15.306) 뒤 실측: Middleware.kt 817, 합 1,786(고침이 17줄을 더했다 — 상한을 올린다),
         // pumpRound 143줄(끊김 추적을 RobotSync.kt 의 trackLink 로).
         // 2026-11-12 재설계 R5 실측: Middleware.kt 843(기체 동기화를 RobotSync.kt 로, abort 를 취소 생애로, 순수 함수 일곱을 UnitFacts.kt 로,
@@ -117,9 +125,9 @@ class SourceSizeBudgetTest {
         // 2026-11-12 재설계 R2 실측: 실행의 가변 필드 20, 가변 컬렉션 10(«한 번만 알림» 아홉을 Noticed 하나로, §15.302).
         // 2026-11-12 재설계 R1 실측: 실행의 가변 필드 25(취소 필드 열하나를 네 축으로, §15.301).
         // 2026-11-12 재설계 R0 실측: 실행의 가변 컬렉션 14, 실행 단위의 가변 필드 36(생성자 30, 본문 6).
-        const val MIDDLEWARE = 817
+        const val MIDDLEWARE = 765
         const val SEAM = 500
-        const val TOTAL = 1_786
+        const val TOTAL = 1_728
         const val OTHER = 600
         const val EXECUTION_VARS = 13
         const val PUMP_ROUND = 143
@@ -130,8 +138,8 @@ class SourceSizeBudgetTest {
         /** 네 칸 들여 쓴(클래스 본문의) `internal` 선언. 무리 1 은 선언 줄이다. */
         val OPEN_MEMBER = Regex("^    (internal (?:fun|val|var|(?:data |sealed |enum )?(?:class|object|interface)) .*)$")
 
-        /** 여덟 칸 들여 쓴 `val` 가운데 가변 컬렉션 생성기로 초기화한 것. 게터(`get() =`)는 계산 값이라 안 센다. 무리 1 은 이름이다. */
-        val COLLECTION = Regex("^        (?:internal |private )?val (\\w+)\\b(?![^=]*\\bget\\(\\))[^=]*= (?:mutableMapOf|mutableSetOf|linkedSetOf|mutableListOf|linkedMapOf)\\b")
+        /** 네 칸 들여 쓴(최상위 `Execution` 본문의) `val` 가운데 가변 컬렉션 생성기로 초기화한 것. 게터(`get() =`)는 계산 값이라 안 센다. 무리 1 은 이름이다. */
+        val COLLECTION = Regex("^    (?:internal |private )?val (\\w+)\\b(?![^=]*\\bget\\(\\))[^=]*= (?:mutableMapOf|mutableSetOf|linkedSetOf|mutableListOf|linkedMapOf)\\b")
 
         const val ADVICE = "새 하위 절차는 접합부 파일로 옮기거나 경계를 다시 본다. 제 상태가 있는 새 규약은 RemedyDesk 처럼 " +
             "제 클래스로 둔다. 상한을 올리려면 SourceSizeBudgetTest 의 상수와 설계 일지 항목을 같은 PR 에 두고 소유자 승인을 받는다 " +

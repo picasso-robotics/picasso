@@ -38,7 +38,7 @@ internal sealed interface CancelDelivery {
      * 취소 응답이 [Middleware.CANCEL_NOT_SENT] 를 싣는다.
      *
      * @property cause 자취에 남긴 마지막 까닭. 같은 까닭을 라운드마다 되풀이하지 않는다.
-     * @property linkSince 연결이 끊긴 채([Middleware.Execution.linkBroken]) 닿지 않은 것을 처음 본 시각(§15.243). 미확정 유예가
+     * @property linkSince 연결이 끊긴 채([Execution.linkBroken]) 닿지 않은 것을 처음 본 시각(§15.243). 미확정 유예가
      *   이 시각부터 지나면 도는 단위를 운영자 보류에 둔다. 끊김이 풀리면 걷힌다. 판단 기록에는 싣지 않는다.
      */
     data class Unsent(val cause: String, val linkSince: Instant? = null) : CancelDelivery

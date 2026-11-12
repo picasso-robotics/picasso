@@ -213,7 +213,7 @@ data class RobotPermit(val robotId: String, val permit: WorkPermit, val reasons:
 /**
  * **지금 막혀 있는 새 발행 하나**(ADR 52) — 어느 기체가, 무엇 때문에, 무엇이 바뀌면 풀리는지.
  *
- * 실행의 결함 막음([Middleware.Execution.blockedBy])과 칸이 다르다. 운영자 해제([Middleware.release])는 결함을 감수할 뿐 이것을
+ * 실행의 결함 막음([Execution.blockedBy])과 칸이 다르다. 운영자 해제([Middleware.release])는 결함을 감수할 뿐 이것을
  * 못 푼다 — 허가는 사람이 감수할 값이 아니라 원천이 다시 `PERMITTED` 를 낼 때만 풀린다.
  *
  * @param unitId 막힌 명령이 향한 단위.
