@@ -10,30 +10,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * 미리 읽은 스냅숏 하나의 처지([RobotPort.prefetched]). 미들웨어의 동기화가 이 넷을 가른다(§15.267).
- *
- * **«아직 새 값이 없다» 와 «못 물어봤다» 는 다르다.** 읽기 한 번이 라운드 한 번보다 길면 그 사이 라운드에는 새 값이 없다. 그것을
- * 못 물어봤다로 접으면 정상적인 읽기 간격이 관측 실패가 되고, 그대로 두면 답하지 않는 기체의 낡은 값이 현재값으로 남는다. 그래서
- * [Pending] 과 [Unread] 를 [PrefetchingRobotPort.maxAge] 로 가른다.
- */
-sealed interface PrefetchedRead {
-    /** 읽는 중이고 마지막 읽기가 아직 낡지 않았다. 뷰를 그대로 둔다. */
-    data object Pending : PrefetchedRead
-
-    /** 쓸 읽기가 없다 — 읽은 적이 없거나, 읽는 중인 채 마지막 읽기가 낡았거나, 다 읽은 값이 낡았다. [RobotPort.snapshot] 의 널과 같다. */
-    data object Unread : PrefetchedRead
-
-    /**
-     * 하위에 물었고 답이 왔다. [snapshot] 이 널이면 하위가 못 물어봤다고 답한 것이다. [sentAt]·[receivedAt] 은 그 읽기가 **실제로**
-     * 보낸·받은 시각이다(소비한 시각이 아니다).
-     */
-    data class Read(val snapshot: RobotSnapshot?, val sentAt: Instant, val receivedAt: Instant) : PrefetchedRead
-
-    /** 읽기가 던졌다. 받는 쪽은 지금 부른 호출이 던진 것과 같이 다룬다. */
-    data class Failed(val failure: RuntimeException) : PrefetchedRead
-}
-
-/**
  * 스냅숏과 재생을 **소비자의 잠금 밖에서** 읽는 [RobotPort](§15.237·§15.267).
  *
  * 미들웨어는 자체 스레드가 없고 소비자의 잠금 아래에서 돈다. 그 아래에서 [snapshot]·[replay] 를 동기로 부르면 답하지 않는 기체 하나가

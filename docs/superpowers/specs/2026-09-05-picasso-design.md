@@ -3140,6 +3140,18 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+307. **의존 정비 S1 — 낮은 층 타입을 제자리로 옮겨 포트·모델 순환을 없앤다.**
+
+    R0~R5 뒤 의존 방향을 검토했다(Codex·Fable 자문 두 라운드). 계획은 S0 소비자 검증(PR #12) → S1 타입 이사 → S2 `Execution` 최상위 → S3 공개 세터·가변 컬렉션 폐쇄 → 층 시험 → S4 내부 핵심과 좁은 생애 환경, 호스트 부품 모듈 분리 순이다. 이 항목은 S1 이다(번호 306 은 열린 PR #11 이 쓴다). 동작 변경, 공개 이름·패키지 변경, 시험 수 변경은 없다. 파일 사이 이름 기반 참조(주석·문자열·private 제외) 측정 결과, 기존 6개 파일(`Model`, `Occupancy`, `Ports`, `LogicalCapability`, `PrefetchingFleetPort`, `PrefetchingRobotPort`)과 21개 파일 성분 중 6개 파일 성분이 완전히 해소되었다. 21개 파일 성분은 19개 파일(`CancelAxes`·`Canonical` 제외)로 줄었다. 기존 순환 원인은 `Model`의 `ExecutionUnit`이 `Occupancy`의 관측 값을 쓰고, `Occupancy`가 `Ports`의 `SlotSignal`을 쓰며, 포트 인터페이스 반환 타입(`PrefetchedRead`·`FleetRead`)이 구현 파일에 있던 점이다.
+
+    선언 본문은 그대로 둔 채 같은 패키지 안에서 타입을 옮겼다. `PrefetchedRead`와 `FleetRead`는 `Ports.kt`의 각 포트 인터페이스 옆으로 옮겼다. `SourceObservation`·`SourceUnobserved`·`DestinationObservation`은 `Model.kt`로 옮겼다. 이 이사가 순환을 끊었다. `SourceCheck`·`DestinationCheck`는 `Occupancy.kt`에 남겼다. 포트 계약 파일에 섞여 있던 gRPC 어댑터 `ClientRobotPort`는 새 `ClientRobotPort.kt`로 분리했다. 승인·판단 기록·결과 내보내기가 번들 내보내기 파일에 기대던 문제는 `Obj`와 `Json`을 새 `Json.kt`로 분리해 해소했다. 구체 업무 `PrepareSequencedRack`·`DeliverContainer`·`InspectAsset`는 새 `CodeCapabilities.kt`로 옮겨 `LogicalCapability.kt`에는 계약만 남겼다. mission-ops가 쓰는 공개 companion 멤버 `MissionCatalog.codeCapabilities()`는 같은 패키지라 고치지 않고 컴파일된다. 이로 인해 남은 «포트 → 구체 업무» 간선 하나는 조립용 예외이며, 이 분리가 아닌 관측 값 이사로 순환을 끊었다.
+
+    어댑터 시험과 mission-ops가 작업 지시를 구성할 때 쓰는 입력 어휘인 `EquipmentUse` 상수는 구체 업무 파일 대신 `Model.kt`의 `EquipmentRequirement` 옆에 두었다. `CancelAxes`가 행위 파일 `LifecycleCancel.kt`에 기대고 있던 비행 기록 다섯(`CancelFlight`·`FleetCancelFlight`·`InFlight`·`FleetFlight`·`StartRestore`)은 모두 `Execution`의 필드 타입이므로 새 `Flights.kt`로 옮겼다. 상수 `UNCLASSIFIED`와 `DUPLICATE_UNIT_ID`의 값은 하위 파일의 홀더(`Canonical.kt`의 `FailureClassNames`, `UnitFacts.kt`의 `RefusalReasons`)로 내렸다. `Middleware`의 공개 상수는 이름을 유지하고 해당 값을 가리키도록 연결했다. 같은 이름의 최상위 상수는 companion 안에서 자기 자신을 참조하게 되므로 두지 않았다.
+
+    ★**`Middleware.Submission`은 옮기지 않고 공개 결과 계약으로 인정한다.** 하위 파일(`AdmissionGate`·`RemedyDesk`·`UnitFacts`)이 `Submission.Rejected`를 직접 만들고, 공개 `Admission.Refused.rejection`과 공개 `Unassigned : Middleware.Submission`이 이 타입을 쓴다. 내부 거부 값을 따로 두고 창구에서 바꾸는 안은 버렸다. `Rejected`의 필드 7개 중 6개가 기본값이라 변환에서 하나를 빠뜨려도 컴파일되고, 공개 타입 쪽 간선은 어차피 남기 때문이다. `typealias`로는 `Middleware.Submission.Rejected` 같은 중첩 경로를 이어 줄 수 없음을 컴파일로 확인했다. S3 뒤 층 시험에서는 하위 파일이 `Middleware.kt`에서 쓸 수 있는 이름을 `Submission`과 그 하위로만 허용한다(S2 전에는 `Execution`도 허용).
+
+    19개 파일 성분에 남은 원인은 `Execution`이 `Middleware` 안 inner class인 점(S2)과 생애·드라이버가 `Middleware`의 포트·시계·트레이스·통보를 부르는 점(S4)이다. 생애 파일들의 companion 상수 import 약 45줄은 해당 성분 내부라 옮기지 않았다. `./gradlew cleanTest build -x :harness:test -x :registry:test` 실행 결과 시험 XML 실패 0건이다. mission-ops(`fcb1a30`)를 이 변경으로 다시 빌드했다. picasso 미들웨어를 쓰는 mission-host·site·e2e 344 시험은 실패 0 이다. ops-service 498 은 앞 두 번의 실행에서 서로 다른 시험 하나씩이 시험용 DB 의 연결 실패로 떨어졌고, 세 번째 실행에서 실패 0 이었다. ops-service 는 picasso 미들웨어를 컴파일하지 않는다. 바뀐 시험은 한 곳이다. `DocumentClaimsTest` 가 그림의 실패 분류 이름을 찾을 때 `LogicalCapability.kt` 와 `CodeCapabilities.kt` 를 함께 읽는다.
+
 305. **재설계 R5 — `Execution` 과 실행 표는 `Middleware` 안에 두고, 상태 없는 절차를 밖으로 옮겨 실코드를 843 으로 내린다(한계 대장 «§15.298»).**
 
     ★**`Execution` 을 빼지 않기로 했다.** 계획서(§15.299)는 «빼지 않기로 하면 그 까닭을 적는다» 고 했다. 까닭은 다른 저장소다. `mission-ops` 의 실행 호스트(`MissionHost.kt`·`MockRunner.kt`)가 `includeBuild` 로 이 저장소를 물고 출하 코드 열여섯 곳(두 파일)에서 `Middleware.Execution` 을 타입으로 쓴다. 이 저장소의 시험도 일흔한 곳에서 그 이름을 잡는다. 빼면 그 저장소의 빌드가 깨진다. 이 저장소는 다른 저장소 파일을 고치지 않는다(CLAUDE.md §5). 그러니 옮기려면 `handoff/` 로 넘기고 받는 쪽이 정해야 한다. 상태의 주인이 하나인 근원은 R3 이 생애 상태를 `CommandLifecycle` 로 옮겨 이미 덜었다. 실행 표를 밖의 저장소로 빼는 것은 상태의 모양을 바꾸지 않고 이름만 옮긴다.

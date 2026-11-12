@@ -3,7 +3,6 @@ package dev.picasso.middleware
 import dev.picasso.contracts.v1.CancelTaskResponse
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.HoldState
-import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.middleware.Middleware.Companion.CANCEL_NOT_SENT
 import dev.picasso.middleware.Middleware.Companion.CANCEL_RESENT
 import dev.picasso.middleware.Middleware.Companion.CANCEL_UNSENT
@@ -230,32 +229,6 @@ private fun CommandLifecycle.settleCancel(flight: CancelFlight, result: CancelIs
             }
         }
     }
-}
-
-/**
- * 보내는 중인 취소 하나(§15.237, [Middleware.Execution.cancelInFlight]). 포트에 다시 물을 때 같은 기체와 핸들을 쓰고, 결과를 받으면
- * [site] 의 뒷일을 한다.
- *
- * @property unitId 도는 단위의 취소([Site.SEND])가 아니면 그 단위.
- * @property stateName 보류 중 다시 보내기([Site.HELD])·붙기 전의 취소([Site.ATTACH])면 보낼 때 스냅숏에 보인 태스크 상태.
- */
-internal class CancelFlight(
-    val site: Site,
-    val robot: String,
-    val handle: TaskHandle,
-    val unitId: String? = null,
-    val stateName: String? = null,
-) {
-    /** 도는 단위의 취소에서 같은 호출의 플릿 취소가 실패했는가. 그러면 로봇이 답해도 «닿았다» 로 내리지 않는다. */
-    var otherFailed: Boolean = false
-
-    enum class Site { SEND, KEY, HELD, ATTACH }
-}
-
-/** 보내는 중인 운반 취소 하나(§15.237, [Middleware.Execution.fleetCancelInFlight]). 포트에 다시 물을 때 같은 참조와 핸들을 쓴다. */
-internal class FleetCancelFlight(val reference: String, val handle: TransportHandle) {
-    /** 같은 호출의 로봇 취소가 실패했는가. 그러면 플릿이 답해도 «닿았다» 로 내리지 않는다. */
-    var otherFailed: Boolean = false
 }
 
 /**

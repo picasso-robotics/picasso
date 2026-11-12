@@ -9,27 +9,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * 미리 읽은 플릿 읽기 하나의 처지([AmrFleetPort.prefetchedStatus]·[AmrFleetPort.prefetchedFind]). [PrefetchedRead] 의 플릿 쪽이다(§15.237).
- *
- * **«아직 답이 없다» 와 «답하지 않는다» 를 가른다.** 읽기 한 번이 라운드 한 번보다 길면 그 사이 라운드에는 새 값이 없다 — [Pending] 이다.
- * 읽기가 [PrefetchingFleetPort.maxAge] 넘게 답하지 않으면 [Overdue] 다. 미들웨어는 그것을 읽기가 던진 것과 같이 다룬다 — 동기로 부를 때
- * 답하지 않는 플릿이 기한 끝에 던지던 자리다.
- */
-sealed interface FleetRead<out T> {
-    /** 읽는 중이고 아직 기한 안이다(방금 건 읽기도 그렇다). 이번 라운드에는 값이 없다. */
-    data object Pending : FleetRead<Nothing>
-
-    /** 읽기가 [since] 에 나가 [PrefetchingFleetPort.maxAge] 넘게 답하지 않는다. */
-    data class Overdue(val since: Instant) : FleetRead<Nothing>
-
-    /** 하위에 물었고 답이 왔다. [sentAt]·[receivedAt] 은 그 읽기가 **실제로** 보낸·받은 시각이다(받아 간 시각이 아니다). */
-    data class Read<out T>(val value: T, val sentAt: Instant, val receivedAt: Instant) : FleetRead<T>
-
-    /** 읽기가 던졌다. 받는 쪽은 지금 부른 호출이 던진 것과 같이 다룬다. */
-    data class Failed(val failure: RuntimeException) : FleetRead<Nothing>
-}
-
-/**
  * 운반 상태([status])와 찾기([find])를 **소비자의 잠금 밖에서** 읽는 [AmrFleetPort](§15.237). [PrefetchingRobotPort] 의 플릿 쪽이다.
  *
  * 미들웨어는 [prefetchedStatus]·[prefetchedFind] 로 다 읽은 값만 받고 잠금 아래에서는 기다리지 않는다.
