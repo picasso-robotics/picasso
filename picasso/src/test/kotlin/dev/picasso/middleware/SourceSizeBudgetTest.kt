@@ -96,7 +96,7 @@ class SourceSizeBudgetTest {
     fun `실행 단위의 가변 필드가 구조 예산 안에 있다`() {
         // 단위 하나의 가변 필드 — 생성자의 var 와 본문의 var. 실행의 생애가 단위 쪽 표시(조회 시각, 키 취소 시각 같은 것)로도 쌓였다.
         val lines = MiddlewareSeams.sources().getValue("Model.kt").split("\r\n", "\n")
-        val unit = block(lines, Regex("^data class ExecutionUnit\\("), end = "}", file = "Model.kt")
+        val unit = block(lines, Regex("^class ExecutionUnit\\("), end = "}", file = "Model.kt")
         val fields = unit.mapNotNull { Regex("^    (?:internal |private )?var (\\w+)").find(it)?.groupValues?.get(1) }
         assertTrue(fields.isNotEmpty(), "실행 단위의 가변 필드를 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
         assertTrue(fields.size <= UNIT_VARS, "실행 단위의 가변 필드 ${fields.size} > $UNIT_VARS: $fields. $ADVICE")
@@ -113,6 +113,8 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-13 의존 정비 S3 실측: 실행의 가변 컬렉션 11. 단위 열이 생성자 인자에서 실행이 쥔 뒷받침(mutableUnits = units.toMutableList())이
+        // 되어 이제 센다 — 전에도 실행이 가진 컬렉션이었으나 생성자로 받아 안 셌다. 상태가 는 것이 아니라 누락을 고친 것이다(§15.309, 소유자 승인).
         // 2026-11-13 의존 정비 S2 실측: Middleware.kt 765, 합 1,728. Execution 이 최상위 Execution.kt 로 나가 세는 범위 밖으로 갔다(§15.308) —
         // 코드가 준 것이 아니다. 실행의 가변 필드 13·컬렉션 10 은 Execution.kt 에서 그대로 센다.
         // 2026-11-12 R0 표시 다섯의 fix(§15.306) 뒤 실측: Middleware.kt 817, 합 1,786(고침이 17줄을 더했다 — 상한을 올린다),
@@ -131,7 +133,7 @@ class SourceSizeBudgetTest {
         const val OTHER = 600
         const val EXECUTION_VARS = 13
         const val PUMP_ROUND = 143
-        const val EXECUTION_COLLECTIONS = 10
+        const val EXECUTION_COLLECTIONS = 11
         const val UNIT_VARS = 36
         const val OPEN_MEMBERS = 22
 
@@ -139,7 +141,7 @@ class SourceSizeBudgetTest {
         val OPEN_MEMBER = Regex("^    (internal (?:fun|val|var|(?:data |sealed |enum )?(?:class|object|interface)) .*)$")
 
         /** 네 칸 들여 쓴(최상위 `Execution` 본문의) `val` 가운데 가변 컬렉션 생성기로 초기화한 것. 게터(`get() =`)는 계산 값이라 안 센다. 무리 1 은 이름이다. */
-        val COLLECTION = Regex("^    (?:internal |private )?val (\\w+)\\b(?![^=]*\\bget\\(\\))[^=]*= (?:mutableMapOf|mutableSetOf|linkedSetOf|mutableListOf|linkedMapOf)\\b")
+        val COLLECTION = Regex("^    (?:internal |private )?val (\\w+)\\b(?![^=]*\\bget\\(\\))[^=]*= (?:mutableMapOf|mutableSetOf|linkedSetOf|mutableListOf|linkedMapOf|\\w+\\.toMutable(?:List|Set|Map))\\b")
 
         const val ADVICE = "새 하위 절차는 접합부 파일로 옮기거나 경계를 다시 본다. 제 상태가 있는 새 규약은 RemedyDesk 처럼 " +
             "제 클래스로 둔다. 상한을 올리려면 SourceSizeBudgetTest 의 상수와 설계 일지 항목을 같은 PR 에 두고 소유자 승인을 받는다 " +

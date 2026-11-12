@@ -268,84 +268,40 @@ data class JobOrder(
  * @param unitId 상류가 아는 단위 이름(슬롯 id·용기 id). 중단점과 부분 완료 목록이 이것으로 말한다.
  * @param expectedIdentity 설비가 그 자리에서 읽어야 할 것 — 부품 타입이거나 용기 태그.
  */
-data class ExecutionUnit(
+class ExecutionUnit(
     val unitId: String,
     val route: Route,
     val skillType: String,
-    /** 아래 넷은 **버전의 것**이다 — 새 버전이 도는 단위에 붙으면(15.3) 기대도 새 버전의 것으로 바뀐다. 검증은 지금 기대에 대고 한다. */
-    var parameters: Map<String, String>,
-    var expectedIdentity: String?,
-    var source: String?,
-    var destination: String?,
-    var state: UnitState = UnitState.PENDING,
-    var taskId: String = "",
-    var revision: Int = 0,
-    /**
-     * 이 인스턴스가 지금 태스크 id 를 처음 보낸 리비전(§15.238). 개정 갱신을 보냈으면 [revision] 과 다르고, 보내지 않은 단위나 재기동 뒤
-     * 스냅숏으로 붙은 단위는 널이다. 리비전을 싣지 않는 포트의 스냅숏에 태스크가 보일 때, 이 값이 [revision] 과 같으면 그 태스크는 이
-     * 리비전으로만 나간 것이라 붙을 수 있다.
-     */
-    var startedRevision: Int? = null,
-    /** 재작업 횟수. 하류 태스크의 정체성이 갈리는 자리다 — 같은 `task_id` 는 계약이 같은 핸들로 돌려준다. */
-    var attempt: Int = 0,
-    var reached: Evidence = Evidence.E0,
-    var verification: Verification = Verification.NOT_REQUESTED,
-    /** 실패의 정준 분류. 어댑터가 벤더 코드에서 옮긴 것이 계약의 `Fault.error_type` 으로 온다. */
-    var failureClass: String? = null,
-    /**
-     * [failureClass] 가 그 값이 된 **결함 원문**(§15.177). 하류가 결함 없이 실패를 알렸으면 널이다.
-     *
-     * 분류만 들면 사건 번들이 «왜 그 분류가 됐나» 에 분류를 되풀이하는 것 말고 답할 수 없다.
-     */
-    var fault: dev.picasso.contracts.v1.Fault? = null,
-    /** 종착이 아닌 사정 — 인계 대기, 관측한 태그, 신호의 시각 같은 것. 지연 보고와 기록의 내용이다. */
-    var note: String? = null,
-    var hold: HoldState = HoldState.getDefaultInstance(),
-    /** 하류가 끝났다고 한 시각 `t_r`. 시간창의 기준. */
-    var downstreamDoneAt: Instant? = null,
-    /** `t_r + after`. 이 시각을 지나도 신호가 없으면 `UNVERIFIED`. */
-    var evidenceDeadline: Instant? = null,
-    /** 근거로 채택한 신호의 시각 `t_p`. */
-    var evidenceAt: Instant? = null,
-    /** 설비에 몇 번 물었는가 — 12.2 의 재확인 횟수. */
-    var rechecks: Int = 0,
-    /** 하류에 요청을 보낸 시각. `IN_DOUBT` 관측 창의 기준이다. */
-    var requestedAt: Instant? = null,
-    /** 마지막으로 **올라간** 진행률과 그 시각. 정체 판정의 기준이다(계약 0.8.0). */
-    var progress: Double = 0.0,
-    var progressAt: Instant? = null,
-    /**
-     * 이 기체가 이 단위의 진행률을 **잴 수 있는가.** 널이면 아직 갱신을 못 봤다.
-     * 거짓이면 정체 판정을 하지 않는다 — 0 을 멈춤으로 읽지 않는다.
-     */
-    var progressObservable: Boolean? = null,
-    /** 이미 정체로 알렸는가. 한 번만 알린다 — 같은 사실을 되풀이하면 운영자가 곧 무시한다. */
-    var progressStalled: Boolean = false,
-    /** `IN_DOUBT` 에서 같은 참조로 다시 물은 횟수(13.2 ①). */
-    var lookups: Int = 0,
-    /**
-     * 발신자가 거절하며 지목한 사전 조건의 주어(계약 `KEY_PRECONDITION_SUBJECT`). 사건 번들이 이것을 옮겨 싣는다 —
-     * 자유 문자열에서 다시 뽑으면 두 곳의 판정이 어긋난다(설계안 §4.2).
-     */
-    var preconditionSubjects: List<String> = emptyList(),
-    /**
-     * 선언된 효과와 마지막 관측이 어긋났는가(설계안 §5). **결함 통지가 없어도** 내는 판정이며, 이 설계가
-     * 새로 계산하는 유일한 사실이다. 관측이 없거나 볼 수 없으면 `null` — 선언으로 현실을 단정하지 않는다.
-     */
-    var holdMismatch: HoldMismatch? = null,
-    /**
-     * 이 단위의 지금 시도가 도는 동안 **한 번이라도 쥔 것이 관측됐는가.** 중단 시점의 기대를 정한다(설계안 §5) —
-     * 쥐었다가 놓지 못한 채 끝났으면 든 채여야 하고, 쥔 적이 없으면 기대할 것이 없다. 재작업이 새 시도를 내면
-     * [heldInEarlierAttempt] 로 접혀 비워진다(§15.236).
-     */
-    var everHeld: Boolean = false,
-    /** 끝난 시점에 **기대했던** 파지. 판정의 근거이고, 사건 번들이 판단 경로로 싣는다(설계안 §7.2 셋째). */
-    var holdExpected: HoldKind? = null,
-    /**
-     * 하류가 종착에 실어 준 결과 참조 — 계약의 `partial_result`. 점검(③)의 *측정값 또는 증거 자료 참조*가 올 자리이며
-     * 지금은 아무 발신자도 채우지 않는다(§15.76). 비어 있으면 `null`.
-     */
-    var result: String? = null,
+    parameters: Map<String, String>,
+    expectedIdentity: String?,
+    source: String?,
+    destination: String?,
+    state: UnitState = UnitState.PENDING,
+    taskId: String = "",
+    revision: Int = 0,
+    startedRevision: Int? = null,
+    attempt: Int = 0,
+    reached: Evidence = Evidence.E0,
+    verification: Verification = Verification.NOT_REQUESTED,
+    failureClass: String? = null,
+    fault: dev.picasso.contracts.v1.Fault? = null,
+    note: String? = null,
+    hold: HoldState = HoldState.getDefaultInstance(),
+    downstreamDoneAt: Instant? = null,
+    evidenceDeadline: Instant? = null,
+    evidenceAt: Instant? = null,
+    rechecks: Int = 0,
+    requestedAt: Instant? = null,
+    progress: Double = 0.0,
+    progressAt: Instant? = null,
+    progressObservable: Boolean? = null,
+    progressStalled: Boolean = false,
+    lookups: Int = 0,
+    preconditionSubjects: List<String> = emptyList(),
+    holdMismatch: HoldMismatch? = null,
+    everHeld: Boolean = false,
+    holdExpected: HoldKind? = null,
+    result: String? = null,
     /** 설비 대기 단위([Route.SIGNAL])의 사양. 다른 경로의 단위는 널이다. */
     val wait: WaitSpec? = null,
     /**
@@ -359,6 +315,140 @@ data class ExecutionUnit(
      */
     val destinationObservation: DestinationObservation = DestinationObservation.OPTIONAL,
 ) {
+    /** 아래 넷은 **버전의 것**이다 — 새 버전이 도는 단위에 붙으면(15.3) 기대도 새 버전의 것으로 바뀐다. 검증은 지금 기대에 대고 한다. */
+    var parameters: Map<String, String> = parameters
+        internal set
+
+    var expectedIdentity: String? = expectedIdentity
+        internal set
+
+    var source: String? = source
+        internal set
+
+    var destination: String? = destination
+        internal set
+
+    var state: UnitState = state
+        internal set
+
+    var taskId: String = taskId
+        internal set
+
+    var revision: Int = revision
+        internal set
+
+    /**
+     * 이 인스턴스가 지금 태스크 id 를 처음 보낸 리비전(§15.238). 개정 갱신을 보냈으면 [revision] 과 다르고, 보내지 않은 단위나 재기동 뒤
+     * 스냅숏으로 붙은 단위는 널이다. 리비전을 싣지 않는 포트의 스냅숏에 태스크가 보일 때, 이 값이 [revision] 과 같으면 그 태스크는 이
+     * 리비전으로만 나간 것이라 붙을 수 있다.
+     */
+    var startedRevision: Int? = startedRevision
+        internal set
+
+    /** 재작업 횟수. 하류 태스크의 정체성이 갈리는 자리다 — 같은 `task_id` 는 계약이 같은 핸들로 돌려준다. */
+    var attempt: Int = attempt
+        internal set
+
+    var reached: Evidence = reached
+        internal set
+
+    var verification: Verification = verification
+        internal set
+
+    /** 실패의 정준 분류. 어댑터가 벤더 코드에서 옮긴 것이 계약의 `Fault.error_type` 으로 온다. */
+    var failureClass: String? = failureClass
+        internal set
+
+    /**
+     * [failureClass] 가 그 값이 된 **결함 원문**(§15.177). 하류가 결함 없이 실패를 알렸으면 널이다.
+     *
+     * 분류만 들면 사건 번들이 «왜 그 분류가 됐나» 에 분류를 되풀이하는 것 말고 답할 수 없다.
+     */
+    var fault: dev.picasso.contracts.v1.Fault? = fault
+        internal set
+
+    /** 종착이 아닌 사정 — 인계 대기, 관측한 태그, 신호의 시각 같은 것. 지연 보고와 기록의 내용이다. */
+    var note: String? = note
+        internal set
+
+    var hold: HoldState = hold
+        internal set
+
+    /** 하류가 끝났다고 한 시각 `t_r`. 시간창의 기준. */
+    var downstreamDoneAt: Instant? = downstreamDoneAt
+        internal set
+
+    /** `t_r + after`. 이 시각을 지나도 신호가 없으면 `UNVERIFIED`. */
+    var evidenceDeadline: Instant? = evidenceDeadline
+        internal set
+
+    /** 근거로 채택한 신호의 시각 `t_p`. */
+    var evidenceAt: Instant? = evidenceAt
+        internal set
+
+    /** 설비에 몇 번 물었는가 — 12.2 의 재확인 횟수. */
+    var rechecks: Int = rechecks
+        internal set
+
+    /** 하류에 요청을 보낸 시각. `IN_DOUBT` 관측 창의 기준이다. */
+    var requestedAt: Instant? = requestedAt
+        internal set
+
+    /** 마지막으로 **올라간** 진행률과 그 시각. 정체 판정의 기준이다(계약 0.8.0). */
+    var progress: Double = progress
+        internal set
+
+    var progressAt: Instant? = progressAt
+        internal set
+
+    /**
+     * 이 기체가 이 단위의 진행률을 **잴 수 있는가.** 널이면 아직 갱신을 못 봤다.
+     * 거짓이면 정체 판정을 하지 않는다 — 0 을 멈춤으로 읽지 않는다.
+     */
+    var progressObservable: Boolean? = progressObservable
+        internal set
+
+    /** 이미 정체로 알렸는가. 한 번만 알린다 — 같은 사실을 되풀이하면 운영자가 곧 무시한다. */
+    var progressStalled: Boolean = progressStalled
+        internal set
+
+    /** `IN_DOUBT` 에서 같은 참조로 다시 물은 횟수(13.2 ①). */
+    var lookups: Int = lookups
+        internal set
+
+    /**
+     * 발신자가 거절하며 지목한 사전 조건의 주어(계약 `KEY_PRECONDITION_SUBJECT`). 사건 번들이 이것을 옮겨 싣는다 —
+     * 자유 문자열에서 다시 뽑으면 두 곳의 판정이 어긋난다(설계안 §4.2).
+     */
+    var preconditionSubjects: List<String> = preconditionSubjects
+        internal set
+
+    /**
+     * 선언된 효과와 마지막 관측이 어긋났는가(설계안 §5). **결함 통지가 없어도** 내는 판정이며, 이 설계가
+     * 새로 계산하는 유일한 사실이다. 관측이 없거나 볼 수 없으면 `null` — 선언으로 현실을 단정하지 않는다.
+     */
+    var holdMismatch: HoldMismatch? = holdMismatch
+        internal set
+
+    /**
+     * 이 단위의 지금 시도가 도는 동안 **한 번이라도 쥔 것이 관측됐는가.** 중단 시점의 기대를 정한다(설계안 §5) —
+     * 쥐었다가 놓지 못한 채 끝났으면 든 채여야 하고, 쥔 적이 없으면 기대할 것이 없다. 재작업이 새 시도를 내면
+     * [heldInEarlierAttempt] 로 접혀 비워진다(§15.236).
+     */
+    var everHeld: Boolean = everHeld
+        internal set
+
+    /** 끝난 시점에 **기대했던** 파지. 판정의 근거이고, 사건 번들이 판단 경로로 싣는다(설계안 §7.2 셋째). */
+    var holdExpected: HoldKind? = holdExpected
+        internal set
+
+    /**
+     * 하류가 종착에 실어 준 결과 참조 — 계약의 `partial_result`. 점검(③)의 *측정값 또는 증거 자료 참조*가 올 자리이며
+     * 지금은 아무 발신자도 채우지 않는다(§15.76). 비어 있으면 `null`.
+     */
+    var result: String? = result
+        internal set
+
     /**
      * 이 단위를 맡은 기체. **널이 기본이고 그때는 실행의 기체다**([Execution.robotOf]) — 오늘의 계획은 전부 널이다.
      *
@@ -371,14 +461,13 @@ data class ExecutionUnit(
      *
      * `internal` 이다. 다른 기체를 묶는 소비자가 아직 없다(ADR 9). 시험은 이 자리로 단위를 다른 기체에 묶어, 실행의 기체를
      * 읽는 자리가 남아 있으면 그 호출이 엉뚱한 기체에 찍히는지를 본다 — 기본값만으로는 두 값이 같아 아무것도 가르지 못한다.
-     * 데이터 클래스의 본문 속성이라 같음 비교와 복사에 들지 않는다.
      */
     internal var robotBinding: String? = null
 
     /**
      * 미확정 조회([Middleware] 의 `resolveDoubt`)를 마지막으로 보낸 시각. 널이면 아직 안 물었다 — 첫 조회는 바로 나간다. 유예 안의 조회
      * 사이에 [Middleware.LOOKUP_INTERVAL] 을 두려고 미들웨어 시계로 잰다. 판단 기록에 싣지 않으므로 리빌드 뒤에는 널이고, 그때 첫 조회가
-     * 바로 한 번 더 나갈 뿐이다(같은 참조의 재전송은 멱등이다). 본문 속성이라 같음 비교와 복사에 들지 않는다.
+     * 바로 한 번 더 나갈 뿐이다(같은 참조의 재전송은 멱등이다).
      */
     internal var lastLookupAt: Instant? = null
 
@@ -386,22 +475,21 @@ data class ExecutionUnit(
      * 이 시도의 갱신 스트림을 더 따라갈 수 없게 된 시각(§15.228, [RobotPort.unfollowable]). 널이면 그런 일이 없었다. 값이 있으면 단위는
      * 미확정이고, 해소가 같은 참조의 `StartTask` 재전송을 건너뛴다 — 원 요청은 이미 닿았으므로 재전송은 기체가 잊은 일을 새로 낸다. 설비
      * 관측의 유예도 이 시각부터 잰다. 새 시도를 내거나 스냅숏에 붙으면 걷힌다. 판단 기록에 싣지 않는다 — 리빌드는 미확정을 옮기지 않고
-     * 스냅숏에서 다시 붙는다. 본문 속성이라 같음 비교와 복사에 들지 않는다.
+     * 스냅숏에서 다시 붙는다.
      */
     internal var streamLostAt: Instant? = null
 
     /**
      * 이 시도의 태스크에 키로 지은 핸들로 취소를 마지막으로 보낸 시각(§15.219, §15.238). 미확정 중이거나 운영자 보류에 둔 취소를 다시
      * 보낼 때 [Middleware.LOOKUP_INTERVAL] 을 두려고 미들웨어 시계로 잰다. 새 시도를 내거나 취소용으로 붙으면 걷힌다. 판단 기록에 싣지
-     * 않으므로 리빌드 뒤에는 널이고, 그때 첫 취소가 바로 한 번 더 나갈 뿐이다(같은 태스크의 취소는 멱등이다). 본문 속성이라 같음 비교와
-     * 복사에 들지 않는다.
+     * 않으므로 리빌드 뒤에는 널이고, 그때 첫 취소가 바로 한 번 더 나갈 뿐이다(같은 태스크의 취소는 멱등이다).
      */
     internal var keyedCancelAt: Instant? = null
 
     /**
      * 앞 시도에서 쥔 것이 관측됐는가(§15.236). 재작업이 새 시도를 낼 때 [everHeld] 를 이 값에 접어 넣고 비운다 — [everHeld] 는 이 시도의
      * 중단 시점 기대를 정하므로, 앞 시도의 파지를 들고 가면 쥔 적 없는 새 시도가 «든 채» 를 기대한다. 재할당은 둘을 함께 본다 — 반쯤 한
-     * 물리 작업은 시도가 바뀌어도 남는다. 판단 기록에 [everHeld] 와 함께 싣는다(§15.257). 본문 속성이라 같음 비교와 복사에 들지 않는다.
+     * 물리 작업은 시도가 바뀌어도 남는다. 판단 기록에 [everHeld] 와 함께 싣는다(§15.257).
      */
     internal var heldInEarlierAttempt: Boolean = false
 
@@ -415,7 +503,7 @@ data class ExecutionUnit(
      * ([Middleware.resolve]).
      *
      * `internal` 이다. 계약·작업 응답·내보내기·판단 기록에 싣지 않는다 — 리비전과 리빌드가 [LogicalCapability.plan] 을 다시 불러
-     * 이 값을 다시 채운다. 데이터 클래스의 본문 속성이라 같음 비교와 복사에 들지 않는다([robotBinding] 과 같다).
+     * 이 값을 다시 채운다.
      */
     internal var after: String? = null
 }

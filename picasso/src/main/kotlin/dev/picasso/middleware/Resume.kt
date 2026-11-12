@@ -65,7 +65,7 @@ internal fun Middleware.restore(execution: Execution, record: JudgmentRecord): I
         execution.physicalState = PhysicalState.CANCELING
         execution.trail(RESUME_RECORD, "cancel requested before restart — 걸린 채로 짓고 첫 pump 가 하위로 보낸다")
     }
-    execution.acknowledgedFaults += record.acknowledgedFaults
+    execution.mutableAcknowledgedFaults += record.acknowledgedFaults
     if (record.acknowledgedFaults.isNotEmpty()) {
         execution.trail(RESUME_RECORD, "acknowledged faults: ${record.acknowledgedFaults.joinToString()}")
     }

@@ -90,26 +90,26 @@ private fun Middleware.record(robotId: String, event: Event, live: List<Executio
         event.hasTaskTransition() -> {
             val tr = event.taskTransition
             live.filter { e -> e.units.any { it.taskId == tr.taskId } }.forEach {
-                it.eventTrail += ObservedEvent(seq, at, "TASK_TRANSITION", "${tr.taskId} ${tr.from.name}->${tr.to.name} rev=${tr.revision} attempt=${tr.attempt}")
+                it.mutableEventTrail += ObservedEvent(seq, at, "TASK_TRANSITION", "${tr.taskId} ${tr.from.name}->${tr.to.name} rev=${tr.revision} attempt=${tr.attempt}")
             }
         }
         event.hasFaultEvent() -> {
             val f = event.faultEvent
             val kind = if (f.cleared) "FAULT_CLEARED" else "FAULT_RAISED"
-            live.forEach { it.eventTrail += ObservedEvent(seq, at, kind, "${f.fault.errorType} class=${canonicalClassOf(f.fault)} can_accept_new_task=${f.fault.canAcceptNewTask}") }
+            live.forEach { it.mutableEventTrail += ObservedEvent(seq, at, kind, "${f.fault.errorType} class=${canonicalClassOf(f.fault)} can_accept_new_task=${f.fault.canAcceptNewTask}") }
             // 스냅숏 둘 사이에 걷혔다가 다시 생긴 결함은 스냅숏만으로는 같은 결함으로 보인다 — 걷힘 이벤트가 그것을 가른다.
             if (f.cleared) faultKey(f.fault).let { key -> live.forEach { forgetAcknowledged(it, robotId, key, "robot=$robotId 가 걷혔다고 알렸다(seq=$seq)") } }
         }
         event.hasCapabilityChanged() -> {
             val c = event.capabilityChanged
-            live.forEach { it.eventTrail += ObservedEvent(seq, at, "CAPABILITY_CHANGED", "epoch=${c.capabilityEpoch} added=${c.addedList} removed=${c.removedList} cause=${c.cause.name}") }
+            live.forEach { it.mutableEventTrail += ObservedEvent(seq, at, "CAPABILITY_CHANGED", "epoch=${c.capabilityEpoch} added=${c.addedList} removed=${c.removedList} cause=${c.cause.name}") }
         }
         event.hasSkillTransition() -> {
             // 스킬 인스턴스의 전이(READY→ACTIVE→HALTED…). 태스크 전이가 결과를 말하지만 이것이 그 아래의 걸음이고,
             // **재생을 이어 붙이는 검사가 이것에 기댄다** — 마지막으로 읽은 이벤트가 스킬 전이일 때 커서가 안 나아가면 여기서 중복이 보인다.
             val st = event.skillTransition
             live.filter { e -> e.units.any { it.taskId == st.taskId } }.forEach {
-                it.eventTrail += ObservedEvent(seq, at, "SKILL_TRANSITION", "${st.taskId} ${st.skillType} ${st.from.name}->${st.to.name}")
+                it.mutableEventTrail += ObservedEvent(seq, at, "SKILL_TRANSITION", "${st.taskId} ${st.skillType} ${st.from.name}->${st.to.name}")
             }
         }
         else -> Unit
@@ -127,7 +127,7 @@ private fun Middleware.forgetAcknowledged(execution: Execution, robotId: String,
     with(execution) {
         if (key !in acknowledgedFaults) return
         if (robots.any { it != robotId && views[it]?.let { v -> v.observable && v.faultsObservable && key in v.faults } == true }) return
-        acknowledgedFaults -= key
+        mutableAcknowledgedFaults -= key
         trail(ACKNOWLEDGED_FAULT_CLEARED, "$key: $why — 다시 생기면 새 결함으로 막는다")
     }
 }

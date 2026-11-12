@@ -3140,6 +3140,20 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+309. **의존 정비 S3 — 실행과 단위의 공개 세터·가변 컬렉션을 닫는다.**
+
+    의존 정비 S3 단계다. S2(PR #14, §15.308) 다음 작업이다. 동작 변경은 없다.
+
+    ★**소유자 결정 ②를 C 안으로 받아 공개 읽기 프로퍼티를 그대로 계약으로 두고, 쓰기를 `internal set`과 읽기 전용 컬렉션으로 닫는다.** 2026-11-13에 결정했다. 읽기 인터페이스(`ExecutionView`·`ExecutionUnitView`)는 두지 않는다. 자문(Codex·Fable)이 둘 다 이 안을 권했다. 인터페이스 안(B)은 mission-ops 약 20줄과 공개 `LogicalCapability.plan()`의 단위 타입 재설계가 들고 지금 얻는 것이 없다. 뷰가 필요해지면 S4에서 이 위에 얹는다.
+
+    `Execution`은 생성자의 `var order`·`var robotId`를 생성자 인자로 바꾸고 본문 `var … internal set`으로 옮겼다. 공개 컬렉션 넷(`units`·`acknowledgedFaults`·`eventTrail`·`lateEvents`)은 공개 타입이 `List`·`Set`인 살아 있는 읽기 뷰(`Collections.unmodifiableList/Set`)다. 쓰기는 internal 뒷받침 `mutableUnits` 등으로 한다. `units`는 받은 목록을 복사해 쥔다.
+
+    `ExecutionUnit`은 `data class`를 일반 `class`로 바꿨다. 생성자 프로퍼티에는 `internal set`을 붙일 수 없어서다. 생성자의 공개 `var` 30개를 생성자 인자와 본문 `var … internal set`으로 옮겼다. 인자의 이름·순서·기본값은 그대로라 호출부(main 9곳, 시험 6 파일)가 안 바뀐다. 자동 `copy`·`componentN`·`equals`·`hashCode`·`toString`이 사라진다. `copy`와 구조 분해를 쓰던 곳은 picasso와 mission-ops 모두 0이다. `equals`에 기대던 picasso 시험 두 곳(`DefinedCapabilityEquivalenceTest`)은 뒷받침 필드 전부를 리플렉션으로 대조하게 바꿨다. 데이터 클래스 같음 비교가 빼던 본문 속성까지 전보다 넓게 본다. `copy(state = …)`로 세터를 우회하던 공개 길도 함께 닫혔다. KDoc의 «데이터 클래스의 본문 속성이라 같음 비교와 복사에 들지 않는다» 문구 다섯 곳을 지웠다.
+
+    예산은 `UNIT_VARS` 36과 `EXECUTION_VARS` 13을 그대로 둔다. 옮긴 `var`도 네 칸 들여쓰기라 그대로 센다. 예산 시험의 단위 블록 시작 정규식을 `^class ExecutionUnit\(`로 바꿨다. `EXECUTION_COLLECTIONS`는 10에서 11로 늘렸다. 단위 열이 생성자 인자에서 실행이 쥔 뒷받침(`units.toMutableList()`)이 되어 이제 센다. 전에도 실행이 가진 컬렉션이었으나 생성자로 받아 안 셌다. 상태 증가가 아니라 누락 보정이다. 예산 상향이라 소유자 승인을 받았다(C 안에 포함). 컬렉션 정규식이 `x.toMutableList()` 모양도 센다. 상한을 1씩 낮춘 결함 주입(36→35, 11→10)이 둘 다 실패로 잡혔다.
+
+    picasso `./gradlew cleanTest build -x :harness:test -x :registry:test` 시험 1,831건에서 실패 0, 번들 동치 12/12를 확인했다. mission-ops(`fcb1a30`)를 picasso `a1162e3`과 이 변경으로 컴파일하면 `mission-host/src/test/kotlin/dev/picasso/ops/host/ExecutionControlTest.kt:333` 한 줄(`Cannot access 'hold': it is internal`)만 깨진다. 프로덕션 소스는 안 깨진다. 그 줄을 고친 임시 클론으로 전체 빌드했다. site 41·mission-host 226·e2e 77 은 실패 0 이다. ops-service 498 은 첫 전체 빌드에서 시험 둘이 시험용 DB 연결 실패로 떨어졌고, 다시 돌려 실패 0 이었다(ops-service 는 picasso 미들웨어를 컴파일하지 않는다). 남는 것은 생애·드라이버의 `Middleware` 역참조(S4)다. 층 시험은 S3 뒤 별도 단계로 진행한다.
+
 308. **의존 정비 S2 — `Execution` 을 `Middleware` 밖 최상위 클래스로 옮긴다.**
 
     의존·구조 정비 S2 작업이다. S0 소비자 검증(PR #12)과 S1 타입 이사(PR #13, §15.307) 다음 단계다. 동작 변경은 없다. 기존 `Execution` 은 `Middleware` 의 `inner class` 였다. 바깥 `Middleware` 를 붙잡는 곳이 `assignedAt = now()`, `command = CommandLifecycle(this@Middleware, this)`, `noteLate` 안의 `stateTime(update)` 세 곳이었다. 이 때문에 실행 상태가 조율자 클래스 안에 갇혀 있었고 파일 그래프의 큰 성분이 `Middleware` 를 지나야 했다.

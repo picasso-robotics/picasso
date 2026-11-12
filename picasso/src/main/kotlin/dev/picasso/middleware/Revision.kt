@@ -155,8 +155,8 @@ internal fun Middleware.revise(
         units.addAll(at, prefix)
         execution.approvedBy = approvedBy
     }
-    execution.units.clear()
-    execution.units.addAll(units)
+    execution.mutableUnits.clear()
+    execution.mutableUnits.addAll(units)
     execution.order = order
     if (execution.physicalState == PhysicalState.PARTIAL || execution.physicalState == PhysicalState.UNVERIFIED ||
         execution.physicalState == PhysicalState.FAILED

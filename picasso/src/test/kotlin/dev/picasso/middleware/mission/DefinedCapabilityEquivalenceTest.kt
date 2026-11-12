@@ -11,6 +11,7 @@ import dev.picasso.middleware.Route
 import dev.picasso.middleware.SourceObservation
 import dev.picasso.middleware.UnitState
 import dev.picasso.middleware.WaitSpec
+import java.lang.reflect.Modifier
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -55,6 +56,14 @@ class DefinedCapabilityEquivalenceTest {
         "빈 작업 지시" to order(),
     )
 
+    /** 두 단위의 뒷받침 필드 가운데 값이 다른 것의 이름. 단위는 같음 비교가 없는 일반 클래스라 필드로 댄다 — 새 칸도 저절로 든다. */
+    private fun differing(e: ExecutionUnit, a: ExecutionUnit): List<String> =
+        ExecutionUnit::class.java.declaredFields
+            .filterNot { Modifier.isStatic(it.modifiers) || it.isSynthetic }
+            .onEach { it.isAccessible = true }
+            .filter { it.get(e) != it.get(a) }
+            .map { it.name }
+
     /** 대조하는 칸. 하나씩 이름을 붙여 어느 칸이 갈렸는지 보이게 한다. */
     private val fields: Map<String, (ExecutionUnit) -> Any?> = mapOf(
         "단위 id" to { it.unitId },
@@ -81,8 +90,8 @@ class DefinedCapabilityEquivalenceTest {
                 fields.forEach { (field, of) ->
                     assertEquals(of(e), of(a), "$shape: ${at + 1}번째 단위의 $field 이 갈렸다")
                 }
-                // 칸 목록이 낡으면(새 칸이 생기면) 위 대조가 빠뜨린다 — 통째로도 댄다.
-                assertEquals(e, a, "$shape: ${at + 1}번째 단위가 갈렸다")
+                // 칸 목록이 낡으면(새 칸이 생기면) 위 대조가 빠뜨린다 — 뒷받침 필드 전부로도 댄다(§15.309, 단위는 일반 클래스다).
+                assertEquals(emptyList(), differing(e, a), "$shape: ${at + 1}번째 단위가 갈렸다")
             }
         }
     }
@@ -124,7 +133,9 @@ class DefinedCapabilityEquivalenceTest {
             wait.parameters,
         )
         // 대기 뒤는 버전 1 과 같은 계획이다.
-        assertEquals(code.plan(shapes.getValue("제시 자리 있음")), planned.drop(1))
+        val expected = code.plan(shapes.getValue("제시 자리 있음"))
+        assertEquals(expected.size, planned.size - 1)
+        expected.zip(planned.drop(1)).forEachIndexed { at, (e, a) -> assertEquals(emptyList(), differing(e, a), "${at + 1}번째 단위가 갈렸다") }
     }
 
     @Test
