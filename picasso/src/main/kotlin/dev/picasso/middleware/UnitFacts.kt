@@ -2,12 +2,17 @@ package dev.picasso.middleware
 
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.contracts.v1.WatchTaskResponse
-import dev.picasso.middleware.Middleware.Companion.DUPLICATE_UNIT_ID
-import dev.picasso.middleware.Middleware.Companion.UNCLASSIFIED
+import dev.picasso.middleware.FailureClassNames.UNCLASSIFIED
 import dev.picasso.middleware.Middleware.Submission
+import dev.picasso.middleware.RefusalReasons.DUPLICATE_UNIT_ID
 
 // 단위와 하류 응답을 읽는 순수 함수(재설계 R5, 설계 일지 §15.305). Middleware 의 상태를 읽지 않아 그 클래스의 멤버일 까닭이 없다 —
 // 멤버로 두면 접합부 파일이 부르려고 internal 로 열어야 한다.
+
+/** [Middleware.DUPLICATE_UNIT_ID] 의 값. 이 파일이 `Middleware` 에 기대지 않게 여기 둔다. */
+internal object RefusalReasons {
+    const val DUPLICATE_UNIT_ID = "계획의 단위 id 가 겹쳐 받지 않는다"
+}
 
 /**
  * 보고서 11.3 — 능력은 최고 등급을 선언하고 요청은 요구 등급을 지정한다. 확인 수단이 없으면 제공 불가다.

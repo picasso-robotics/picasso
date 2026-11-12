@@ -566,7 +566,9 @@ class DocumentClaimsTest {
 
         // 이름은 밑줄 대문자다. 세 글자짜리(MES·WMS)가 안 걸리게 일곱 자 이상만 본다.
         val mission = read("docs/diagrams/mission.svg")
-        val capability = read("picasso/src/main/kotlin/dev/picasso/middleware/LogicalCapability.kt")
+        // 계약(LogicalCapability.kt)과 구체 업무(CodeCapabilities.kt)를 함께 본다 — 의존 정비 S1(§15.307)이 두 파일로 갈랐다.
+        val capability = read("picasso/src/main/kotlin/dev/picasso/middleware/LogicalCapability.kt") +
+            read("picasso/src/main/kotlin/dev/picasso/middleware/CodeCapabilities.kt")
         val names = Regex("""[A-Z][A-Z_]{6,}""").findAll(mission).map { it.value }.distinct().toList()
         assertTrue(names.size >= 3, "그림에서 이름을 못 읽었다 — 정규식이 낡았나: $names")
         assertEquals(

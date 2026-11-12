@@ -4,12 +4,17 @@ import dev.picasso.contracts.v1.FailureClass
 import dev.picasso.contracts.v1.Fault
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.HoldState
-import dev.picasso.middleware.Middleware.Companion.UNCLASSIFIED
+import dev.picasso.middleware.FailureClassNames.UNCLASSIFIED
 
 // 결과 통보·사건 번들·이벤트 자취가 나눠 쓰는 정준 투영. 분류(canonicalClassOf)는 세 곳이 다 쓰고, 잔여 파지
 // (residualHoldOf)는 통보와 번들이 쓴다. 결함 투영(faultDetailOf)은 번들만 쓰지만 분류를 canonicalClassOf 에서
 // 받으므로 곁에 둔다. 한 클래스에 두면 다른 쪽이 그 클래스를 건너가 읽고, 두 벌로 두면 어느 날 한쪽만 는다(§15.115).
 // 셋 다 상태가 없다.
+
+/** [Middleware.UNCLASSIFIED] 의 값. 이 파일과 [canonicalClassOf] 를 쓰는 하위 파일이 `Middleware` 에 기대지 않게 여기 둔다. */
+internal object FailureClassNames {
+    const val UNCLASSIFIED = "UNCLASSIFIED"
+}
 
 /**
  * 결함 하나를 번들이 드는 모양으로 — **정준 분류와 벤더 원문을 함께**(§15.177).

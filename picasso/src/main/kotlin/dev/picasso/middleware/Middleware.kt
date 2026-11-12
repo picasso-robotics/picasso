@@ -1591,7 +1591,7 @@ class Middleware(
         const val FLEET_REJECTED = "FLEET_REJECTED"
 
         /** 계약 `FailureClass.UNCLASSIFIED` 의 이름 — 하류가 분류를 안 실었을 때의 값. 지어낸 분류가 아니다. */
-        const val UNCLASSIFIED = "UNCLASSIFIED"
+        const val UNCLASSIFIED = FailureClassNames.UNCLASSIFIED
 
         /** 설비 대기가 이름 있는 신호를 못 읽었다 — 자취의 값 자리. «기대 값이 아님» 과 다르다. */
         internal const val NO_SIGNAL = "no signal"
@@ -1618,7 +1618,7 @@ class Middleware(
          * 작업 지시로 펼친 계획의 단위 id 가 겹쳐 받지 않을 때 거부 사유의 앞머리(§15.227). [submit] 과 리비전이 낸다. 뒤에 겹친
          * id 가 붙는다. [FORGOTTEN_JOB_ORDER] 와 같이 같은 작업 지시로 다시 내도 같다 — 설비 id 를 고친 작업 지시가 와야 받는다.
          */
-        const val DUPLICATE_UNIT_ID = "계획의 단위 id 가 겹쳐 받지 않는다"
+        const val DUPLICATE_UNIT_ID = RefusalReasons.DUPLICATE_UNIT_ID
 
         /** [resume] 이 로봇 단위의 재작업 횟수를 스냅숏 태스크 id 에서 맞췄다는 실행 자취의 종류. */
         const val RESUME_ATTEMPT = "RESUME_ATTEMPT"
