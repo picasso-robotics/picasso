@@ -3140,6 +3140,14 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+303. **재설계 R3 — 명령 생애를 실행마다의 객체 `CommandLifecycle` 로 옮긴다(한계 대장 «§15.298»).**
+
+    명령 생애 넷(`LifecycleIssue` `LifecycleDoubt` `LifecycleCancelAttach` `LifecycleCancel`)의 `fun Middleware.x(execution, …)` 43개를 `fun CommandLifecycle.x(…)` 로 바꿨다. `CommandLifecycle` 은 실행마다 하나이고(`execution.command`) 제 상태를 든다. 취소의 네 축(§15.301)과 송신 기록 셋(보내는 중인 출발·맡기기, 미룬 갱신)이다. 확장은 포트와 자취·통보를 `with(mw)` 로 부른다. 실행을 읽지 않는 포트 보조 여덟(`transportOrderOf` `issueStart` `issueDispatch` `handleFor` `lookupOf` `unansweredAttach` `findNow` `statusNow`)은 새 접합부 `CommandPorts.kt` 로 갔다. 생애 넷은 접합부 목록을 떠났다. 거기에 `fun Middleware.` 가 다시 서면 `SeamPlacementTest` 가 빨개진다(주입으로 확인). 라운드 안의 순서는 `pumpRound` 에 그대로 있다(계획서 원칙 5).
+
+    `EXECUTION_VARS` 는 20 에서 13 으로 내려 계획서 목표에 닿았다. `Middleware.kt` 와 접합부의 실코드 합은 2,650(2차 분할 실측)에서 1,840 이 되어 `TOTAL` 을 2,780 에서 1,880 으로 내렸다. 새 상한 `OPEN_MEMBERS = 30` 이 `Middleware` 의 `internal` 멤버를 센다. 생애 쪽에서만 쓰던 셋 가운데 `endedOnRobot` 은 순수 함수라 `CommandPorts.kt` 의 최상위로 옮겨 닫았다. `inDoubtGraceOf` 는 `Middleware` 의 라운드 값을, `droppedOptionals` 는 기체를 가로지르는 표시를 들어 남겼다.
+
+    ★**변환은 기계로 했다.** 본문은 `with(mw)` 로 감쌌고 한 줄도 고치지 않았다. 부르는 자리의 `x(execution, …)` 를 `execution.command.x(…)` 로 바꿨다. 남는 위험은 이름 해석이다. `with(mw)` 안에서는 `Middleware` 의 멤버가 `CommandLifecycle` 의 것을 가린다. 지금 두 쪽에 겹치는 속성 이름은 없다. `Middleware.execution(id)` 는 함수라 속성 `execution` 을 가리지 않는다. 시험 소스는 접합부 목록과 예산 말고는 고치지 않았다. 시험이 읽던 `inFlight`·`fleetInFlight`·`deferredUpdate` 는 실행의 읽기 속성으로 남겼다. 세 상한을 1 씩 낮추면 각자의 예산 시험이 빨개진다. 시험은 하나 늘었다(2,446 → 2,447).
+
 302. **재설계 R2 — «한 번만 알림» 아홉을 열쇠 하나로 붙는 장부로 모은다(한계 대장 «§15.298»).**
 
     `Execution` 에서 같은 사실을 한 번만 내려고 든 표시 아홉을 `Notices.kt` 의 `Noticed` 하나로 모았다. `var` 다섯(`notedDelay` `notedHold` `notedDoubt` `notedBlock` `lastNotified`)과 컬렉션 넷(`pumpFailures` `clockSkewNoted` `signalSeen` `seenLate`)이다. 자리마다 `Notice` 의 열쇠가 하나씩 있고, `note(열쇠, 값)` 이 앞과 같은 값이면 거짓을 돌려준다. 새 알림은 열쇠 하나를 더해 붙는다. 필드는 늘지 않는다. `EXECUTION_VARS` 는 25 에서 20 으로, `EXECUTION_COLLECTIONS` 는 14 에서 10 으로 내렸다.

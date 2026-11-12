@@ -81,19 +81,19 @@ internal fun Middleware.revise(
             }
             // **보내는 중인 첫 출발의 단위는 바꾸지 않고 고친다**(§15.237). 바꾸면 그 출발의 결과가 받을 단위를 잃는다. 새 판의 계획과
             // 기대는 그 단위에 싣고 갱신은 접수를 본 뒤로 미룬다 — 기체에서 돌 것은 보내는 중인 리비전이다. 취소가 걸렸으면 그대로 둔다.
-            UnitState.PENDING -> if (execution.inFlight?.unitId == unit.unitId) {
+            UnitState.PENDING -> if (execution.command.inFlight?.unitId == unit.unitId) {
                 val fresh = replanned[unit.unitId]
                 if (fresh != null && !execution.cancelRequested) {
-                    val sending = checkNotNull(execution.inFlight).revision
+                    val sending = checkNotNull(execution.command.inFlight).revision
                     unit.revision = order.version
                     unit.parameters = fresh.parameters
                     unit.expectedIdentity = fresh.expectedIdentity
                     unit.source = fresh.source
                     unit.destination = fresh.destination
-                    execution.deferredUpdate = execution.deferredUpdate ?: sending
+                    execution.command.deferredUpdate = execution.command.deferredUpdate ?: sending
                 }
                 unit
-            } else if (execution.fleetInFlight?.unitId == unit.unitId) {
+            } else if (execution.command.fleetInFlight?.unitId == unit.unitId) {
                 // **맡기는 중인 운반 단위도 바꾸지 않는다**(§15.237). 플릿 계약에 갱신이 없다 — 도는 운반과 같은 규칙이다.
                 unit
             } else {
@@ -123,19 +123,19 @@ internal fun Middleware.revise(
                     // **갱신도 새 로봇 명령이다** — 같은 발행 관문을 지난다(ADR 51 결정 6). 막히면 단위의 리비전과 기대는
                     // 이미 새 판의 것으로 두고 보내기만 미룬다. 그래야 옛 리비전으로 끝난 결과가 지연 이벤트로 읽혀 새 판의
                     // 기대에 대고 확인된다 — 보내지 못한 갱신이 «옛 판대로 끝남» 을 새 판의 완료로 적게 하지 않는다.
-                    val sending = execution.inFlight?.takeIf { it.unitId == unit.unitId }
+                    val sending = execution.command.inFlight?.takeIf { it.unitId == unit.unitId }
                     if (sending != null) {
                         // **보내는 중인 출발이 있으면 갱신을 그 결과 뒤로 미룬다**(§15.237). 같은 기체에 명령 둘을 함께 내지 않는다.
                         // 결과가 접수면 기체에서 도는 것은 보내는 중인 리비전이고, 미룬 갱신이 다음 라운드에 이 리비전으로 나간다.
-                        execution.deferredUpdate = execution.deferredUpdate ?: sending.revision
+                        execution.command.deferredUpdate = execution.command.deferredUpdate ?: sending.revision
                     } else if (issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
                         // 앞 판의 갱신이 미뤄져 있었으면 이 갱신이 그것까지 싣는다 — 기체에서 도는 것은 그 앞 판이다.
-                        val running = execution.deferredUpdate ?: previous
-                        execution.deferredUpdate = null
+                        val running = execution.command.deferredUpdate ?: previous
+                        execution.command.deferredUpdate = null
                         sendRevisionUpdate(execution, unit, running)
                     } else if (unit.state == UnitState.RUNNING) {
                         // 막힌 채 판이 또 오르면 기체에서 도는 것은 여전히 처음 리비전이다 — 그것을 지킨다.
-                        execution.deferredUpdate = execution.deferredUpdate ?: previous
+                        execution.command.deferredUpdate = execution.command.deferredUpdate ?: previous
                     }
                     // `IN_DOUBT` 이면 따로 미룰 것이 없다. 다음 조회가 새 리비전으로 나가고, 그 조회도 같은 관문을 지난다.
                 }
@@ -149,7 +149,7 @@ internal fun Middleware.revise(
     val units = (kept + added).toMutableList()
     if (prefix.isNotEmpty()) {
         // **다시 계획하는 첫 단위 앞에 선다.** 보내는 중인 단위는 그 결과를 기다리므로 그 뒤다. 다시 계획할 단위가 없으면 끝에 선다.
-        val replans = toPlan.map { it.unitId }.toSet() - setOfNotNull(execution.inFlight?.unitId, execution.fleetInFlight?.unitId)
+        val replans = toPlan.map { it.unitId }.toSet() - setOfNotNull(execution.command.inFlight?.unitId, execution.command.fleetInFlight?.unitId)
         val at = units.indexOfFirst { it.unitId in replans }.takeIf { it >= 0 } ?: units.size
         prefix.forEach { it.revision = order.version }
         units.addAll(at, prefix)
@@ -178,9 +178,9 @@ internal fun Middleware.revise(
 internal fun Middleware.sendRevisionUpdate(execution: Execution, unit: ExecutionUnit, previous: Int) {
     val flight = InFlight(
         InFlight.Kind.UPDATE, unit.unitId, execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType,
-        withOptionals(execution, unit, unit.parameters), previous = previous, restore = null,
+        execution.command.withOptionals(unit, unit.parameters), previous = previous, restore = null,
     )
-    settleIssue(execution, flight, issueStart(flight))
+    execution.command.settleIssue(flight, issueStart(flight))
 }
 
 /**
@@ -219,7 +219,7 @@ internal fun Middleware.settleUpdate(execution: Execution, unit: ExecutionUnit, 
             // **보내지 않았다**(§15.237). 기체에서 도는 것은 여전히 [previous] 다 — 미확정으로 두지 않고 갱신을 미룬다. 허가가 막은
             // 갱신과 같은 자리라 다음 라운드의 [pumpRound] 가 발행 게이트를 다시 지나 보낸다. 미확정 단위면 미룰 것이 없다 — 다음 조회가
             // 새 리비전으로 나간다. 보내는 중에 개정이 또 왔어도 기체에서 도는 것은 [previous] 다.
-            if (unit.state == UnitState.RUNNING) execution.deferredUpdate = previous
+            if (unit.state == UnitState.RUNNING) execution.command.deferredUpdate = previous
             unit.annotateOnce(UPDATE_NOT_SENT)
         }
         is Issue.InDoubt -> {
@@ -231,10 +231,10 @@ internal fun Middleware.settleUpdate(execution: Execution, unit: ExecutionUnit, 
             unit.lastLookupAt = null
             unit.annotate("revision $revision update unanswered")
             execution.physicalState = PhysicalState.IN_DOUBT
-            execution.deferredUpdate = null
+            execution.command.deferredUpdate = null
         }
     }
-    if (execution.cancelRequested && unit.state == UnitState.RUNNING) sendCancel(execution)
+    if (execution.cancelRequested && unit.state == UnitState.RUNNING) execution.command.sendCancel()
 }
 
 /**

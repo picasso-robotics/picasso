@@ -42,6 +42,8 @@
 
 **R2 결과(11-12, §15.302):** 다섯과 같은 쓰임의 컬렉션 넷(`pumpFailures` `clockSkewNoted` `signalSeen` `seenLate`)을 `Noticed` 하나로 모았다. `lastNotified` 도 주의 세 칸만 들면 되어 함께 갔다. `EXECUTION_VARS` 20, `EXECUTION_COLLECTIONS` 10.
 
+**R3 결과(11-12, §15.303):** 생애 넷의 확장 43개가 `CommandLifecycle` 의 확장이 됐고 포트 보조 여덟은 `CommandPorts.kt` 로 갔다. `EXECUTION_VARS` 13(목표 도달), `TOTAL` 1,880, 새 상한 `OPEN_MEMBERS` 30. 생애 객체를 확장 파일로 둔 것은 한 파일 600줄 예산 때문이다. 그래서 상태는 `internal` 이고 닫는 일은 R5 몫으로 남는다.
+
 R1 과 R2 는 같은 필드를 안 건드리므로 순서를 바꿀 수 있다. R3 은 R1 뒤에 온다. 취소 축이 명시돼야 생애 객체의 접근면이 작아진다. R4 는 R3 뒤에 온다. 경로 차이가 생애 객체 안에 모여야 드라이버 경계가 보인다.
 
 ## 4. 사건이 생기면

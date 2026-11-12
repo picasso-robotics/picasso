@@ -255,3 +255,13 @@ R1 이 «취소(R1)» 묶음 아홉과 송신 묶음의 취소 둘을 `CancelAxe
 | `pumpFailures` `clockSkewNoted` `signalSeen` `seenLate` | `Notice.PumpFailure(source)` `ClockSkew(robot)` `Signal(taskId)` `Late(unit, revision, state)` |
 
 쓰는 함수와 읽는 함수는 §2.2 표의 그 행과 같다. 필드 대신 `execution.noticed.note·clear·set` 을 부른다.
+
+## 8. R3 뒤 (§15.303)
+
+| 옛 자리 | 새 자리 |
+|---|---|
+| `Execution.cancelIntent` `cancelDelivery` `cancelWait` `cancelSending` `inFlight` `fleetInFlight` `deferredUpdate` | `execution.command` (`CommandLifecycle`) 의 같은 이름 |
+| `fun Middleware.x(execution, …)` 43개(생애 넷) | `fun CommandLifecycle.x(…)` — 같은 파일 |
+| 포트 보조 여덟과 `TaskState.endedOnRobot` | `CommandPorts.kt` |
+
+§2.2 표의 «쓰는 곳» 에서 생애 네 파일은 이제 `CommandLifecycle` 의 확장이다. 함수 이름은 같다.
