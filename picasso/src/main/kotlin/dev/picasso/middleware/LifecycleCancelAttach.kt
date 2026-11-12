@@ -72,7 +72,7 @@ internal fun Middleware.attachByKey(execution: Execution, unit: ExecutionUnit, h
     execution.handle = handle
     unit.state = UnitState.RUNNING
     unit.streamLostAt = null
-    execution.notedDoubt = null
+    execution.noticed.clear(Notice.Doubt)
     unit.annotate("IN_DOUBT resolved by keyed cancel: ${unit.taskId} revision ${unit.revision}")
     execution.trail(DOUBT_ATTACHED, "${unit.unitId}: 키로 지은 핸들(${unit.taskId}, 리비전 ${unit.revision})로 보낸 취소를 기체가 받아 StartTask 없이 붙었다")
     execution.physicalState = PhysicalState.CANCELING

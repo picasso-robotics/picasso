@@ -286,24 +286,11 @@ class Middleware(
         internal val fleetCancelInFlight: FleetCancelFlight? get() = cancelSending.fleet
 
         /**
-         * 라운드 진행([PUMP_SOURCE])과 기체 동기화(`sync:<기체>`)에서 포트가 던진 마지막 까닭. 같은 자리가 같은 까닭으로 계속 던지면
-         * 트레이스에 한 번만 남기려는 표시이고, 그 자리가 한 번 성공하면 지운다.
+         * **알린 것**(§15.302, `Notices.kt`). 지연 보고·운영자 보류·미확정·막음 통보, 마지막 작업 응답이 보인 주의([noteAttention]),
+         * 포트가 던진 까닭([PUMP_SOURCE]·`sync:<기체>`), 기체마다의 시계 차([CLOCK_SKEW]), 설비 대기의 신호 값, 지연 이벤트를 자리마다
+         * 한 번만 낸다. 새 자리는 [Notice] 에 열쇠를 더해 붙는다.
          */
-        internal val pumpFailures: MutableMap<String, String> = mutableMapOf()
-
-        /**
-         * 기체마다 [CLOCK_SKEW] 로 남긴 마지막 시계 차의 방향·크기 등급. 같은 등급이 이어지는 동안 되풀이하지 않으려는 표시이고,
-         * 시계 차가 다시 허용 안으로 들어오면 지운다.
-         */
-        internal val clockSkewNoted: MutableMap<String, String> = mutableMapOf()
-        /** 지연 보고·운영자 보류·미확정 통보를 한 번만 내기 위한 표시. */
-        internal var notedDelay: String? = null
-        internal var notedHold: String? = null
-        internal var notedDoubt: String? = null
-        internal var notedBlock: String? = null
-
-        /** 이 실행의 마지막 작업 응답. 막음·보류·미확정이 풀렸는지를 이것과 대 본다([noteAttention]). */
-        internal var lastNotified: JobResponse? = null
+        internal val noticed = Noticed()
 
         /** 지금 다음 단위를 막고 있는 기체 수준 결함. 비어 있으면 막힌 것이 없다. */
         var blockedBy: List<Fault> = emptyList()
@@ -358,12 +345,6 @@ class Middleware(
             internal set
 
         /**
-         * 설비 대기가 마지막으로 자취에 남긴 신호 값 — 태스크 id(시도마다 다르다)로 단다. 값이 바뀔 때만 남기기 위한
-         * 표시다. 재작업하면 새 시도라 첫 값을 다시 남긴다.
-         */
-        internal val signalSeen: MutableMap<String, String> = mutableMapOf()
-
-        /**
          * [resume] 이 마지막 로봇 태스크보다 앞선 것으로 둔 로봇 단위. 다시 관측한 성공에 설비 근거를 다시 묻지 않는다. 이전
          * 인스턴스가 이미 판정했고 설비 값은 그 뒤 바뀌었을 수 있다.
          */
@@ -385,11 +366,9 @@ class Middleware(
 
         /** 지연 이벤트(15.1) — 옛 버전의 종착. 폐기하지 않는다. */
         val lateEvents: MutableList<LateEvent> = mutableListOf()
-        private val seenLate = mutableSetOf<Triple<String, Int, String>>()
 
         internal fun noteLate(unit: ExecutionUnit, update: WatchTaskResponse) {
-            val key = Triple(unit.unitId, update.revision, update.state.name)
-            if (!seenLate.add(key)) return
+            if (!noticed.note(Notice.Late(unit.unitId, update.revision, update.state.name), true)) return
             lateEvents += LateEvent(unit.unitId, update.revision, unit.revision, update.state.name, stateTime(update))
         }
 
@@ -908,7 +887,7 @@ class Middleware(
             val source = "sync:$robot"
             try {
                 sync(robot, related)
-                related.forEach { it.pumpFailures.remove(source) }
+                related.forEach { it.noticed.clear(Notice.PumpFailure(source)) }
             } catch (e: RuntimeException) {
                 related.forEach { it.notePumpFailure(source, "robot=$robot 동기화", e) }
             }
@@ -936,7 +915,7 @@ class Middleware(
     /** 포트가 던진 것을 이 실행의 트레이스에 남긴다. [source] 마다 같은 까닭은 한 번만 남는다. */
     private fun Execution.notePumpFailure(source: String, where: String, e: RuntimeException) {
         val cause = "${e::class.simpleName}: ${e.message}"
-        if (pumpFailures.put(source, cause) == cause) return
+        if (!noticed.note(Notice.PumpFailure(source), cause)) return
         trail(PUMP_FAILED, "$where 중 포트가 던졌다 ($cause) — 상태는 그대로 두고 다음 라운드에 다시 본다")
     }
 
@@ -1018,10 +997,10 @@ class Middleware(
     internal fun Execution.noteClockSkew(robot: String, offset: ClockOffset) {
         val suspicion = clockSuspicionOf(this, offset)
         if (suspicion == null) {
-            clockSkewNoted.remove(robot)
+            noticed.clear(Notice.ClockSkew(robot))
             return
         }
-        if (clockSkewNoted.put(robot, suspicion.signature) == suspicion.signature) return
+        if (!noticed.note(Notice.ClockSkew(robot), suspicion.signature)) return
         trail(
             CLOCK_SKEW,
             "robot=$robot ${suspicion.describe()} (임계 ${suspicion.threshold.toMillis() / 1000.0}초) — 근거 시간 윈도우가 이 차를 그대로 먹는다. 판정은 바꾸지 않는다",
@@ -1071,7 +1050,7 @@ class Middleware(
         try {
             // 보내는 중인 취소가 있으면 그 결과부터 받는다. 아직이면 이 라운드는 진행하지 않는다.
             if (!pollCancel(execution)) pumpRound(execution)
-            execution.pumpFailures.remove(PUMP_SOURCE)
+            execution.noticed.clear(Notice.PumpFailure(PUMP_SOURCE))
         } catch (e: RuntimeException) {
             execution.notePumpFailure(PUMP_SOURCE, "라운드 진행", e)
         }
@@ -1195,8 +1174,7 @@ class Middleware(
         if (held != null) {
             if (execution.cancelUnsent && (execution.cancelWait as? CancelWait.Held)?.unitId == held.unitId) resendHeldCancel(execution, held)
             execution.physicalState = PhysicalState.OPERATOR_HOLD
-            if (execution.notedHold != held.unitId) {
-                execution.notedHold = held.unitId
+            if (execution.noticed.note(Notice.Hold, held.unitId)) {
                 notify(execution)
             }
             return
@@ -1231,8 +1209,7 @@ class Middleware(
             execution.blockedBy = blocking
             execution.physicalState = PhysicalState.OPERATOR_HOLD
             val key = blocking.joinToString { faultKey(it) }
-            if (execution.notedBlock != key) {
-                execution.notedBlock = key
+            if (execution.noticed.note(Notice.Block, key)) {
                 notify(execution)
             }
             return
@@ -1242,7 +1219,7 @@ class Middleware(
             // 결함이 다음 경계에서 다시 설 때 알리지 않는다. 걷힌 것을 알리는 것은 라운드 끝의 대조다([noteAttention]) — 여기서 알리면
             // 아래 출발이 미확정을 알릴 때 한 라운드에 둘이 나간다.
             execution.blockedBy = emptyList()
-            execution.notedBlock = null
+            execution.noticed.clear(Notice.Block)
             execution.physicalState = PhysicalState.RUNNING
         }
         // 막히면 단위는 `PENDING` 그대로 기다린다. 실패도 운영자 보류도 아니고, 허가가 돌아오는 라운드에 나간다.
@@ -1342,7 +1319,7 @@ class Middleware(
         if (execution.blockedBy.isEmpty()) return false
         execution.blockedBy.forEach { execution.acknowledgedFaults += faultKey(it) }
         execution.blockedBy = emptyList()
-        execution.notedBlock = null
+        execution.noticed.clear(Notice.Block)
         execution.physicalState = PhysicalState.RUNNING
         // **막음이 걷힌 것을 곧바로 알린다.** 안 알리면 마지막 작업 응답이 실행이 다음에 알릴 때까지 `OPERATOR_HOLD` 와 감수한
         // 결함의 `blockedBy` 를 든다. 막는 결함이 없으면 위에서 거짓으로 돌아가므로 다시 불러도 응답이 더 나가지 않는다.
@@ -1435,7 +1412,7 @@ class Middleware(
         }
         // 다른 단위가 아직 보류이면 실행은 보류 그대로이고 그 단위를 이미 알린 것으로 둔다. 아니면 보류가 걷힌다.
         val stillHeld = execution.units.firstOrNull { it.state == UnitState.OPERATOR_HOLD }
-        execution.notedHold = stillHeld?.unitId
+        execution.noticed.set(Notice.Hold, stillHeld?.unitId)
         execution.physicalState = if (stillHeld != null) PhysicalState.OPERATOR_HOLD else PhysicalState.RUNNING
         // **보류가 걷힌 것을 곧바로 알린다**([release] 와 같은 이유). 안 알리면 마지막 작업 응답이 다음 통지까지 `OPERATOR_HOLD` 를 든다.
         noteAttention(execution)
@@ -1735,7 +1712,7 @@ class Middleware(
             autoResolvesInDoubt = units.all { lookupOf(it.route) == ExecutionLookup.CLIENT_REFERENCE },
         )
         outbox += response
-        execution.lastNotified = response
+        execution.noticed.set(Notice.Attention, Attention.of(response.physicalState, response.blockedBy, response.inDoubtUnits))
         execution.upstreamAck = UpstreamAck.SENT_UNACKED
     }
 
@@ -1751,7 +1728,7 @@ class Middleware(
     /**
      * **막음·보류·미확정이 마지막 작업 응답과 달라졌으면 알린다 — 풀릴 때도.**
      *
-     * 서는 쪽은 자리마다 한 번씩 알린다(`notedBlock`·`notedHold`·`notedDoubt`). 풀리는 쪽은 자리가 여럿이고(결함이 사라짐, 운영자
+     * 서는 쪽은 자리마다 한 번씩 알린다([Notice.Block]·[Notice.Hold]·[Notice.Doubt]). 풀리는 쪽은 자리가 여럿이고(결함이 사라짐, 운영자
      * 판단, 조회가 미확정을 풂, 개정 갱신의 답) 자리마다 알리면 한 라운드에 둘이 나가거나 하나가 빠진다. 그래서 라운드 끝([pump])과
      * 밖에서 오는 판단([resolve]·개정) 끝에서 한 번 대 본다. 같으면 내지 않는다 — 앞 자리가 이미 알렸으면 여기서 다시 내지 않는다.
      *
@@ -1763,8 +1740,7 @@ class Middleware(
             execution.blockedBy.map { canonicalClassOf(it) },
             execution.units.filter { it.state == UnitState.IN_DOUBT }.map { it.unitId },
         )
-        val last = execution.lastNotified?.let { Attention.of(it.physicalState, it.blockedBy, it.inDoubtUnits) }
-            ?: Attention(null, emptyList(), emptyList())
+        val last = execution.noticed[Notice.Attention] as? Attention ?: Attention(null, emptyList(), emptyList())
         if (current != last) notify(execution)
     }
 
@@ -2010,7 +1986,7 @@ class Middleware(
             TransportState.DELIVERED, TransportState.REJECTED_AT_SOURCE, TransportState.CANCELLED, TransportState.FAILED,
         )
 
-        /** 라운드 진행([PUMP_SOURCE])의 실패를 [Execution.pumpFailures] 에 적는 자리 이름. 기체 동기화는 `sync:<기체>` 다. */
+        /** 라운드 진행([PUMP_SOURCE])의 실패를 [Execution.noticed] 에 적는 자리 이름. 기체 동기화는 `sync:<기체>` 다. */
         private const val PUMP_SOURCE = "pump"
 
         /**

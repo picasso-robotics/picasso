@@ -57,7 +57,7 @@ class SourceSizeBudgetTest {
     fun `실행의 가변 필드와 라운드 함수가 구조 예산 안에 있다`() {
         val lines = MiddlewareSeams.sources().getValue("Middleware.kt").split("\r\n", "\n")
 
-        // 실행의 가변 필드. 취소·미확정 같은 생애가 여기에 널과 불리언으로 쌓였다(9/30 18개 → 11/12 32개 → R1 25개).
+        // 실행의 가변 필드. 취소·미확정 같은 생애가 여기에 널과 불리언으로 쌓였다(9/30 18개 → 11/12 32개 → R1 25개 → R2 20개).
         val execution = block(lines, Regex("^    inner class Execution\\b"))
         val fields = execution.count { Regex("^        (internal |private )?var ").containsMatchIn(it) }
         assertTrue(fields > 0, "실행의 가변 필드를 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
@@ -97,15 +97,16 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-12 재설계 R2 실측: 실행의 가변 필드 20, 가변 컬렉션 10(«한 번만 알림» 아홉을 Noticed 하나로, §15.302).
         // 2026-11-12 재설계 R1 실측: 실행의 가변 필드 25(취소 필드 열하나를 네 축으로, §15.301).
         // 2026-11-12 재설계 R0 실측: 실행의 가변 컬렉션 14, 실행 단위의 가변 필드 36(생성자 30, 본문 6).
         const val MIDDLEWARE = 1_080
         const val SEAM = 500
         const val TOTAL = 2_780
         const val OTHER = 600
-        const val EXECUTION_VARS = 25
+        const val EXECUTION_VARS = 20
         const val PUMP_ROUND = 180
-        const val EXECUTION_COLLECTIONS = 14
+        const val EXECUTION_COLLECTIONS = 10
         const val UNIT_VARS = 36
 
         /** 여덟 칸 들여 쓴 `val` 가운데 가변 컬렉션 생성기로 초기화한 것. 게터(`get() =`)는 계산 값이라 안 센다. 무리 1 은 이름이다. */

@@ -40,6 +40,8 @@
 
 **R1 결과(11-12, §15.301):** 취소 축은 둘이 아니라 넷(의도, 닿음, 기다림, 보내는 중)이었다. 보내는 중이 다른 셋과 함께 서서 한 타입에 넣을 수 없다. `EXECUTION_VARS` 는 25 다. R1 이 `notedCancelUnsent`·`notedUnattached` 를 «닿음»·«기다림» 의 데이터로 가져갔으므로 R2 에 남은 «한 번만 알림» 은 `notedDelay` `notedHold` `notedDoubt` `notedBlock` `lastNotified` 다섯이다. 하나로 모으면 21 이 된다.
 
+**R2 결과(11-12, §15.302):** 다섯과 같은 쓰임의 컬렉션 넷(`pumpFailures` `clockSkewNoted` `signalSeen` `seenLate`)을 `Noticed` 하나로 모았다. `lastNotified` 도 주의 세 칸만 들면 되어 함께 갔다. `EXECUTION_VARS` 20, `EXECUTION_COLLECTIONS` 10.
+
 R1 과 R2 는 같은 필드를 안 건드리므로 순서를 바꿀 수 있다. R3 은 R1 뒤에 온다. 취소 축이 명시돼야 생애 객체의 접근면이 작아진다. R4 는 R3 뒤에 온다. 경로 차이가 생애 객체 안에 모여야 드라이버 경계가 보인다.
 
 ## 4. 사건이 생기면

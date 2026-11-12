@@ -128,7 +128,7 @@ internal fun Middleware.resolveDoubt(execution: Execution, unit: ExecutionUnit):
         unit.annotate("IN_DOUBT: $lost; no evidence at ${unit.destination} within grace; $why — no automatic re-execution")
     }
     unit.state = UnitState.OPERATOR_HOLD
-    execution.notedDoubt = null
+    execution.noticed.clear(Notice.Doubt)
     // **취소가 걸렸는데 핸들이 없다** — 취소가 하위에 닿지 못했다. 이 단위를 든 채 실행을 중단으로 닫으면 기체가 응답을 잃은 그
     // 태스크를 하는 동안 실행이 기체를 내준다. 운영자 판단까지 보류에 둔다(§15.92, §15.238).
     if (execution.cancelRequested && execution.handle == null && execution.transport == null) holdUnsentCancel(execution, unit)
@@ -161,7 +161,7 @@ private fun Middleware.attachFromSnapshot(execution: Execution, unit: ExecutionU
     execution.handle = handleFor(robot, unit.taskId, unit.revision)
     unit.state = UnitState.RUNNING
     unit.streamLostAt = null
-    execution.notedDoubt = null
+    execution.noticed.clear(Notice.Doubt)
     unit.annotate("IN_DOUBT resolved by snapshot attach: ${unit.taskId}=${state.name} revision ${unit.revision}")
     execution.trail(DOUBT_ATTACHED, "${unit.unitId}: 스냅숏의 ${unit.taskId}=${state.name}(리비전 ${unit.revision})에 StartTask 없이 붙었다")
     execution.physicalState = if (execution.cancelRequested) PhysicalState.CANCELING else PhysicalState.RUNNING
@@ -183,7 +183,7 @@ private fun Middleware.holdRevisionAhead(execution: Execution, unit: ExecutionUn
     val held = view.taskRevisions[unit.taskId]?.takeIf { it > unit.revision } ?: return false
     unit.annotate("IN_DOUBT: robot holds ${unit.taskId} at revision $held above unit revision ${unit.revision}; not attached, no lookup — confirm")
     unit.state = UnitState.OPERATOR_HOLD
-    execution.notedDoubt = null
+    execution.noticed.clear(Notice.Doubt)
     execution.trail(DOUBT_REVISION_AHEAD, "${unit.unitId}: 기체가 ${unit.taskId} 를 단위 리비전 ${unit.revision} 보다 높은 리비전 $held 로 든다 — 붙지 않고 운영자 판단을 기다린다")
     execution.markIncident(unit)
     return true
@@ -224,14 +224,14 @@ internal fun Middleware.lookupFound(execution: Execution, unit: ExecutionUnit, f
     if (found) {
         unit.state = UnitState.RUNNING
         // 풀린 것은 라운드 끝의 대조가 알린다([noteAttention]). 표시를 걷어야 재작업한 같은 단위가 다시 미확정이 될 때 알린다.
-        execution.notedDoubt = null
+        execution.noticed.clear(Notice.Doubt)
         unit.annotate("IN_DOUBT resolved by client-reference lookup after ${unit.lookups} lookup(s)")
         execution.physicalState = if (execution.cancelRequested) PhysicalState.CANCELING else PhysicalState.RUNNING
         if (execution.cancelRequested) sendCancel(execution)
         return false
     }
     if (unit.state == UnitState.FAILED) { // 하류가 이 요청을 거절했다 — 미실행이 확인된 것이고 그 사유는 우리 어휘다
-        execution.notedDoubt = null
+        execution.noticed.clear(Notice.Doubt)
         return true
     }
     execution.physicalState = PhysicalState.IN_DOUBT

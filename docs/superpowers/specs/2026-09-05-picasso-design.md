@@ -3140,6 +3140,14 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+302. **재설계 R2 — «한 번만 알림» 아홉을 열쇠 하나로 붙는 장부로 모은다(한계 대장 «§15.298»).**
+
+    `Execution` 에서 같은 사실을 한 번만 내려고 든 표시 아홉을 `Notices.kt` 의 `Noticed` 하나로 모았다. `var` 다섯(`notedDelay` `notedHold` `notedDoubt` `notedBlock` `lastNotified`)과 컬렉션 넷(`pumpFailures` `clockSkewNoted` `signalSeen` `seenLate`)이다. 자리마다 `Notice` 의 열쇠가 하나씩 있고, `note(열쇠, 값)` 이 앞과 같은 값이면 거짓을 돌려준다. 새 알림은 열쇠 하나를 더해 붙는다. 필드는 늘지 않는다. `EXECUTION_VARS` 는 25 에서 20 으로, `EXECUTION_COLLECTIONS` 는 14 에서 10 으로 내렸다.
+
+    계획서(§15.299)의 R2 목표는 «17 이하» 였다. R1 이 23 이 아니라 25 에서 끝났고(§15.301), `notedCancelUnsent`·`notedUnattached` 는 R1 이 취소 축의 데이터로 가져갔다. 그래서 R2 가 덜어 낼 `var` 는 다섯이었고 20 에서 멈췄다. `lastNotified` 는 작업 응답 전체를 들고 있었지만 읽는 자리는 `noteAttention` 하나였고, 거기서도 주의 세 칸(보류·미확정인 실행 상태, 막는 결함, 미확정 단위)만 봤다. 그래서 응답 대신 그 세 칸을 `Notice.Attention` 에 둔다.
+
+    ★**지연 이벤트의 중복 막기를 지키는 시험이 없다.** `note` 가 늘 참을 돌려주게 하면 `PumpSafetyTest`·`ClockSkewTest`·`PumpIsolationTest`·`EquipmentWaitTest` 의 열이 빨개진다. 같은 지연 이벤트를 두 번 적는 쪽(`Notice.Late`)은 아무 시험도 안 잡는다. `LateEventTest` 셋이 초록이었다. 고치지 않고 적는다. 상한을 1 씩 낮추면 «실행의 가변 필드와 라운드 함수가 구조 예산 안에 있다()» 가 `var`·컬렉션 각각으로 빨개진다. 시험 소스는 예산 상수 말고는 고치지 않았다.
+
 301. **재설계 R1 — 취소 필드 열하나를 네 축의 봉인 타입으로 가른다(한계 대장 «§15.298»).**
 
     `Execution` 의 취소 필드 열하나를 `CancelAxes.kt` 의 네 타입으로 바꿨다. 계획서(§15.299)의 출발안은 의도와 진행 두 축이었다. 상태 지도(§15.300)를 따라 함께 서는 조합을 세어 보니 넷이어야 했다.

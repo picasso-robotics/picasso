@@ -245,3 +245,13 @@ R1 이 «취소(R1)» 묶음 아홉과 송신 묶음의 취소 둘을 `CancelAxe
 | 보내는 중 × 응답 냄 | 끝난 실행에 남은 잠금 밖 취소(`forget` 이 이빅션을 막는다) |
 
 숨은 조합(옛 코드에서만 서고 새 타입은 걷는 것)은 §15.301 에 적었다. 걷힌 표시 `doubtCancelHold` 가 붙기 전 대기와 함께 서던 것, 끊김 시각이 닿은 뒤에도 남던 것이다.
+
+## 7. R2 뒤 (§15.302)
+
+| 옛 필드 | 새 자리 |
+|---|---|
+| `notedDelay` `notedHold` `notedDoubt` `notedBlock` | `noticed` 의 `Notice.Delay` `Hold` `Doubt` `Block` |
+| `lastNotified` | `Notice.Attention` (주의 세 칸만) |
+| `pumpFailures` `clockSkewNoted` `signalSeen` `seenLate` | `Notice.PumpFailure(source)` `ClockSkew(robot)` `Signal(taskId)` `Late(unit, revision, state)` |
+
+쓰는 함수와 읽는 함수는 §2.2 표의 그 행과 같다. 필드 대신 `execution.noticed.note·clear·set` 을 부른다.
