@@ -1,7 +1,7 @@
 package dev.picasso.middleware
 
-import dev.picasso.middleware.Middleware.Companion.FLEET_REJECTED
-import dev.picasso.middleware.Middleware.Companion.START_NOT_SENT
+import dev.picasso.middleware.MiddlewareCodes.FLEET_REJECTED
+import dev.picasso.middleware.MiddlewareCodes.START_NOT_SENT
 import java.time.Instant
 
 // 명령 발행: 로봇 출발과 플릿 맡기기를 내고(잠금 밖 송신) 그 결과를 정산한다. 잠금 밖 송신의 약속은

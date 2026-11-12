@@ -5,18 +5,18 @@ import dev.picasso.contracts.v1.Fault
 import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.TaskState
-import dev.picasso.middleware.Middleware.Companion.CANCEL_ATTACHED
-import dev.picasso.middleware.Middleware.Companion.CANCEL_RESENT
-import dev.picasso.middleware.Middleware.Companion.CANCEL_UNATTACHED_WAIT
-import dev.picasso.middleware.Middleware.Companion.CANCEL_UNSENT
-import dev.picasso.middleware.Middleware.Companion.DOUBT_ATTACHED
-import dev.picasso.middleware.Middleware.Companion.HOLD_UNSENT_CAUSE
-import dev.picasso.middleware.Middleware.Companion.KEYED_UNSENT_CAUSE
-import dev.picasso.middleware.Middleware.Companion.LINK_UNSENT_CAUSE
-import dev.picasso.middleware.Middleware.Companion.LOOKUP_INTERVAL
-import dev.picasso.middleware.Middleware.Companion.LOOKUP_UNSENT_CAUSE
-import dev.picasso.middleware.Middleware.Companion.TRANSPORT_ENDED
-import dev.picasso.middleware.Middleware.Companion.UNATTACHED_UNSENT_CAUSE
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_ATTACHED
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_RESENT
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_UNATTACHED_WAIT
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_UNSENT
+import dev.picasso.middleware.MiddlewareCodes.DOUBT_ATTACHED
+import dev.picasso.middleware.MiddlewareCodes.HOLD_UNSENT_CAUSE
+import dev.picasso.middleware.MiddlewareCodes.KEYED_UNSENT_CAUSE
+import dev.picasso.middleware.MiddlewareCodes.LINK_UNSENT_CAUSE
+import dev.picasso.middleware.MiddlewareCodes.LOOKUP_INTERVAL
+import dev.picasso.middleware.MiddlewareCodes.LOOKUP_UNSENT_CAUSE
+import dev.picasso.middleware.MiddlewareCodes.TRANSPORT_ENDED
+import dev.picasso.middleware.MiddlewareCodes.UNATTACHED_UNSENT_CAUSE
 
 // 취소용 붙이기: 핸들 없는 취소, 키로 보낸 취소, 붙기 전에 건 취소와 그 기다림.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는

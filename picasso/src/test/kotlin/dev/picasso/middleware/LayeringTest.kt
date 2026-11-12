@@ -350,6 +350,7 @@ class LayeringTest {
             "CodeCapabilities.kt" to Layer.FLOOR,
             "LedgerExport.kt" to Layer.FLOOR,
             "ResultExport.kt" to Layer.FLOOR,
+            "MiddlewareCodes.kt" to Layer.FLOOR,
             // 상태 — 실행, 배정 게이트, 장부, 단위의 순수 판정
             "Execution.kt" to Layer.STATE,
             "AdmissionGate.kt" to Layer.STATE,
@@ -402,17 +403,17 @@ class LayeringTest {
         }
 
         /**
-         * `Middleware.kt` 밖에서 부르는 `Middleware`(와 companion) 멤버의 JVM 이름(internal 멤버는 모듈 이름이 붙는다). 2026-11-13 실측 28.
+         * `Middleware.kt` 밖에서 부르는 `Middleware`(와 companion) 멤버의 JVM 이름(internal 멤버는 모듈 이름이 붙는다). 2026-11-13 실측 28 → S4a(§15.311) 21: 생애·접합부가 쓰던 companion 상수를 MiddlewareCodes 로, markIncident·observeHold 를 실행·단위로 옮겼다.
          * S4 의 좁은 환경이 줄인다.
          */
         val MIDDLEWARE_MEMBERS: Set<String> = setOf(
-            "Companion", "getCell\$picasso_picasso", "getDesk\$picasso_picasso", "getDroppedOptionals\$picasso_picasso",
+            "getCell\$picasso_picasso", "getDesk\$picasso_picasso", "getDroppedOptionals\$picasso_picasso",
             "getExecutions\$picasso_picasso", "getFleet\$picasso_picasso", "getGate\$picasso_picasso", "getIncidentLog\$picasso_picasso",
-            "getIssuing\$picasso_picasso", "getLOOKUP_INTERVAL\$picasso_picasso", "getNow\$picasso_picasso",
-            "getOPEN_UNIT_STATES\$picasso_picasso", "getRETRY_SUFFIX\$picasso_picasso", "getRobots\$picasso_picasso",
-            "getTRANSPORT_ENDED\$picasso_picasso", "getViews\$picasso_picasso", "inDoubtGraceOf\$picasso_picasso",
-            "markIncident\$picasso_picasso", "noteAttention\$picasso_picasso", "noteClockSkew\$picasso_picasso", "notify\$picasso_picasso",
-            "observeCell\$picasso_picasso", "observeHold\$picasso_picasso", "stallWindowOf\$picasso_picasso", "stateTime\$picasso_picasso",
+            "getIssuing\$picasso_picasso", "getNow\$picasso_picasso",
+            "getRobots\$picasso_picasso",
+            "getViews\$picasso_picasso", "inDoubtGraceOf\$picasso_picasso",
+            "noteAttention\$picasso_picasso", "noteClockSkew\$picasso_picasso", "notify\$picasso_picasso",
+            "observeCell\$picasso_picasso", "stallWindowOf\$picasso_picasso", "stateTime\$picasso_picasso",
             "trail\$picasso_picasso", "trail\$picasso_picasso\$default", "windowOf\$picasso_picasso",
         )
     }

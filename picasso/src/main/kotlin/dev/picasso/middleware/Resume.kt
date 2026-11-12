@@ -1,15 +1,15 @@
 package dev.picasso.middleware
 
-import dev.picasso.middleware.Middleware.Companion.RESUME_ATTEMPT
-import dev.picasso.middleware.Middleware.Companion.RESUME_HOLD_REOPENED
-import dev.picasso.middleware.Middleware.Companion.RESUME_PRIOR_ROBOT
-import dev.picasso.middleware.Middleware.Companion.RESUME_RECORD
-import dev.picasso.middleware.Middleware.Companion.RESUME_RECORD_MISMATCH
-import dev.picasso.middleware.Middleware.Companion.RESUME_RECORD_SUPERSEDED
-import dev.picasso.middleware.Middleware.Companion.RESUME_SIGNAL_PASSED
-import dev.picasso.middleware.Middleware.Companion.RESUME_STALE_VERSION
-import dev.picasso.middleware.Middleware.Companion.RETRY_SUFFIX
 import dev.picasso.middleware.Middleware.Submission
+import dev.picasso.middleware.MiddlewareCodes.RESUME_ATTEMPT
+import dev.picasso.middleware.MiddlewareCodes.RESUME_HOLD_REOPENED
+import dev.picasso.middleware.MiddlewareCodes.RESUME_PRIOR_ROBOT
+import dev.picasso.middleware.MiddlewareCodes.RESUME_RECORD
+import dev.picasso.middleware.MiddlewareCodes.RESUME_RECORD_MISMATCH
+import dev.picasso.middleware.MiddlewareCodes.RESUME_RECORD_SUPERSEDED
+import dev.picasso.middleware.MiddlewareCodes.RESUME_SIGNAL_PASSED
+import dev.picasso.middleware.MiddlewareCodes.RESUME_STALE_VERSION
+import dev.picasso.middleware.MiddlewareCodes.RETRY_SUFFIX
 import java.time.Instant
 
 // 재개와 판단 기록의 비공개 절차. 공개 창구(resume, judgmentRecord)는 Middleware 에 있고 여기 함수들을 부른다.

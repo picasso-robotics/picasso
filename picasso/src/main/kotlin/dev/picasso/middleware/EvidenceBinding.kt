@@ -3,9 +3,9 @@ package dev.picasso.middleware
 import dev.picasso.capability.HoldEffects
 import dev.picasso.capability.HoldMismatch
 import dev.picasso.contracts.v1.Fault
-import dev.picasso.middleware.Middleware.Companion.MISMATCH
-import dev.picasso.middleware.Middleware.Companion.OPEN_UNIT_STATES
-import dev.picasso.middleware.Middleware.Companion.PREDECESSOR_NOT_DONE
+import dev.picasso.middleware.MiddlewareCodes.MISMATCH
+import dev.picasso.middleware.MiddlewareCodes.OPEN_UNIT_STATES
+import dev.picasso.middleware.MiddlewareCodes.PREDECESSOR_NOT_DONE
 import java.time.Instant
 
 // 근거 결합(보고서 12장)과 운영자 판단의 보조. 공개 창구(resolve)는 Middleware 에 있다. 상태는 Middleware 에 있다.

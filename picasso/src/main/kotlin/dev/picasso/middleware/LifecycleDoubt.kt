@@ -3,10 +3,10 @@ package dev.picasso.middleware
 import dev.picasso.contracts.v1.Reference
 import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.contracts.v1.StartTaskResponse
-import dev.picasso.middleware.Middleware.Companion.DOUBT_ATTACHED
-import dev.picasso.middleware.Middleware.Companion.DOUBT_REVISION_AHEAD
-import dev.picasso.middleware.Middleware.Companion.LOOKUP_INTERVAL
-import dev.picasso.middleware.Middleware.Companion.RESUME_REATTACHED
+import dev.picasso.middleware.MiddlewareCodes.DOUBT_ATTACHED
+import dev.picasso.middleware.MiddlewareCodes.DOUBT_REVISION_AHEAD
+import dev.picasso.middleware.MiddlewareCodes.LOOKUP_INTERVAL
+import dev.picasso.middleware.MiddlewareCodes.RESUME_REATTACHED
 
 // 미확정 해소: 보냈는지 모르는 명령을 조회와 스냅숏으로 확정하고, 다시 붙는다.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는

@@ -6,11 +6,11 @@ import dev.picasso.contracts.v1.ProgressKind
 import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.contracts.v1.WatchTaskResponse
-import dev.picasso.middleware.Middleware.Companion.NO_SIGNAL
-import dev.picasso.middleware.Middleware.Companion.SOURCE_MISMATCH
-import dev.picasso.middleware.Middleware.Companion.UNCLASSIFIED
-import dev.picasso.middleware.Middleware.Companion.WAITING_HANDOVER
-import dev.picasso.middleware.Middleware.Companion.WATCH_CLOSED
+import dev.picasso.middleware.FailureClassNames.UNCLASSIFIED
+import dev.picasso.middleware.MiddlewareCodes.NO_SIGNAL
+import dev.picasso.middleware.MiddlewareCodes.SOURCE_MISMATCH
+import dev.picasso.middleware.MiddlewareCodes.WAITING_HANDOVER
+import dev.picasso.middleware.MiddlewareCodes.WATCH_CLOSED
 import java.time.Duration
 
 // 경로별 단위 구동: 로봇 스킬, 설비 신호, 플릿 운반 단위를 한 라운드 진행한다. 라운드의 순서(pumpRound, 종착 전이 abort,
