@@ -75,29 +75,34 @@ private fun Middleware.cancelFleet(execution: Execution, handle: TransportHandle
     } catch (e: RuntimeException) {
         FleetCancelIssue.Failed(e)
     }
-    if (result == FleetCancelIssue.Pending) execution.fleetCancelInFlight = FleetCancelFlight(reference, handle)
+    if (result == FleetCancelIssue.Pending) execution.cancelSending = execution.cancelSending.withFleet(FleetCancelFlight(reference, handle))
     return result
 }
 
+/** 닿지 않았다 — 같은 까닭이면 자취에 다시 남기지 않는다. 끊김 시각([CancelDelivery.Unsent.linkSince])은 그대로 둔다. */
 private fun Middleware.cancelNotReached(execution: Execution, failure: RuntimeException) {
-    execution.cancelUnsent = true
     val cause = "${failure::class.simpleName}: ${failure.message}"
-    if (execution.notedCancelUnsent != cause) {
-        execution.notedCancelUnsent = cause
-        execution.trail(CANCEL_UNSENT, "취소를 하위에 보내지 못했다 ($cause) — 다음 라운드에 다시 보낸다")
+    when (val delivery = execution.cancelDelivery) {
+        is CancelDelivery.Unsent -> if (delivery.cause == cause) return
+        CancelDelivery.Clear -> Unit
     }
+    execution.cancelDelivery = execution.cancelDelivery.unsent(cause)
+    execution.trail(CANCEL_UNSENT, "취소를 하위에 보내지 못했다 ($cause) — 다음 라운드에 다시 보낸다")
 }
 
+/** 닿았다 — 닿지 않은 채였으면 그 사실을 자취에 남기고 걷는다. */
 private fun Middleware.cancelReached(execution: Execution) {
-    if (execution.cancelUnsent) {
-        execution.cancelUnsent = false
-        execution.notedCancelUnsent = null
-        execution.trail(CANCEL_RESENT, "보내지 못했던 취소가 하위에 닿았다")
+    when (execution.cancelDelivery) {
+        is CancelDelivery.Unsent -> {
+            execution.cancelDelivery = CancelDelivery.Clear
+            execution.trail(CANCEL_RESENT, "보내지 못했던 취소가 하위에 닿았다")
+        }
+        CancelDelivery.Clear -> Unit
     }
 }
 
 internal fun Middleware.noteRefusal(execution: Execution, response: CancelTaskResponse) {
-    if (!response.hasState()) execution.cancelRefusal = response.rejection.code.name
+    if (!response.hasState()) execution.cancelIntent = CancelIntent.Refused(response.rejection.code.name)
 }
 
 /**
@@ -113,7 +118,7 @@ internal fun Middleware.cancelRobot(execution: Execution, flight: CancelFlight):
     } catch (e: RuntimeException) {
         CancelIssue.Failed(e)
     }
-    if (result == CancelIssue.Pending) execution.cancelInFlight = flight
+    if (result == CancelIssue.Pending) execution.cancelSending = execution.cancelSending.withRobot(flight)
     return result
 }
 
@@ -134,7 +139,7 @@ private fun Middleware.pollFleetCancel(execution: Execution): Boolean {
     val result = fleet.issueCancel(flight.reference, flight.handle)
         ?: FleetCancelIssue.Failed(IllegalStateException("플릿 포트가 보내는 중인 운반 ${flight.reference} 취소의 결과를 주지 않는다"))
     if (result == FleetCancelIssue.Pending) return true
-    execution.fleetCancelInFlight = null
+    execution.cancelSending = execution.cancelSending.withFleet(null)
     if (!execution.physicalState.pumps) return false
     when (result) {
         is FleetCancelIssue.Answered -> if (!flight.otherFailed && execution.cancelInFlight == null) cancelReached(execution)
@@ -152,7 +157,7 @@ private fun Middleware.pollRobotCancel(execution: Execution): Boolean {
     val result = robots.issueCancel(flight.robot, flight.handle)
         ?: CancelIssue.Failed(IllegalStateException("robot=${flight.robot} 의 포트가 보내는 중인 취소의 결과를 주지 않는다"))
     if (result == CancelIssue.Pending) return true
-    execution.cancelInFlight = null
+    execution.cancelSending = execution.cancelSending.withRobot(null)
     if (execution.physicalState.pumps) settleCancel(execution, flight, result)
     return false
 }
@@ -179,7 +184,12 @@ private fun Middleware.settleCancel(execution: Execution, flight: CancelFlight, 
         }
         CancelFlight.Site.HELD -> {
             if (unit == null || unit.state != UnitState.OPERATOR_HOLD) return
-            if (execution.doubtCancelHold != unit.unitId || !execution.cancelUnsent) return
+            // 보류에 묶인 이 단위의 취소가 아직 닿지 않은 채일 때만 받는다.
+            val held = when (val wait = execution.cancelWait) {
+                is CancelWait.Held -> wait.unitId == unit.unitId
+                is CancelWait.Attaching, CancelWait.None -> false
+            }
+            if (!held || execution.cancelDelivery !is CancelDelivery.Unsent) return
             if (result is CancelIssue.Answered) heldCancelAnswered(execution, unit, checkNotNull(flight.stateName), result.response)
         }
         CancelFlight.Site.ATTACH -> {

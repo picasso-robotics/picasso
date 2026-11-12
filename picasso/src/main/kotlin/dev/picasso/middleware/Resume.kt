@@ -62,7 +62,7 @@ internal fun Middleware.restore(execution: Execution, record: JudgmentRecord): I
     // **건 취소는 걸린 채로 짓는다**(§15.253). 걸지 않으면 그 사이 취소로 끝난 하위 태스크를 요청 없는 취소로 읽는다
     // ([holdUnrequestedCancel]). 하위로 보내는 것은 첫 pump 다 — 붙지 않은 태스크는 [attachForCancel] 이 붙어 멈춘다.
     if (record.cancelRequested) {
-        execution.cancelRequested = true
+        execution.cancelIntent = CancelIntent.Requested
         execution.physicalState = PhysicalState.CANCELING
         execution.trail(RESUME_RECORD, "cancel requested before restart — 걸린 채로 짓고 첫 pump 가 하위로 보낸다")
     }

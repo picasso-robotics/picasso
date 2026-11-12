@@ -268,33 +268,22 @@ class Middleware(
         internal var active: ExecutionUnit? = null
         internal var handle: TaskHandle? = null
         internal var transport: TransportHandle? = null
-        internal var cancelRequested = false
-        internal var lastCancel: CancelReport? = null
-        /** 하류가 진행 중 단위의 중단을 거절한 사유 — 그 단위는 끝까지 가고 다음 경계에서 멈춘다. */
-        internal var cancelRefusal: String? = null
-
         /**
-         * 건 취소가 하위에 **아직 닿지 않았다** — 보내다가 포트가 던졌다. 응답을 받으면(상태든 거부든) 내린다. 서 있는 동안
-         * 도는 단위가 있으면 [pumpRound] 가 머리에서 다시 보내고([sendCancel]), 닿지 못한 채 단위가 끝나면 취소 응답이
-         * [CANCEL_NOT_SENT] 를 싣는다.
+         * **취소의 네 축**(§15.301, `CancelAxes.kt`). 의도·닿음·기다림·보내는 중이 각각 한 값을 갖는다. 축 안의 값은 배타이고 축끼리는
+         * 함께 선다. 전이는 [cancel]·[abort] 와 명령 생애 넷(`Lifecycle*.kt`)이 한다.
          */
-        internal var cancelUnsent = false
+        internal var cancelIntent: CancelIntent = CancelIntent.None
+        internal var cancelDelivery: CancelDelivery = CancelDelivery.Clear
+        internal var cancelWait: CancelWait = CancelWait.None
+        internal var cancelSending: CancelSending = CancelSending.Idle
 
-        /** [cancelUnsent] 의 까닭을 트레이스에 남긴 마지막 값. 같은 까닭을 라운드마다 되풀이하지 않는다. */
-        internal var notedCancelUnsent: String? = null
-
-        /**
-         * 취소가 걸린 채 미확정이 끝내 안 풀려 운영자 보류가 된 단위의 id(§15.238). 핸들이 없어 취소가 하위에 닿지 못했다. 연결이 끊긴 채
-         * 취소가 닿지 않아 보류가 된 도는 단위도 같다([holdUnreachedCancel], §15.243). 널이 아니고
-         * 그 단위가 아직 운영자 보류인 동안 실행은 중단으로 닫지 않고 운영자 판단을 기다린다([cancelWaitsOnHeldDoubt]).
-         */
-        internal var doubtCancelHold: String? = null
-
-        /**
-         * 연결이 끊긴 채([linkBroken]) 건 취소가 닿지 않은 것([cancelUnsent])을 처음 본 시각(§15.243). 미확정 유예가 이 시각부터 지나면
-         * 도는 단위를 운영자 보류에 둔다([holdUnreachedCancel]). 둘 중 하나가 풀리면 걷힌다. 판단 기록에는 싣지 않는다.
-         */
-        internal var unreachedCancelSince: Instant? = null
+        // 축을 읽는 이름. 상태가 아니라 위 넷에서 계산한다.
+        internal val cancelRequested: Boolean get() = cancelIntent.requested
+        internal val cancelRefusal: String? get() = (cancelIntent as? CancelIntent.Refused)?.code
+        internal val lastCancel: CancelReport? get() = (cancelIntent as? CancelIntent.Reported)?.report
+        internal val cancelUnsent: Boolean get() = cancelDelivery is CancelDelivery.Unsent
+        internal val cancelInFlight: CancelFlight? get() = cancelSending.robot
+        internal val fleetCancelInFlight: FleetCancelFlight? get() = cancelSending.fleet
 
         /**
          * 라운드 진행([PUMP_SOURCE])과 기체 동기화(`sync:<기체>`)에서 포트가 던진 마지막 까닭. 같은 자리가 같은 까닭으로 계속 던지면
@@ -344,20 +333,10 @@ class Middleware(
         internal var inFlight: InFlight? = null
 
         /**
-         * 보내는 중인 취소(§15.237). 포트가 잠금 밖에서 보내는 동안만 있다([RobotPort.issueCancel]). 있는 동안 이 실행의 라운드는 그
-         * 결과를 받기 전까지 다른 일을 하지 않는다 — 단위의 종료·중단 보고가 취소의 답(거부 사유)에 달렸다. 결과는 [pump] 머리가 받고,
-         * 끝난 실행도 받아서 버린다(포트의 차선을 놓게 한다).
-         */
-        internal var cancelInFlight: CancelFlight? = null
-
-        /**
          * 보내는 중인 플릿 맡기기(§15.237). 포트가 잠금 밖에서 보내는 동안만 있다([AmrFleetPort.issueDispatch]). 결과는 [pumpRound]
          * 머리(첫 맡기기)나 [resolveDoubt] 머리(미확정 조회)가 받는다. 있는 동안 이 실행은 운반 취소를 내지 않는다 — 아직 운반 핸들이 없다.
          */
         internal var fleetInFlight: FleetFlight? = null
-
-        /** 보내는 중인 운반 취소(§15.237, [AmrFleetPort.issueCancel]). 규칙은 [cancelInFlight] 와 같다. */
-        internal var fleetCancelInFlight: FleetCancelFlight? = null
 
         /**
          * 운영자가 [release] 로 감수한 결함의 열쇠 — 같은 결함은 다시 막지 않는다. 새 결함은 막는다. 결함이 걷히면 열쇠를 놓으므로
@@ -403,15 +382,6 @@ class Middleware(
          * 바뀌면 새 태스크라 대상이 아니다.
          */
         internal val inherited: MutableMap<String, Int> = mutableMapOf()
-
-        /** [attachForCancel] 이 기다리는 까닭을 자취에 남긴 마지막 값. 같은 까닭을 라운드마다 되풀이하지 않는다. */
-        internal var notedUnattached: String? = null
-
-        /**
-         * 붙기 전에 건 취소가 답을 처음 기다린 시각(§15.255). 미확정 유예가 이 시각부터 지나면 기다리던 단위를 운영자 보류에 둔다
-         * ([waitUnattached]). 붙으면 걷힌다. 판단 기록에는 싣지 않는다.
-         */
-        internal var unattachedCancelSince: Instant? = null
 
         /** 지연 이벤트(15.1) — 옛 버전의 종착. 폐기하지 않는다. */
         val lateEvents: MutableList<LateEvent> = mutableListOf()
@@ -1223,7 +1193,7 @@ class Middleware(
         // 운영자가 판단할 단위가 있으면 다음으로 가지 않는다 — 판단이 재작업이면 그 슬롯이 먼저다.
         val held = execution.units.firstOrNull { it.state == UnitState.OPERATOR_HOLD }
         if (held != null) {
-            if (execution.cancelUnsent && execution.doubtCancelHold == held.unitId) resendHeldCancel(execution, held)
+            if (execution.cancelUnsent && (execution.cancelWait as? CancelWait.Held)?.unitId == held.unitId) resendHeldCancel(execution, held)
             execution.physicalState = PhysicalState.OPERATOR_HOLD
             if (execution.notedHold != held.unitId) {
                 execution.notedHold = held.unitId
@@ -1685,8 +1655,7 @@ class Middleware(
     fun cancel(executionId: String): Boolean {
         val execution = executions[executionId] ?: return false
         if (!execution.physicalState.pumps) return false
-        execution.cancelRequested = true
-        execution.cancelRefusal = null
+        execution.cancelIntent = CancelIntent.Requested
         sendCancel(execution)
         execution.physicalState = PhysicalState.CANCELING
         return true
@@ -1731,7 +1700,7 @@ class Middleware(
             // 하위에 닿지 않은 취소가 «멈췄다» 로 읽힌다.
             refusal = execution.cancelRefusal ?: CANCEL_NOT_SENT.takeIf { execution.cancelUnsent },
         )
-        execution.lastCancel = report
+        execution.cancelIntent = CancelIntent.Reported(report)
         execution.physicalState = PhysicalState.ABORTED
         notify(execution)
     }
