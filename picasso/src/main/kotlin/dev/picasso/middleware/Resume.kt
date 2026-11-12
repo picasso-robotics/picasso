@@ -9,7 +9,6 @@ import dev.picasso.middleware.Middleware.Companion.RESUME_RECORD_SUPERSEDED
 import dev.picasso.middleware.Middleware.Companion.RESUME_SIGNAL_PASSED
 import dev.picasso.middleware.Middleware.Companion.RESUME_STALE_VERSION
 import dev.picasso.middleware.Middleware.Companion.RETRY_SUFFIX
-import dev.picasso.middleware.Middleware.Execution
 import dev.picasso.middleware.Middleware.Submission
 import java.time.Instant
 

@@ -34,7 +34,7 @@
 (picasso 쪽 계획이다. 아직 하지 않았다. 바뀔 때마다 이 폴더에 따로 알린다.)
 - S1 내부 타입 이사: 공개 이름과 패키지는 그대로 둔다. `Middleware.Submission.*`은 중첩 그대로 둔다(Kotlin typealias로는 중첩 분류자 경로를 이어 줄 수 없음을 확인했다).
 - S2 `Execution`을 `Middleware` 밖 최상위 클래스로 옮긴다. `Middleware` 안에 중첩 typealias `Execution`을 두어 `Middleware.Execution`이라는 이름은 컴파일된다(Kotlin 2.4.20에서 확인).
-- S3 공개 세터와 가변 컬렉션을 닫는 단계: 위 시험 한 곳(`ExecutionControlTest.kt:333`)이 깨진다. 바이너리 호환과 닫는 방식은 picasso 소유자가 S3 전에 정한다.
+- S3 공개 세터와 가변 컬렉션을 닫는 단계: 위 시험 한 곳(`ExecutionControlTest.kt:333`)이 깨진다. 닫는 방식은 picasso 소유자가 S3 전에 정한다. 바이너리 호환은 S2 에서 먼저 깨진다 — `execution-top-level.md` 를 본다.
 
 ## 남는 것
 - 이번 확인은 한 번이다. picasso main이 바뀔 때 mission-ops를 자동으로 돌리는 조기 경보는 없다. 둘지, 어디에(picasso CI인지 mission-ops CI인지) 둘지는 정하지 않았다.

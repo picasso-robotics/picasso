@@ -4,7 +4,6 @@ import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.middleware.Middleware.Companion.ISSUE_RESUMED
 import dev.picasso.middleware.Middleware.Companion.ISSUE_WITHHELD
 import dev.picasso.middleware.Middleware.Companion.UPDATE_NOT_SENT
-import dev.picasso.middleware.Middleware.Execution
 import dev.picasso.middleware.Middleware.Submission
 
 // 리비전 개정: 높은 버전의 작업 지시로 계획을 다시 세우고, 도는 단위에 개정 갱신을 보내고 정산한다.

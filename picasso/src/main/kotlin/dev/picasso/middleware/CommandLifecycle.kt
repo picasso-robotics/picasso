@@ -5,9 +5,9 @@ package dev.picasso.middleware
  * 한다. 확장은 하위 포트와 자취·통보를 [mw] 로 부른다(`with(mw)`). 라운드 안의 순서(송신 결과를 먼저 받고, 취소를 다시 보내고, 봉한
  * 뒤 통보한다)는 [Middleware.pumpRound] 가 정한다 — 생애 객체는 전이를 하고 순서는 부르는 쪽이 정한다(계획서 원칙 5).
  *
- * 앞에서는 이 상태가 [Middleware.Execution] 의 필드였다. 실행의 읽는 이름(`cancelRequested`·`inFlight` 같은 것)은 이 객체에서 계산한다.
+ * 앞에서는 이 상태가 [Execution] 의 필드였다. 실행의 읽는 이름(`cancelRequested`·`inFlight` 같은 것)은 이 객체에서 계산한다.
  */
-internal class CommandLifecycle(internal val mw: Middleware, internal val execution: Middleware.Execution) {
+internal class CommandLifecycle(internal val mw: Middleware, internal val execution: Execution) {
 
     // ── 취소의 네 축(§15.301, `CancelAxes.kt`). 축 안의 값은 배타이고 축끼리는 함께 선다.
     internal var cancelIntent: CancelIntent = CancelIntent.None

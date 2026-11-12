@@ -1,7 +1,6 @@
 package dev.picasso.middleware
 
 import dev.picasso.contracts.wire.ContractIdentity
-import dev.picasso.middleware.Middleware.Execution
 import java.time.Instant
 import java.time.format.DateTimeParseException
 

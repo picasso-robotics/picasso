@@ -3140,6 +3140,18 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+308. **의존 정비 S2 — `Execution` 을 `Middleware` 밖 최상위 클래스로 옮긴다.**
+
+    의존·구조 정비 S2 작업이다. S0 소비자 검증(PR #12)과 S1 타입 이사(PR #13, §15.307) 다음 단계다. 동작 변경은 없다. 기존 `Execution` 은 `Middleware` 의 `inner class` 였다. 바깥 `Middleware` 를 붙잡는 곳이 `assignedAt = now()`, `command = CommandLifecycle(this@Middleware, this)`, `noteLate` 안의 `stateTime(update)` 세 곳이었다. 이 때문에 실행 상태가 조율자 클래스 안에 갇혀 있었고 파일 그래프의 큰 성분이 `Middleware` 를 지나야 했다.
+
+    새 파일 `Execution.kt` 의 최상위 `class Execution internal constructor(...)` 로 본문을 옮기고 세 줄만 고쳤다. `assignedAt` 은 생성자 인자로 받고 `Middleware.create` 가 `now()` 를 넘기며 호출 횟수와 시점은 같다. `command` 는 생성자의 팩터리 `commandOf: (Execution) -> CommandLifecycle` 로 짓는다. `create` 가 `{ CommandLifecycle(this, it) }` 를 넘기며, 팩터리는 저장하지 않고 생성 중 한 번 부르며 지을 때 실행의 멤버를 읽지 않는다. `noteLate(unit, update, at: () -> Instant)` 는 시각을 게으르게 받아 호출부 `UnitDrivers.kt` 가 `{ stateTime(it) }` 를 넘기며 중복 지연 이벤트는 전처럼 시계를 읽지 않는다.
+
+    `Middleware` 안에 `typealias Execution = dev.picasso.middleware.Execution` 을 두었다. mission-ops 의 `Middleware.Execution` 16곳과 이 저장소 시험의 `Middleware.Execution` 은 고치지 않고 컴파일된다. 시험의 이름을 그대로 둔 것은 별칭을 컴파일로 지키기 위해서다. main 소스 8개 파일의 `import dev.picasso.middleware.Middleware.Execution` 을 지우고 KDoc 링크는 `[Execution.x]` 로 갱신했다. 생성자는 `internal` 로 닫았다. `CommandLifecycle` 이 internal 이고 표 밖에서 만든 실행은 쓸 곳이 없다. 밖에서 `Execution` 을 만드는 곳은 picasso 시험과 mission-ops 에 없었다. 공개 API 표면을 좁히는 유일한 변경이다.
+
+    ★**자문 두 라운드를 거쳐 `Execution` 결합을 팩터리 방식으로 풀기로 결정했다.** 생성자에 `Middleware` 를 넘기는 안, `lateinit` 으로 꽂는 안, 명령 생애를 실행 밖 표로 빼는 안을 버렸다. 각각 이름 의존이 남고, 가변 필드가 늘어 미초기화 구간이 생기며, S4 범위라는 문제가 있었다. 읽기 계약(`ExecutionView`)은 S2 에 넣지 않고 S3 에서 결정 ②(공개 세터 닫기)와 함께 정한다. 지금 쓸 곳이 없고 `AdmissionGate` 는 공개 12 멤버 밖의 `active` 를 읽는다.
+
+    바이너리에서 JVM 클래스가 `Middleware$Execution` 에서 `Execution` 으로 바뀌고 공개 서명도 바뀐다. 소스는 호환된다. 이 저장소에 출하(maven-publish) 설정이 없고 mission-ops 는 소스로 컴파일한다. 다른 바이너리 소비자가 없다는 점은 확인하지 못했으나, 이 PR 의 병합은 기존 바이너리 재사용을 요구하지 않는다는 소유자 결정이다. `SourceSizeBudgetTest` 는 `Execution.kt` 에서 가변 필드와 컬렉션을 센다(13·10 유지). `MIDDLEWARE` 817 → 765, `TOTAL` 1,786 → 1,728 은 실측치 반영이며 코드가 줄어든 것이 아니다. 상한 넷을 1씩 낮춘 결함 주입이 모두 실패로 잡혔다. 시험 1,831건 실패 0, 번들 동치 12/12 이고, mission-ops(`fcb1a30`)를 이 변경으로 다시 빌드해 842 시험(site 41, mission-host 226, ops-service 498, e2e 77) 실패 0 이었다. `:mission-host:compileKotlin` 이 다시 돌아 별칭으로 컴파일됨을 확인했다. `Execution → CommandLifecycle → Middleware` 는 남아 파일 그래프의 큰 성분은 S4 에서 다룬다.
+
 307. **의존 정비 S1 — 낮은 층 타입을 제자리로 옮겨 포트·모델 순환을 없앤다.**
 
     R0~R5 뒤 의존 방향을 검토했다(Codex·Fable 자문 두 라운드). 계획은 S0 소비자 검증(PR #12) → S1 타입 이사 → S2 `Execution` 최상위 → S3 공개 세터·가변 컬렉션 폐쇄 → 층 시험 → S4 내부 핵심과 좁은 생애 환경, 호스트 부품 모듈 분리 순이다. 이 항목은 S1 이다(번호 306 은 PR #11 이 썼다). 동작 변경, 공개 이름·패키지 변경, 시험 수 변경은 없다. 파일 사이 이름 기반 참조(주석·문자열·private 제외) 측정 결과, 기존 6개 파일(`Model`, `Occupancy`, `Ports`, `LogicalCapability`, `PrefetchingFleetPort`, `PrefetchingRobotPort`)과 21개 파일 성분 중 6개 파일 성분이 완전히 해소되었다. 21개 파일 성분은 19개 파일(`CancelAxes`·`Canonical` 제외)로 줄었다. 기존 순환 원인은 `Model`의 `ExecutionUnit`이 `Occupancy`의 관측 값을 쓰고, `Occupancy`가 `Ports`의 `SlotSignal`을 쓰며, 포트 인터페이스 반환 타입(`PrefetchedRead`·`FleetRead`)이 구현 파일에 있던 점이다.

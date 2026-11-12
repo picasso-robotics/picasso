@@ -4,7 +4,6 @@ import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.contracts.v1.Event
 import dev.picasso.contracts.v1.Fault
 import dev.picasso.middleware.Middleware.Companion.ACKNOWLEDGED_FAULT_CLEARED
-import dev.picasso.middleware.Middleware.Execution
 import dev.picasso.middleware.Middleware.RobotView
 
 // 기체 동기화(재설계 R5, 설계 일지 §15.305): 스냅숏과 재생을 읽어 기체 뷰를 세우고, 이벤트를 관계있는 실행의 자취에 남기며, 걷힌

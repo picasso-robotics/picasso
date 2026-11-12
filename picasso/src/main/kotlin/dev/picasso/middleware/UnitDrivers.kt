@@ -11,7 +11,6 @@ import dev.picasso.middleware.Middleware.Companion.SOURCE_MISMATCH
 import dev.picasso.middleware.Middleware.Companion.UNCLASSIFIED
 import dev.picasso.middleware.Middleware.Companion.WAITING_HANDOVER
 import dev.picasso.middleware.Middleware.Companion.WATCH_CLOSED
-import dev.picasso.middleware.Middleware.Execution
 import java.time.Duration
 
 // 경로별 단위 구동: 로봇 스킬, 설비 신호, 플릿 운반 단위를 한 라운드 진행한다. 라운드의 순서(pumpRound, 종착 전이 abort,
@@ -68,7 +67,7 @@ internal fun Middleware.pumpRobotUnit(execution: Execution, unit: ExecutionUnit)
     // **결과 이벤트는 (실행, 버전)으로 맞춘다**(15.1). 이 단위의 지금 버전보다 낮은 버전의 종착은 지연 이벤트로
     // **보존**하고, 이 버전의 갱신만 상태로 옮긴다.
     val (late, current) = updates.partition { it.revision < unit.revision }
-    late.filter { it.state.isTerminal() }.forEach { execution.noteLate(unit, it) }
+    late.filter { it.state.isTerminal() }.forEach { execution.noteLate(unit, it) { stateTime(it) } }
     val last = current.lastOrNull()
         ?: return late.lastOrNull { it.state.isTerminal() }?.let { settleLate(execution, unit, it) }
             ?: robots.unfollowable(robot, handle)?.let { loseStream(execution, unit, handle, it) }

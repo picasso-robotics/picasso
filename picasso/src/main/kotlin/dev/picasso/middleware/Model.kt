@@ -360,7 +360,7 @@ data class ExecutionUnit(
     val destinationObservation: DestinationObservation = DestinationObservation.OPTIONAL,
 ) {
     /**
-     * 이 단위를 맡은 기체. **널이 기본이고 그때는 실행의 기체다**([Middleware.Execution.robotOf]) — 오늘의 계획은 전부 널이다.
+     * 이 단위를 맡은 기체. **널이 기본이고 그때는 실행의 기체다**([Execution.robotOf]) — 오늘의 계획은 전부 널이다.
      *
      * 기체를 실행이 아니라 단위에 묶어 두는 것은 협업(로봇 간 인계)을 위한 자리다(ADR 51 «대가»). 한 임무를 여러 기체가 나눠
      * 하면 단위마다 기체가 다르고, 그때 실행 하나에 기체 하나인 모양으로는 스키마가 깨진다. 그래서 단위의 기체를 읽는 자리
