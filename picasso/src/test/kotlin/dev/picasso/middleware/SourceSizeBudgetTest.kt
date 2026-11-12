@@ -17,7 +17,9 @@ import kotlin.test.assertTrue
  *
  * 줄 수는 비상 제동이다. 이 클래스가 커지는 까닭(명령 생애가 실행의 널·불리언 조합으로 짜인 것, 상태의 주인이
  * `Middleware` 하나인 것, 경로 둘이 같은 생애를 따로 구현하는 것)은 재설계가 다룬다. 그 진행을 재는 것이 아래
- * 구조 예산의 `Execution` 가변 필드 수다.
+ * 구조 예산의 `Execution` 가변 필드 수다. 재설계 R0(`docs/superpowers/plans/2026-11-12-middleware-r0-state-map.md`)이
+ * 그 옆에 `Execution` 의 가변 컬렉션 수와 `ExecutionUnit` 의 가변 필드 수를 더했다 — `var` 만 세면 생애 상태가
+ * 맵·집합이나 단위 쪽으로 옮겨 가도 숫자가 준다.
  */
 class SourceSizeBudgetTest {
 
@@ -61,28 +63,52 @@ class SourceSizeBudgetTest {
         assertTrue(fields > 0, "실행의 가변 필드를 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
         assertTrue(fields <= EXECUTION_VARS, "실행의 가변 필드 $fields > $EXECUTION_VARS. $ADVICE")
 
+        // 실행의 가변 컬렉션 — 생성기로 초기화한 val. var 만 세면 «한 번만 알림» 표시나 붙기 전 목록이 맵·집합으로 들어와도 안 보인다.
+        val collections = execution.filter { COLLECTION.containsMatchIn(it) }
+        assertTrue(collections.isNotEmpty(), "실행의 가변 컬렉션을 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
+        assertTrue(
+            collections.size <= EXECUTION_COLLECTIONS,
+            "실행의 가변 컬렉션 ${collections.size} > $EXECUTION_COLLECTIONS: ${collections.map { COLLECTION.find(it)!!.groupValues[1] }}. $ADVICE",
+        )
+
         // 라운드 함수. 라운드 안의 순서가 불변식이라 한 함수에 있다 — 그래서 다음 성장도 여기 온다.
         val round = block(lines, Regex("^    (internal |private )?fun pumpRound\\("))
         assertTrue(round.size <= PUMP_ROUND, "pumpRound ${round.size}줄 > $PUMP_ROUND. $ADVICE")
     }
 
-    /** 네 칸 들여 쓴 선언 줄부터 같은 들여쓰기의 닫는 괄호까지. 못 찾으면 실패한다. */
-    private fun block(lines: List<String>, start: Regex): List<String> {
+    @Test
+    fun `실행 단위의 가변 필드가 구조 예산 안에 있다`() {
+        // 단위 하나의 가변 필드 — 생성자의 var 와 본문의 var. 실행의 생애가 단위 쪽 표시(조회 시각, 키 취소 시각 같은 것)로도 쌓였다.
+        val lines = MiddlewareSeams.sources().getValue("Model.kt").split("\r\n", "\n")
+        val unit = block(lines, Regex("^data class ExecutionUnit\\("), end = "}", file = "Model.kt")
+        val fields = unit.mapNotNull { Regex("^    (?:internal |private )?var (\\w+)").find(it)?.groupValues?.get(1) }
+        assertTrue(fields.isNotEmpty(), "실행 단위의 가변 필드를 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
+        assertTrue(fields.size <= UNIT_VARS, "실행 단위의 가변 필드 ${fields.size} > $UNIT_VARS: $fields. $ADVICE")
+    }
+
+    /** 선언 줄부터 [end] 와 같은 닫는 줄까지(기본은 네 칸 들여 쓴 `}`). 못 찾으면 실패한다. */
+    private fun block(lines: List<String>, start: Regex, end: String = "    }", file: String = "Middleware.kt"): List<String> {
         val from = lines.indexOfFirst { start.containsMatchIn(it) }
-        assertTrue(from >= 0, "Middleware.kt 에서 '$start' 를 못 찾았다")
-        val to = assertNotNull((from until lines.size).firstOrNull { lines[it] == "    }" }, "'$start' 의 끝을 못 찾았다")
+        assertTrue(from >= 0, "$file 에서 '$start' 를 못 찾았다")
+        val to = assertNotNull((from until lines.size).firstOrNull { lines[it] == end }, "'$start' 의 끝을 못 찾았다")
         return lines.subList(from, to + 1)
     }
 
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-12 재설계 R0 실측: 실행의 가변 컬렉션 14, 실행 단위의 가변 필드 36(생성자 30, 본문 6).
         const val MIDDLEWARE = 1_080
         const val SEAM = 500
         const val TOTAL = 2_780
         const val OTHER = 600
         const val EXECUTION_VARS = 32
         const val PUMP_ROUND = 180
+        const val EXECUTION_COLLECTIONS = 14
+        const val UNIT_VARS = 36
+
+        /** 여덟 칸 들여 쓴 `val` 가운데 가변 컬렉션 생성기로 초기화한 것. 게터(`get() =`)는 계산 값이라 안 센다. 무리 1 은 이름이다. */
+        val COLLECTION = Regex("^        (?:internal |private )?val (\\w+)\\b(?![^=]*\\bget\\(\\))[^=]*= (?:mutableMapOf|mutableSetOf|linkedSetOf|mutableListOf|linkedMapOf)\\b")
 
         const val ADVICE = "새 하위 절차는 접합부 파일로 옮기거나 경계를 다시 본다. 제 상태가 있는 새 규약은 RemedyDesk 처럼 " +
             "제 클래스로 둔다. 상한을 올리려면 SourceSizeBudgetTest 의 상수와 설계 일지 항목을 같은 PR 에 두고 소유자 승인을 받는다 " +
