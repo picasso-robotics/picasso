@@ -277,8 +277,7 @@ private fun Middleware.startNotSent(execution: Execution, unit: ExecutionUnit, r
 private fun Middleware.startInDoubt(execution: Execution, unit: ExecutionUnit) {
     unit.state = UnitState.IN_DOUBT
     execution.physicalState = PhysicalState.IN_DOUBT
-    if (execution.notedDoubt != unit.unitId) {
-        execution.notedDoubt = unit.unitId
+    if (execution.noticed.note(Notice.Doubt, unit.unitId)) {
         notify(execution)
     }
 }

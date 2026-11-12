@@ -147,8 +147,7 @@ private fun Middleware.loseStream(execution: Execution, unit: ExecutionUnit, han
     unit.annotate("task stream closed for good ($why) — result unconfirmed, no re-send")
     execution.trail(WATCH_CLOSED, "${unit.unitId}: ${unit.taskId} 의 갱신 스트림이 $why 로 닫혔다 — 미확정, 같은 참조로 다시 보내지 않는다")
     execution.physicalState = PhysicalState.IN_DOUBT
-    if (execution.notedDoubt != unit.unitId) {
-        execution.notedDoubt = unit.unitId
+    if (execution.noticed.note(Notice.Doubt, unit.unitId)) {
         notify(execution)
     }
     return false
@@ -211,8 +210,7 @@ internal fun Middleware.pumpSignalUnit(execution: Execution, unit: ExecutionUnit
 
     val reading = cell.signal(wait.signal)
     val seen = reading?.value ?: NO_SIGNAL
-    if (execution.signalSeen[unit.taskId] != seen) {
-        execution.signalSeen[unit.taskId] = seen
+    if (execution.noticed.note(Notice.Signal(unit.taskId), seen)) {
         execution.trail("CELL_SIGNAL", "signal ${wait.signal}: ${describe(reading)}")
     }
 
@@ -278,8 +276,7 @@ internal fun Middleware.pumpFleetUnit(execution: Execution, unit: ExecutionUnit)
             // 목적지에 이전 용기가 남아 있다 — 인계 대기와 **지연 보고**. 임의의 다른 자리에 내려놓지 않는다.
             unit.note = WAITING_HANDOVER
             execution.physicalState = PhysicalState.RUNNING
-            if (execution.notedDelay != unit.unitId) {
-                execution.notedDelay = unit.unitId
+            if (execution.noticed.note(Notice.Delay, unit.unitId)) {
                 notify(execution)
             }
             return false

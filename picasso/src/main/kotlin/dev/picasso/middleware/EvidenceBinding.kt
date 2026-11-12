@@ -241,7 +241,7 @@ internal fun Middleware.resolveSkipped(execution: Execution, unitId: String, dec
         execution.decisions[unit.unitId] = RecordedDecision(decision, approver, at, unit.attempt)
         reworkAsNewAttempt(unit)
     }
-    execution.notedHold = null
+    execution.noticed.clear(Notice.Hold)
     execution.physicalState = PhysicalState.RUNNING
     notify(execution)
     incidentLog.noteResolution(execution.executionId, travel.unitId, decision, approver)

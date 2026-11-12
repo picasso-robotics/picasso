@@ -200,7 +200,7 @@ internal fun Middleware.settleUpdate(execution: Execution, unit: ExecutionUnit, 
                     unit.state = UnitState.RUNNING
                     // 실행 상태도 함께 되돌린다 — 안 되돌리면 이 판의 작업 응답이 미확정 단위 없이 `IN_DOUBT` 를 든다.
                     execution.physicalState = PhysicalState.RUNNING
-                    execution.notedDoubt = null
+                    execution.noticed.clear(Notice.Doubt)
                     unit.annotate("IN_DOUBT resolved by revision $revision update")
                 }
 
