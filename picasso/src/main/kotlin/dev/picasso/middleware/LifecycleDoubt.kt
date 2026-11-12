@@ -100,7 +100,8 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
         execution.noticed.clear(Notice.Doubt)
         // **취소가 걸렸는데 핸들이 없다** — 취소가 하위에 닿지 못했다. 이 단위를 든 채 실행을 중단으로 닫으면 기체가 응답을 잃은 그
         // 태스크를 하는 동안 실행이 기체를 내준다. 운영자 판단까지 보류에 둔다(§15.92, §15.238).
-        if (execution.cancelRequested && execution.handle == null && execution.transport == null) holdUnsentCancel(unit)
+        // 핸들이 있어도 그 핸들로 보낸 취소가 닿지 않은 채면 같다 — 실행을 중단으로 닫으면 기체가 멈췄는지 모르는 채 내준다(§15.306 (a)).
+        if (execution.cancelRequested && (execution.handle == null && execution.transport == null || execution.cancelUnsent)) holdUnsentCancel(unit)
         execution.markIncident(unit)
         return true
     }

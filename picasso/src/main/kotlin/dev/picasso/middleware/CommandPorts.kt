@@ -1,10 +1,18 @@
 package dev.picasso.middleware
 
+import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.TaskState
 
 // 명령 생애의 포트 보조(재설계 R3, 설계 일지 §15.303): 실행의 상태를 읽지 않는 하위 호출과 그 답의 모양. 실행마다의 생애는
 // CommandLifecycle(Lifecycle*.kt) 에 있고, 여기 것은 그 생애와 Middleware 가 함께 부른다.
+
+/**
+ * 키로 지은 핸들의 취소에 기체가 이렇게 거절하면 **그 태스크를 안다**(§15.219·§15.306 (b)). 스킬이 취소를 안 들거나(`CANCEL_UNSUPPORTED`)
+ * 태스크가 이미 끝났다(`INVALID_TRANSITION`). 그 핸들로 붙고, 끝까지 따라가 단위를 그 종료로 판정한다. 그 밖의 거절(`NOT_FOUND` 따위)은
+ * 기체가 쉬고 있다는 증거가 아니다.
+ */
+internal val KNOWN_TASK_REFUSALS = setOf(RejectionCode.REJECTION_CODE_CANCEL_UNSUPPORTED, RejectionCode.REJECTION_CODE_INVALID_TRANSITION)
 
 /** 계약의 종착 — 기체가 더는 그 태스크를 하지 않는다. [Middleware.isTerminal] 과 달리 사람을 기다리는 태스크는 아직 기체가 붙들고 있다. */
 internal fun TaskState.endedOnRobot(): Boolean = this == TaskState.TASK_STATE_SUCCEEDED ||
