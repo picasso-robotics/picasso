@@ -17,24 +17,26 @@ import dev.picasso.middleware.Middleware.Companion.LOOKUP_INTERVAL
 import dev.picasso.middleware.Middleware.Companion.LOOKUP_UNSENT_CAUSE
 import dev.picasso.middleware.Middleware.Companion.TRANSPORT_ENDED
 import dev.picasso.middleware.Middleware.Companion.UNATTACHED_UNSENT_CAUSE
-import dev.picasso.middleware.Middleware.Execution
 
 // 취소용 붙이기: 핸들 없는 취소, 키로 보낸 취소, 붙기 전에 건 취소와 그 기다림.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는
-// 하위 상태기계 하나다. 파일만 나눴을 뿐 모듈이 아니다. 상태(실행의 송신 기록, 취소 표시)는 Middleware.Execution 에 있다.
+/// 하위 상태기계 하나다. 상태(취소의 네 축, 송신 기록)는 실행마다의 CommandLifecycle 이 들고, 전이는 그 객체의 확장인
+// 이 넷이 한다(§15.303). 포트와 자취는 with(mw) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
 
 /**
  * 취소가 걸린 채 미확정이 안 풀린 [unit] 의 취소를 «보내지 못한 취소» 로 표시한다([Execution.cancelUnsent]). 실행은 단위가 운영자
  * 보류인 동안 중단으로 닫히지 않는다([cancelWaitsOnHeldDoubt]). 운영자가 판단하면 취소는 보통 경로로 끝나고 취소 응답에
  * [CANCEL_NOT_SENT] 가 실린다.
  */
-internal fun Middleware.holdUnsentCancel(execution: Execution, unit: ExecutionUnit) {
-    val keyed = unit.route == Route.ROBOT
-    val cause = if (keyed) KEYED_UNSENT_CAUSE else HOLD_UNSENT_CAUSE
-    execution.cancelDelivery = execution.cancelDelivery.unsent(cause)
-    execution.cancelWait = CancelWait.Held(unit.unitId)
-    unit.annotate("cancel requested but never reached the downstream: no task handle" + if (keyed) ", keyed cancel not accepted" else "")
-    execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($cause) — 운영자 판단을 기다린다")
+internal fun CommandLifecycle.holdUnsentCancel(unit: ExecutionUnit) {
+    with(mw) {
+        val keyed = unit.route == Route.ROBOT
+        val cause = if (keyed) KEYED_UNSENT_CAUSE else HOLD_UNSENT_CAUSE
+        cancelDelivery = cancelDelivery.unsent(cause)
+        cancelWait = CancelWait.Held(unit.unitId)
+        unit.annotate("cancel requested but never reached the downstream: no task handle" + if (keyed) ", keyed cancel not accepted" else "")
+        execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($cause) — 운영자 판단을 기다린다")
+    }
 }
 
 /**
@@ -52,31 +54,35 @@ internal fun Middleware.holdUnsentCancel(execution: Execution, unit: ExecutionUn
  *
  * @return 붙었는가.
  */
-internal fun Middleware.cancelByKey(execution: Execution, unit: ExecutionUnit): Boolean {
-    val last = unit.keyedCancelAt
-    if (last != null && now().isBefore(last.plus(LOOKUP_INTERVAL))) return false
-    unit.keyedCancelAt = now()
-    val robot = execution.robotOf(unit)
-    val handle = handleFor(robot, unit.taskId, unit.revision)
-    val answered = cancelRobot(execution, CancelFlight(CancelFlight.Site.KEY, robot, handle, unit.unitId)) as? CancelIssue.Answered
-        ?: return false
-    return attachByKey(execution, unit, handle, answered.response)
+internal fun CommandLifecycle.cancelByKey(unit: ExecutionUnit): Boolean {
+    with(mw) {
+        val last = unit.keyedCancelAt
+        if (last != null && now().isBefore(last.plus(LOOKUP_INTERVAL))) return false
+        unit.keyedCancelAt = now()
+        val robot = execution.robotOf(unit)
+        val handle = handleFor(robot, unit.taskId, unit.revision)
+        val answered = cancelRobot(CancelFlight(CancelFlight.Site.KEY, robot, handle, unit.unitId)) as? CancelIssue.Answered
+            ?: return false
+        return attachByKey(unit, handle, answered.response)
+    }
 }
 
 /** [cancelByKey] 가 답을 받은 뒤. 잠금 밖에서 보냈으면 다음 라운드에 [settleCancel] 이 부른다. @return 붙었는가. */
-internal fun Middleware.attachByKey(execution: Execution, unit: ExecutionUnit, handle: TaskHandle, response: CancelTaskResponse): Boolean {
-    val refusal = response.takeUnless { it.hasState() }?.rejection?.code
-    if (refusal != null && refusal != RejectionCode.REJECTION_CODE_CANCEL_UNSUPPORTED) return false
+internal fun CommandLifecycle.attachByKey(unit: ExecutionUnit, handle: TaskHandle, response: CancelTaskResponse): Boolean {
+    with(mw) {
+        val refusal = response.takeUnless { it.hasState() }?.rejection?.code
+        if (refusal != null && refusal != RejectionCode.REJECTION_CODE_CANCEL_UNSUPPORTED) return false
 
-    execution.cancelIntent = refusal?.let { CancelIntent.Refused(it.name) } ?: CancelIntent.Requested
-    execution.handle = handle
-    unit.state = UnitState.RUNNING
-    unit.streamLostAt = null
-    execution.noticed.clear(Notice.Doubt)
-    unit.annotate("IN_DOUBT resolved by keyed cancel: ${unit.taskId} revision ${unit.revision}")
-    execution.trail(DOUBT_ATTACHED, "${unit.unitId}: 키로 지은 핸들(${unit.taskId}, 리비전 ${unit.revision})로 보낸 취소를 기체가 받아 StartTask 없이 붙었다")
-    execution.physicalState = PhysicalState.CANCELING
-    return true
+        cancelIntent = refusal?.let { CancelIntent.Refused(it.name) } ?: CancelIntent.Requested
+        execution.handle = handle
+        unit.state = UnitState.RUNNING
+        unit.streamLostAt = null
+        execution.noticed.clear(Notice.Doubt)
+        unit.annotate("IN_DOUBT resolved by keyed cancel: ${unit.taskId} revision ${unit.revision}")
+        execution.trail(DOUBT_ATTACHED, "${unit.unitId}: 키로 지은 핸들(${unit.taskId}, 리비전 ${unit.revision})로 보낸 취소를 기체가 받아 StartTask 없이 붙었다")
+        execution.physicalState = PhysicalState.CANCELING
+        return true
+    }
 }
 
 /**
@@ -85,26 +91,30 @@ internal fun Middleware.attachByKey(execution: Execution, unit: ExecutionUnit, h
  * 기다린다. 기체가 답하면(상태든 거부든) [CANCEL_RESENT] 를 남기고 [Execution.cancelUnsent] 를 내린다 — 취소 응답이 닿지 못했다고
  * 말하지 않는다. 던지면 간격([LOOKUP_INTERVAL]) 뒤에 스냅숏부터 다시 본다. 스냅숏을 못 읽었거나 태스크가 끝났으면 보내지 않는다.
  */
-internal fun Middleware.resendHeldCancel(execution: Execution, unit: ExecutionUnit) {
-    if (unit.route != Route.ROBOT) return
-    val robot = execution.robotOf(unit)
-    val view = views[robot]?.takeIf { it.observable } ?: return
-    val state = view.tasks[unit.taskId] ?: return
-    if (state.endedOnRobot() || view.taskRevisions[unit.taskId] != unit.revision) return
-    val last = unit.keyedCancelAt
-    if (last != null && now().isBefore(last.plus(LOOKUP_INTERVAL))) return
-    unit.keyedCancelAt = now()
-    val flight = CancelFlight(CancelFlight.Site.HELD, robot, handleFor(robot, unit.taskId, unit.revision), unit.unitId, state.name)
-    val answered = cancelRobot(execution, flight) as? CancelIssue.Answered ?: return
-    heldCancelAnswered(execution, unit, state.name, answered.response)
+internal fun CommandLifecycle.resendHeldCancel(unit: ExecutionUnit) {
+    with(mw) {
+        if (unit.route != Route.ROBOT) return
+        val robot = execution.robotOf(unit)
+        val view = views[robot]?.takeIf { it.observable } ?: return
+        val state = view.tasks[unit.taskId] ?: return
+        if (state.endedOnRobot() || view.taskRevisions[unit.taskId] != unit.revision) return
+        val last = unit.keyedCancelAt
+        if (last != null && now().isBefore(last.plus(LOOKUP_INTERVAL))) return
+        unit.keyedCancelAt = now()
+        val flight = CancelFlight(CancelFlight.Site.HELD, robot, handleFor(robot, unit.taskId, unit.revision), unit.unitId, state.name)
+        val answered = cancelRobot(flight) as? CancelIssue.Answered ?: return
+        heldCancelAnswered(unit, state.name, answered.response)
+    }
 }
 
 /** [resendHeldCancel] 이 답을 받은 뒤. 잠금 밖에서 보냈으면 다음 라운드에 [settleCancel] 이 부른다. */
-internal fun Middleware.heldCancelAnswered(execution: Execution, unit: ExecutionUnit, stateName: String, response: CancelTaskResponse) {
-    noteRefusal(execution, response)
-    execution.cancelDelivery = CancelDelivery.Clear
-    unit.annotate("held cancel re-sent by key: snapshot showed ${unit.taskId}=$stateName")
-    execution.trail(CANCEL_RESENT, "${unit.unitId}: 운영자 보류 중 스냅숏에 ${unit.taskId}=$stateName 가 보여 키로 지은 핸들로 취소를 보냈다 — 판단은 운영자가 한다")
+internal fun CommandLifecycle.heldCancelAnswered(unit: ExecutionUnit, stateName: String, response: CancelTaskResponse) {
+    with(mw) {
+        noteRefusal(response)
+        cancelDelivery = CancelDelivery.Clear
+        unit.annotate("held cancel re-sent by key: snapshot showed ${unit.taskId}=$stateName")
+        execution.trail(CANCEL_RESENT, "${unit.unitId}: 운영자 보류 중 스냅숏에 ${unit.taskId}=$stateName 가 보여 키로 지은 핸들로 취소를 보냈다 — 판단은 운영자가 한다")
+    }
 }
 
 /**
@@ -114,32 +124,36 @@ internal fun Middleware.heldCancelAnswered(execution: Execution, unit: Execution
  *
  * @return 단위가 이 라운드에 운영자 보류가 됐는가.
  */
-internal fun Middleware.holdUnreachedCancel(execution: Execution, unit: ExecutionUnit): Boolean {
-    val delivery = when (val d = execution.cancelDelivery) {
-        is CancelDelivery.Unsent -> d.takeIf { execution.cancelRequested && execution.linkBroken }
-            ?: run {
-                // 끊김이 풀렸거나 취소가 걷혔다 — 끊김 시각을 걷는다.
-                execution.cancelDelivery = d.copy(linkSince = null)
-                return false
-            }
-        CancelDelivery.Clear -> return false
+internal fun CommandLifecycle.holdUnreachedCancel(unit: ExecutionUnit): Boolean {
+    with(mw) {
+        val delivery = when (val d = cancelDelivery) {
+            is CancelDelivery.Unsent -> d.takeIf { execution.cancelRequested && execution.linkBroken }
+                ?: run {
+                    // 끊김이 풀렸거나 취소가 걷혔다 — 끊김 시각을 걷는다.
+                    cancelDelivery = d.copy(linkSince = null)
+                    return false
+                }
+            CancelDelivery.Clear -> return false
+        }
+        val since = delivery.linkSince ?: now().also { cancelDelivery = delivery.copy(linkSince = it) }
+        if (now().isBefore(since.plus(inDoubtGraceOf(execution)))) return false
+        unit.annotate("cancel requested but never reached the downstream: link broken since $since, not answered within grace")
+        unit.state = UnitState.OPERATOR_HOLD
+        cancelDelivery = CancelDelivery.Unsent(LINK_UNSENT_CAUSE)
+        cancelWait = CancelWait.Held(unit.unitId)
+        execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($LINK_UNSENT_CAUSE) — 운영자 판단을 기다린다")
+        execution.markIncident(unit)
+        return true
     }
-    val since = delivery.linkSince ?: now().also { execution.cancelDelivery = delivery.copy(linkSince = it) }
-    if (now().isBefore(since.plus(inDoubtGraceOf(execution)))) return false
-    unit.annotate("cancel requested but never reached the downstream: link broken since $since, not answered within grace")
-    unit.state = UnitState.OPERATOR_HOLD
-    execution.cancelDelivery = CancelDelivery.Unsent(LINK_UNSENT_CAUSE)
-    execution.cancelWait = CancelWait.Held(unit.unitId)
-    execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($LINK_UNSENT_CAUSE) — 운영자 판단을 기다린다")
-    execution.markIncident(unit)
-    return true
 }
 
 /** 걸린 취소가 [holdUnsentCancel] 로 서 있고 그 단위가 아직 운영자 보류다 — 실행은 운영자 판단을 기다린다. */
-internal fun Middleware.cancelWaitsOnHeldDoubt(execution: Execution): Boolean {
-    return when (val wait = execution.cancelWait) {
-        is CancelWait.Held -> execution.units.any { it.unitId == wait.unitId && it.state == UnitState.OPERATOR_HOLD }
-        is CancelWait.Attaching, CancelWait.None -> false
+internal fun CommandLifecycle.cancelWaitsOnHeldDoubt(): Boolean {
+    with(mw) {
+        return when (val wait = cancelWait) {
+            is CancelWait.Held -> execution.units.any { it.unitId == wait.unitId && it.state == UnitState.OPERATOR_HOLD }
+            is CancelWait.Attaching, CancelWait.None -> false
+        }
     }
 }
 
@@ -154,12 +168,14 @@ internal fun Middleware.cancelWaitsOnHeldDoubt(execution: Execution): Boolean {
  *
  * **분류를 지어내지 않는다.** 하위가 결함을 실었으면 그 정준 분류, 아니면 비워 두고 하위가 말한 것을 메모에 남긴다.
  */
-internal fun Middleware.holdUnrequestedCancel(execution: Execution, unit: ExecutionUnit, detail: String, fault: Fault? = null) {
-    unit.failureClass = fault?.let { canonicalClassOf(it) }
-    unit.fault = fault
-    unit.annotate("$detail without a cancel request from this layer — not proceeding; operator decides")
-    unit.state = UnitState.OPERATOR_HOLD
-    execution.markIncident(unit)
+internal fun CommandLifecycle.holdUnrequestedCancel(unit: ExecutionUnit, detail: String, fault: Fault? = null) {
+    with(mw) {
+        unit.failureClass = fault?.let { canonicalClassOf(it) }
+        unit.fault = fault
+        unit.annotate("$detail without a cancel request from this layer — not proceeding; operator decides")
+        unit.state = UnitState.OPERATOR_HOLD
+        execution.markIncident(unit)
+    }
 }
 
 /**
@@ -191,59 +207,61 @@ internal fun Middleware.holdUnrequestedCancel(execution: Execution, unit: Execut
  *
  * @return 붙었거나 기다린다 — 이번 라운드에 정착하지 않는다. 거짓이면 기체에 붙을 이 실행의 태스크가 없다.
  */
-internal fun Middleware.attachForCancel(execution: Execution): Boolean {
-    val candidates = execution.units.filter {
-        it.route == Route.ROBOT && it.state == UnitState.PENDING && execution.unattached[it.unitId] == it.attempt
-    }
-    if (candidates.isEmpty()) return false
+internal fun CommandLifecycle.attachForCancel(): Boolean {
+    with(mw) {
+        val candidates = execution.units.filter {
+            it.route == Route.ROBOT && it.state == UnitState.PENDING && execution.unattached[it.unitId] == it.attempt
+        }
+        if (candidates.isEmpty()) return false
 
-    val onRobot = mutableListOf<Pair<ExecutionUnit, TaskState>>()
-    for (unit in candidates) {
+        val onRobot = mutableListOf<Pair<ExecutionUnit, TaskState>>()
+        for (unit in candidates) {
+            val robot = execution.robotOf(unit)
+            val view = views[robot]
+            if (view == null || !view.observable) {
+                return waitUnattached(unit, "robot=$robot 스냅숏을 못 읽었다 — ${unit.unitId} 의 태스크를 볼 때까지 종결하지 않는다")
+            }
+            val state = view.tasks[taskIdOf(unit)]
+            if (state == null) execution.unattached.remove(unit.unitId) else onRobot += unit to state
+        }
+        val (unit, state) = onRobot.firstOrNull { !it.second.endedOnRobot() } ?: onRobot.lastOrNull() ?: return false
+
         val robot = execution.robotOf(unit)
-        val view = views[robot]
-        if (view == null || !view.observable) {
-            return waitUnattached(execution, unit, "robot=$robot 스냅숏을 못 읽었다 — ${unit.unitId} 의 태스크를 볼 때까지 종결하지 않는다")
+        val taskId = taskIdOf(unit)
+        val handle = handleFor(robot, taskId, unit.revision)
+        val sent = !state.endedOnRobot()
+        if (sent) {
+            when (val result = cancelRobot(CancelFlight(CancelFlight.Site.ATTACH, robot, handle, unit.unitId, state.name))) {
+                CancelIssue.Pending -> return waitUnattached(unit, "$taskId 의 취소를 보내는 중이다 — 다음 라운드에 답을 받는다")
+                is CancelIssue.Failed -> return waitUnattached(unit, unansweredAttach(taskId))
+                is CancelIssue.Answered -> noteRefusal(result.response)
+            }
         }
-        val state = view.tasks[taskIdOf(execution, unit)]
-        if (state == null) execution.unattached.remove(unit.unitId) else onRobot += unit to state
+        attachUnit(unit, taskId, handle, state.name, sent)
+        return true
     }
-    val (unit, state) = onRobot.firstOrNull { !it.second.endedOnRobot() } ?: onRobot.lastOrNull() ?: return false
-
-    val robot = execution.robotOf(unit)
-    val taskId = taskIdOf(execution, unit)
-    val handle = handleFor(robot, taskId, unit.revision)
-    val sent = !state.endedOnRobot()
-    if (sent) {
-        when (val result = cancelRobot(execution, CancelFlight(CancelFlight.Site.ATTACH, robot, handle, unit.unitId, state.name))) {
-            CancelIssue.Pending -> return waitUnattached(execution, unit, "$taskId 의 취소를 보내는 중이다 — 다음 라운드에 답을 받는다")
-            is CancelIssue.Failed -> return waitUnattached(execution, unit, unansweredAttach(taskId))
-            is CancelIssue.Answered -> noteRefusal(execution, result.response)
-        }
-    }
-    attachUnit(execution, unit, taskId, handle, state.name, sent)
-    return true
 }
 
-internal fun Middleware.unansweredAttach(taskId: String) = "$taskId 의 취소에 답이 없다 — 다음 라운드에 스냅숏부터 다시 본다"
-
 /** [attachForCancel] 이 붙는다. 잠금 밖에서 취소를 보냈으면 다음 라운드에 [settleCancel] 이 부른다. */
-internal fun Middleware.attachUnit(execution: Execution, unit: ExecutionUnit, taskId: String, handle: TaskHandle, stateName: String, sent: Boolean) {
-    unit.taskId = taskId
-    unit.requestedAt = requestedAtOf(execution, unit)
-    unit.lookups = 0
-    unit.lastLookupAt = null
-    unit.keyedCancelAt = null
-    unit.state = UnitState.RUNNING
-    execution.unattached.remove(unit.unitId)
-    execution.cancelWait = execution.cancelWait.attached()
-    execution.active = unit
-    execution.handle = handle
-    execution.physicalState = PhysicalState.CANCELING
-    execution.trail(
-        CANCEL_ATTACHED,
-        "${unit.unitId}: 스냅숏의 $taskId=$stateName 에 StartTask 없이 붙었다, " +
-            if (sent) "취소를 보냈다" else "이미 끝나 그 종료로 판정한다",
-    )
+internal fun CommandLifecycle.attachUnit(unit: ExecutionUnit, taskId: String, handle: TaskHandle, stateName: String, sent: Boolean) {
+    with(mw) {
+        unit.taskId = taskId
+        unit.requestedAt = requestedAtOf(unit)
+        unit.lookups = 0
+        unit.lastLookupAt = null
+        unit.keyedCancelAt = null
+        unit.state = UnitState.RUNNING
+        execution.unattached.remove(unit.unitId)
+        cancelWait = cancelWait.attached()
+        execution.active = unit
+        execution.handle = handle
+        execution.physicalState = PhysicalState.CANCELING
+        execution.trail(
+            CANCEL_ATTACHED,
+            "${unit.unitId}: 스냅숏의 $taskId=$stateName 에 StartTask 없이 붙었다, " +
+                if (sent) "취소를 보냈다" else "이미 끝나 그 종료로 판정한다",
+        )
+    }
 }
 
 /**
@@ -267,51 +285,53 @@ internal fun Middleware.attachUnit(execution: Execution, unit: ExecutionUnit, ta
  *
  * @return 붙었거나 기다리거나 보류에 뒀다 — 이번 라운드에 정착하지 않는다.
  */
-internal fun Middleware.attachTransportForCancel(execution: Execution): Boolean {
-    for (unit in execution.units.filter { it.route == Route.FLEET && it.state == UnitState.PENDING }) {
-        val reference = taskIdOf(execution, unit)
-        if (fleet.executionLookup == ExecutionLookup.NONE) {
-            if (execution.restoredRequests[unit.unitId]?.first != unit.attempt) continue
+internal fun CommandLifecycle.attachTransportForCancel(): Boolean {
+    with(mw) {
+        for (unit in execution.units.filter { it.route == Route.FLEET && it.state == UnitState.PENDING }) {
+            val reference = taskIdOf(unit)
+            if (fleet.executionLookup == ExecutionLookup.NONE) {
+                if (execution.restoredRequests[unit.unitId]?.first != unit.attempt) continue
+                unit.taskId = reference
+                unit.requestedAt = requestedAtOf(unit)
+                unit.state = UnitState.OPERATOR_HOLD
+                unit.annotate("cancel requested but the fleet has no lookup for the transport dispatched before restart")
+                cancelDelivery = cancelDelivery.unsent(LOOKUP_UNSENT_CAUSE)
+                cancelWait = CancelWait.Held(unit.unitId)
+                execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($LOOKUP_UNSENT_CAUSE) — 운영자 판단을 기다린다")
+                execution.markIncident(unit)
+                return true
+            }
+            // 미리 읽는 포트면 그 읽기를 받는다(§15.237). 읽는 중이면 답을 기다리는 것과 같다 — 같은 미확정 유예를 센다.
+            val handle = when (val read = fleet.prefetchedFind(reference) ?: findNow(reference)) {
+                FleetRead.Pending -> return waitUnattached(unit, "$reference 의 운반을 읽는 중이다 — 다음 라운드에 답을 받는다")
+                is FleetRead.Overdue, is FleetRead.Failed ->
+                    return waitUnattached(unit, "$reference 의 운반을 찾는 데 답이 없다 — 다음 라운드에 다시 찾는다")
+                is FleetRead.Read -> read.value
+            } ?: continue
+            val status = when (val read = fleet.prefetchedStatus(handle) ?: statusNow(handle)) {
+                FleetRead.Pending -> return waitUnattached(unit, "$reference 의 운반을 읽는 중이다 — 다음 라운드에 답을 받는다")
+                is FleetRead.Overdue, is FleetRead.Failed ->
+                    return waitUnattached(unit, "$reference 의 운반(${handle.id}) 상태에 답이 없다 — 다음 라운드에 다시 찾는다")
+                is FleetRead.Read -> read.value
+            }
+            val ended = status.state in TRANSPORT_ENDED
             unit.taskId = reference
-            unit.requestedAt = requestedAtOf(execution, unit)
-            unit.state = UnitState.OPERATOR_HOLD
-            unit.annotate("cancel requested but the fleet has no lookup for the transport dispatched before restart")
-            execution.cancelDelivery = execution.cancelDelivery.unsent(LOOKUP_UNSENT_CAUSE)
-            execution.cancelWait = CancelWait.Held(unit.unitId)
-            execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($LOOKUP_UNSENT_CAUSE) — 운영자 판단을 기다린다")
-            execution.markIncident(unit)
+            unit.requestedAt = requestedAtOf(unit)
+            unit.state = UnitState.RUNNING
+            cancelWait = cancelWait.attached()
+            execution.active = unit
+            execution.transport = handle
+            execution.physicalState = PhysicalState.CANCELING
+            if (!ended) sendCancel()
+            execution.trail(
+                CANCEL_ATTACHED,
+                "${unit.unitId}: 플릿의 $reference=${status.state.name}(${handle.id}) 에 새로 맡기지 않고 붙었다, " +
+                    if (ended) "이미 끝나 그 종료로 판정한다" else "취소를 보냈다",
+            )
             return true
         }
-        // 미리 읽는 포트면 그 읽기를 받는다(§15.237). 읽는 중이면 답을 기다리는 것과 같다 — 같은 미확정 유예를 센다.
-        val handle = when (val read = fleet.prefetchedFind(reference) ?: findNow(reference)) {
-            FleetRead.Pending -> return waitUnattached(execution, unit, "$reference 의 운반을 읽는 중이다 — 다음 라운드에 답을 받는다")
-            is FleetRead.Overdue, is FleetRead.Failed ->
-                return waitUnattached(execution, unit, "$reference 의 운반을 찾는 데 답이 없다 — 다음 라운드에 다시 찾는다")
-            is FleetRead.Read -> read.value
-        } ?: continue
-        val status = when (val read = fleet.prefetchedStatus(handle) ?: statusNow(handle)) {
-            FleetRead.Pending -> return waitUnattached(execution, unit, "$reference 의 운반을 읽는 중이다 — 다음 라운드에 답을 받는다")
-            is FleetRead.Overdue, is FleetRead.Failed ->
-                return waitUnattached(execution, unit, "$reference 의 운반(${handle.id}) 상태에 답이 없다 — 다음 라운드에 다시 찾는다")
-            is FleetRead.Read -> read.value
-        }
-        val ended = status.state in TRANSPORT_ENDED
-        unit.taskId = reference
-        unit.requestedAt = requestedAtOf(execution, unit)
-        unit.state = UnitState.RUNNING
-        execution.cancelWait = execution.cancelWait.attached()
-        execution.active = unit
-        execution.transport = handle
-        execution.physicalState = PhysicalState.CANCELING
-        if (!ended) sendCancel(execution)
-        execution.trail(
-            CANCEL_ATTACHED,
-            "${unit.unitId}: 플릿의 $reference=${status.state.name}(${handle.id}) 에 새로 맡기지 않고 붙었다, " +
-                if (ended) "이미 끝나 그 종료로 판정한다" else "취소를 보냈다",
-        )
-        return true
+        return false
     }
-    return false
 }
 
 /**
@@ -324,43 +344,32 @@ internal fun Middleware.attachTransportForCancel(execution: Execution): Boolean 
  *
  * @return 늘 참 — 이번 라운드에 정착하지 않는다.
  */
-/** 미리 읽지 않는 플릿에는 지금 찾는다. 던지면 [FleetRead.Failed] 다. */
-private fun Middleware.findNow(reference: String): FleetRead<TransportHandle?> = try {
-    FleetRead.Read(fleet.find(reference), now(), now())
-} catch (e: RuntimeException) {
-    FleetRead.Failed(e)
-}
 
-/** 미리 읽지 않는 플릿에는 지금 읽는다. 던지면 [FleetRead.Failed] 다. */
-private fun Middleware.statusNow(handle: TransportHandle): FleetRead<TransportStatus> = try {
-    FleetRead.Read(fleet.status(handle), now(), now())
-} catch (e: RuntimeException) {
-    FleetRead.Failed(e)
-}
-
-internal fun Middleware.waitUnattached(execution: Execution, unit: ExecutionUnit, why: String): Boolean {
-    val waiting = when (val wait = execution.cancelWait) {
-        is CancelWait.Attaching -> wait
-        // 보류에 묶였던 단위는 운영자가 판단했다 — 그래야 이 자리에 온다([cancelWaitsOnHeldDoubt]).
-        is CancelWait.Held, CancelWait.None -> CancelWait.Attaching(now()).also { execution.cancelWait = it }
-    }
-    if (now().isBefore(waiting.since.plus(inDoubtGraceOf(execution)))) {
-        execution.physicalState = PhysicalState.CANCELING
-        if (waiting.noted != why) {
-            execution.cancelWait = waiting.copy(noted = why)
-            execution.trail(CANCEL_UNATTACHED_WAIT, why)
+internal fun CommandLifecycle.waitUnattached(unit: ExecutionUnit, why: String): Boolean {
+    with(mw) {
+        val waiting = when (val wait = cancelWait) {
+            is CancelWait.Attaching -> wait
+            // 보류에 묶였던 단위는 운영자가 판단했다 — 그래야 이 자리에 온다([cancelWaitsOnHeldDoubt]).
+            is CancelWait.Held, CancelWait.None -> CancelWait.Attaching(now()).also { cancelWait = it }
         }
+        if (now().isBefore(waiting.since.plus(inDoubtGraceOf(execution)))) {
+            execution.physicalState = PhysicalState.CANCELING
+            if (waiting.noted != why) {
+                cancelWait = waiting.copy(noted = why)
+                execution.trail(CANCEL_UNATTACHED_WAIT, why)
+            }
+            return true
+        }
+        val since = waiting.since
+        execution.unattached.remove(unit.unitId)
+        unit.taskId = taskIdOf(unit)
+        unit.requestedAt = requestedAtOf(unit)
+        unit.state = UnitState.OPERATOR_HOLD
+        unit.annotate("cancel requested before attach but never answered: waiting since $since, not answered within grace")
+        cancelDelivery = cancelDelivery.unsent(UNATTACHED_UNSENT_CAUSE)
+        cancelWait = CancelWait.Held(unit.unitId)
+        execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($UNATTACHED_UNSENT_CAUSE) — 운영자 판단을 기다린다")
+        execution.markIncident(unit)
         return true
     }
-    val since = waiting.since
-    execution.unattached.remove(unit.unitId)
-    unit.taskId = taskIdOf(execution, unit)
-    unit.requestedAt = requestedAtOf(execution, unit)
-    unit.state = UnitState.OPERATOR_HOLD
-    unit.annotate("cancel requested before attach but never answered: waiting since $since, not answered within grace")
-    execution.cancelDelivery = execution.cancelDelivery.unsent(UNATTACHED_UNSENT_CAUSE)
-    execution.cancelWait = CancelWait.Held(unit.unitId)
-    execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($UNATTACHED_UNSENT_CAUSE) — 운영자 판단을 기다린다")
-    execution.markIncident(unit)
-    return true
 }

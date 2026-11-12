@@ -269,21 +269,21 @@ class Middleware(
         internal var handle: TaskHandle? = null
         internal var transport: TransportHandle? = null
         /**
-         * **취소의 네 축**(§15.301, `CancelAxes.kt`). 의도·닿음·기다림·보내는 중이 각각 한 값을 갖는다. 축 안의 값은 배타이고 축끼리는
-         * 함께 선다. 전이는 [cancel]·[abort] 와 명령 생애 넷(`Lifecycle*.kt`)이 한다.
+         * **명령 생애**(§15.303, `CommandLifecycle.kt`). 취소의 네 축(§15.301)과 송신 기록(보내는 중인 출발·맡기기, 미룬 갱신)은 이
+         * 실행의 생애 객체가 든다. 출발·미확정·취소의 전이는 그 객체의 확장(`Lifecycle*.kt`)이 하고, 라운드 안의 순서는 [pumpRound] 가 정한다.
          */
-        internal var cancelIntent: CancelIntent = CancelIntent.None
-        internal var cancelDelivery: CancelDelivery = CancelDelivery.Clear
-        internal var cancelWait: CancelWait = CancelWait.None
-        internal var cancelSending: CancelSending = CancelSending.Idle
+        internal val command = CommandLifecycle(this@Middleware, this)
 
-        // 축을 읽는 이름. 상태가 아니라 위 넷에서 계산한다.
-        internal val cancelRequested: Boolean get() = cancelIntent.requested
-        internal val cancelRefusal: String? get() = (cancelIntent as? CancelIntent.Refused)?.code
-        internal val lastCancel: CancelReport? get() = (cancelIntent as? CancelIntent.Reported)?.report
-        internal val cancelUnsent: Boolean get() = cancelDelivery is CancelDelivery.Unsent
-        internal val cancelInFlight: CancelFlight? get() = cancelSending.robot
-        internal val fleetCancelInFlight: FleetCancelFlight? get() = cancelSending.fleet
+        // 생애 객체를 읽는 이름. 상태가 아니라 위 객체에서 계산한다.
+        internal val cancelRequested: Boolean get() = command.cancelIntent.requested
+        internal val cancelRefusal: String? get() = (command.cancelIntent as? CancelIntent.Refused)?.code
+        internal val lastCancel: CancelReport? get() = (command.cancelIntent as? CancelIntent.Reported)?.report
+        internal val cancelUnsent: Boolean get() = command.cancelDelivery is CancelDelivery.Unsent
+        internal val cancelInFlight: CancelFlight? get() = command.cancelSending.robot
+        internal val fleetCancelInFlight: FleetCancelFlight? get() = command.cancelSending.fleet
+        internal val inFlight: InFlight? get() = command.inFlight
+        internal val fleetInFlight: FleetFlight? get() = command.fleetInFlight
+        internal val deferredUpdate: Int? get() = command.deferredUpdate
 
         /**
          * **알린 것**(§15.302, `Notices.kt`). 지연 보고·운영자 보류·미확정·막음 통보, 마지막 작업 응답이 보인 주의([noteAttention]),
@@ -305,25 +305,6 @@ class Middleware(
          */
         var permitBlock: PermitBlock? = null
             internal set
-
-        /**
-         * 개정이 도는 로봇 단위에 보내지 못한 갱신의 **직전 리비전**(기체에서 지금 도는 리비전). 널이면 미룬 갱신이 없다.
-         * 허가가 돌아오면 [pump] 가 보낸다. 그 전에 옛 리비전으로 끝나면 보통의 지연 이벤트 길(새 판의 기대에 대고 설비로 확인)을 탄다.
-         */
-        internal var deferredUpdate: Int? = null
-
-        /**
-         * 보내는 중인 출발(§15.237). 포트가 잠금 밖에서 보내는 동안만 있다([RobotPort.issue]). 있는 동안 이 실행은 다른 로봇 명령을
-         * 내지 않는다 — 취소는 요청만 남고, 개정의 갱신은 미뤄진다. 결과는 [pumpRound] 머리(첫 출발·개정 갱신)나 [resolveDoubt](미확정
-         * 조회)가 받는다.
-         */
-        internal var inFlight: InFlight? = null
-
-        /**
-         * 보내는 중인 플릿 맡기기(§15.237). 포트가 잠금 밖에서 보내는 동안만 있다([AmrFleetPort.issueDispatch]). 결과는 [pumpRound]
-         * 머리(첫 맡기기)나 [resolveDoubt] 머리(미확정 조회)가 받는다. 있는 동안 이 실행은 운반 취소를 내지 않는다 — 아직 운반 핸들이 없다.
-         */
-        internal var fleetInFlight: FleetFlight? = null
 
         /**
          * 운영자가 [release] 로 감수한 결함의 열쇠 — 같은 결함은 다시 막지 않는다. 새 결함은 막는다. 결함이 걷히면 열쇠를 놓으므로
@@ -1049,7 +1030,7 @@ class Middleware(
         val pumped = execution.physicalState.pumps
         try {
             // 보내는 중인 취소가 있으면 그 결과부터 받는다. 아직이면 이 라운드는 진행하지 않는다.
-            if (!pollCancel(execution)) pumpRound(execution)
+            if (!execution.command.pollCancel()) pumpRound(execution)
             execution.noticed.clear(Notice.PumpFailure(PUMP_SOURCE))
         } catch (e: RuntimeException) {
             execution.notePumpFailure(PUMP_SOURCE, "라운드 진행", e)
@@ -1063,19 +1044,19 @@ class Middleware(
 
         // **보내는 중인 출발이 있으면 그 결과부터 받는다**(§15.237). 첫 출발과 개정 갱신은 결과를 받기 전까지 이 실행의 다른 일을 하지
         // 않는다 — 취소·미룬 갱신·다음 단위가 그 결과에 달렸다. 미확정 조회는 [resolveDoubt] 가 받는다.
-        execution.inFlight?.takeIf { it.kind != InFlight.Kind.LOOKUP }?.let { flight ->
-            settleIssue(execution, flight, issueStart(flight))
+        execution.command.inFlight?.takeIf { it.kind != InFlight.Kind.LOOKUP }?.let { flight ->
+            execution.command.settleIssue(flight, issueStart(flight))
             return
         }
         // 플릿의 첫 맡기기도 같다. 미확정 조회는 [resolveDoubt] 가 받는다.
-        execution.fleetInFlight?.takeIf { it.kind == FleetFlight.Kind.START }?.let { flight ->
-            settleDispatch(execution, flight, issueDispatch(flight.order))
+        execution.command.fleetInFlight?.takeIf { it.kind == FleetFlight.Kind.START }?.let { flight ->
+            execution.command.settleDispatch(flight, issueDispatch(flight.order))
             return
         }
 
         // **닿지 못한 취소는 닿을 때까지 다시 보낸다.** 도는 단위의 태스크에만 의미가 있다 — 이미 끝난 태스크(검증 대기)에는 보내지
         // 않고, 그대로 끝나면 취소 응답이 닿지 못했다고 말한다([abort]). 미확정 중에는 핸들이 없고, [resolveDoubt] 가 붙으면서 보낸다.
-        if (execution.cancelUnsent && execution.active?.state == UnitState.RUNNING) sendCancel(execution)
+        if (execution.cancelUnsent && execution.active?.state == UnitState.RUNNING) execution.command.sendCancel()
         // 다시 보낸 취소가 잠금 밖에서 나가는 중이면 이 라운드는 여기까지다. 같은 라운드에 단위가 끝나 중단을 적으면 그 답(거부 사유)
         // 없이 «닿지 못했다» 로 적는다.
         if (execution.cancelInFlight != null || execution.fleetCancelInFlight != null) return
@@ -1115,24 +1096,24 @@ class Middleware(
         // **미룬 개정의 갱신**(ADR 52). 허가가 돌아왔으면 지금 보낸다. 취소가 걸렸으면 보내지 않는다 — 멈추라는 말 뒤에 새 판을
         // 보내면 기체가 그 판으로 다시 움직일 수 있다.
         execution.active?.let { unit ->
-            val previous = execution.deferredUpdate ?: return@let
+            val previous = execution.command.deferredUpdate ?: return@let
             if (execution.cancelRequested || unit.state != UnitState.RUNNING) return@let
             if (issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
-                execution.deferredUpdate = null
+                execution.command.deferredUpdate = null
                 sendRevisionUpdate(execution, unit, previous)
             }
         }
         // 갱신이 보내는 중이면 이 라운드는 여기까지다(§15.237). 이어서 단위를 읽으면 태스크가 이미 끝난 경우 다음 단위의 출발이 나가
         // 보내는 중인 갱신을 덮는다 — 그 결과를 받을 자리가 사라진다. 보내는 중인 조회는 막지 않는다 — 그 결과는 아래 [resolveDoubt] 가 받는다.
-        if (execution.inFlight?.kind == InFlight.Kind.UPDATE) return
+        if (execution.command.inFlight?.kind == InFlight.Kind.UPDATE) return
 
         val active = execution.active
         if (active != null) {
             val settled = when {
-                active.state == UnitState.IN_DOUBT -> resolveDoubt(execution, active)
+                active.state == UnitState.IN_DOUBT -> execution.command.resolveDoubt(active)
                 active.state == UnitState.VERIFYING -> checkEvidence(execution, active)
                 else -> when (active.route) {
-                    Route.ROBOT -> holdUnreachedCancel(execution, active) || pumpRobotUnit(execution, active)
+                    Route.ROBOT -> execution.command.holdUnreachedCancel(active) || pumpRobotUnit(execution, active)
                     Route.FLEET -> pumpFleetUnit(execution, active)
                     Route.SIGNAL -> pumpSignalUnit(execution, active)
                 }
@@ -1140,9 +1121,9 @@ class Middleware(
             if (!settled) return
             // 미룬 갱신이 끝내 안 나갔다 — 단위는 옛 리비전으로 끝났고 그 결과는 지연 이벤트로 새 판의 기대에 대고 확인됐다.
             // 그 사실을 자취에 남기고 이 단위에 걸린 막음을 걷는다. 다음 단위의 출발은 따로 관문을 묻는다.
-            execution.deferredUpdate?.let { previous ->
+            execution.command.deferredUpdate?.let { previous ->
                 execution.trail(ISSUE_WITHHELD, "${active.unitId}: revision ${active.revision} update never sent; task ended under revision $previous")
-                execution.deferredUpdate = null
+                execution.command.deferredUpdate = null
             }
             if (execution.permitBlock?.unitId == active.unitId) execution.permitBlock = null
             execution.active = null
@@ -1150,7 +1131,7 @@ class Middleware(
             execution.handle?.let { robots.release(execution.robotOf(active), it) }
             execution.handle = null
             execution.transport = null
-            if (execution.cancelRequested && !cancelWaitsOnHeldDoubt(execution)) {
+            if (execution.cancelRequested && !execution.command.cancelWaitsOnHeldDoubt()) {
                 // 하류 갱신을 읽은 경로는 abort 를 이미 적었다. 검증 대기 중에 취소가 걸린 경우만 여기서 적는다.
                 if (execution.physicalState != PhysicalState.ABORTED) abort(execution, inProgress = active, hold = active.hold, cleanup = "not_applicable")
                 return
@@ -1161,10 +1142,10 @@ class Middleware(
         }
 
         // 취소가 걸린 채 미확정이 끝내 안 풀린 단위는 취소가 하위에 닿지 못했다 — 중단으로 닫지 않고 아래 운영자 보류에 둔다(§15.238).
-        if (execution.cancelRequested && !cancelWaitsOnHeldDoubt(execution)) {
+        if (execution.cancelRequested && !execution.command.cancelWaitsOnHeldDoubt()) {
             // 다시 지은 실행이 아직 붙지 않은 태스크가 기체에 있으면 그것부터 멈춘다. 붙지 않은 채 정착하면 기체가 그 태스크를 하는
             // 동안 실행이 기체를 내준다. 플릿에 맡긴 운반도 같다(§15.254).
-            if (attachForCancel(execution) || attachTransportForCancel(execution)) return
+            if (execution.command.attachForCancel() || execution.command.attachTransportForCancel()) return
             abort(execution, inProgress = null, hold = null, cleanup = "nothing_to_clean")
             return
         }
@@ -1172,7 +1153,7 @@ class Middleware(
         // 운영자가 판단할 단위가 있으면 다음으로 가지 않는다 — 판단이 재작업이면 그 슬롯이 먼저다.
         val held = execution.units.firstOrNull { it.state == UnitState.OPERATOR_HOLD }
         if (held != null) {
-            if (execution.cancelUnsent && (execution.cancelWait as? CancelWait.Held)?.unitId == held.unitId) resendHeldCancel(execution, held)
+            if (execution.cancelUnsent && (execution.command.cancelWait as? CancelWait.Held)?.unitId == held.unitId) execution.command.resendHeldCancel(held)
             execution.physicalState = PhysicalState.OPERATOR_HOLD
             if (execution.noticed.note(Notice.Hold, held.unitId)) {
                 notify(execution)
@@ -1188,7 +1169,7 @@ class Middleware(
 
         // **다시 지은 실행의 재부착은 새 발행이 아니다**(§15.219). 기체가 이미 하는 태스크에 붙는 것이라 아래 결함·허가 게이트를 묻지
         // 않는다 — 막으면 기체가 그 일을 하는 동안 이 인스턴스는 따라가지 않는다.
-        if (next.route == Route.ROBOT && reattachFromSnapshot(execution, next)) return
+        if (next.route == Route.ROBOT && execution.command.reattachFromSnapshot(next)) return
 
         // **기체가 새 태스크를 못 받는다고 말하면 보내지 않는다.** 계약은 막지 않는다 — 결함은 인터록이 아니고
         // "판단은 밖으로"(§4.6·§15.87)이며, 그 밖이 여기다. 자동으로 넘어가지 않는다: 사람이 [release] 로 감수하거나
@@ -1233,7 +1214,7 @@ class Middleware(
         }
         // 기체의 선언을 아직 읽는 중이면 이 라운드에는 내지 않는다(§15.237). 허가가 막을 때처럼 단위는 `PENDING` 그대로 기다린다.
         if (next.route == Route.ROBOT && optionalsPending(execution, next)) return
-        startUnit(execution, next)
+        execution.command.startUnit(next)
     }
 
     /** 선택 파라미터를 바라는데 [unit] 기체의 선언을 아직 읽는 중인가([RobotPort.capabilitiesPending]). */
@@ -1329,11 +1310,6 @@ class Middleware(
 
     /** 이미 적은 (기체, 선택 키). 같은 사실을 되풀이하면 운영자가 곧 무시한다. */
     internal val droppedOptionals = mutableSetOf<Pair<String, String>>()
-
-    /** 계약의 종착 — 기체가 더는 그 태스크를 하지 않는다. [isTerminal] 과 달리 사람을 기다리는 태스크는 아직 기체가 붙들고 있다. */
-    internal fun TaskState.endedOnRobot(): Boolean = this == TaskState.TASK_STATE_SUCCEEDED ||
-        this == TaskState.TASK_STATE_FAILED || this == TaskState.TASK_STATE_CANCELLED ||
-        this == TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED
 
     /** 이 단위가 이번 라운드에 닫혔다. 봉하는 것은 [IncidentLog.sealIncidents] 다. */
     internal fun Execution.markIncident(unit: ExecutionUnit) {
@@ -1632,8 +1608,8 @@ class Middleware(
     fun cancel(executionId: String): Boolean {
         val execution = executions[executionId] ?: return false
         if (!execution.physicalState.pumps) return false
-        execution.cancelIntent = CancelIntent.Requested
-        sendCancel(execution)
+        execution.command.cancelIntent = CancelIntent.Requested
+        execution.command.sendCancel()
         execution.physicalState = PhysicalState.CANCELING
         return true
     }
@@ -1654,7 +1630,7 @@ class Middleware(
     ) {
         // 끝난 실행에는 낼 것이 없다 — 막음과 미룬 갱신을 걷는다. 막혔던 사실은 자취의 `ISSUE_WITHHELD` 에 남아 있다.
         execution.permitBlock = null
-        execution.deferredUpdate = null
+        execution.command.deferredUpdate = null
         if (!requested) {
             execution.physicalState = PhysicalState.ABORTED
             notify(execution)
@@ -1677,7 +1653,7 @@ class Middleware(
             // 하위에 닿지 않은 취소가 «멈췄다» 로 읽힌다.
             refusal = execution.cancelRefusal ?: CANCEL_NOT_SENT.takeIf { execution.cancelUnsent },
         )
-        execution.cancelIntent = CancelIntent.Reported(report)
+        execution.command.cancelIntent = CancelIntent.Reported(report)
         execution.physicalState = PhysicalState.ABORTED
         notify(execution)
     }

@@ -13,30 +13,15 @@ import kotlin.test.assertTrue
  *
  * 2차 분할(`docs/superpowers/plans/2026-11-12-middleware-seam-split-2.md`)이 상태 없는 하위 절차를
  * `fun Middleware.name(` 확장으로 이 파일들에 옮겼다. 상태와 라운드 순서, 공개 창구는 `Middleware.kt` 에 남는다.
- * 순서는 원래 `Middleware.kt` 의 순서다.
+ * 순서는 원래 `Middleware.kt` 의 순서다. 명령 생애 넷(`Lifecycle*.kt`)은 재설계 R3(§15.303)이 실행마다의 생애 객체
+ * `CommandLifecycle` 의 확장으로 바꿔 이 목록을 떠났다 — 그 파일에 `fun Middleware.` 가 다시 서면 [SeamPlacementTest] 가 빨개진다.
+ * 실행을 읽지 않는 포트 보조만 `CommandPorts.kt` 에 남았다.
  */
 internal object MiddlewareSeams {
 
     val homes: Map<String, List<String>> = linkedMapOf(
         "Resume.kt" to listOf("staleVersionRefusal", "recordRefusal", "restore", "reopenHold", "rebuildFrom", "attemptOf"),
         "Revision.kt" to listOf("revise", "sendRevisionUpdate", "settleUpdate", "issuable"),
-        "LifecycleIssue.kt" to listOf(
-            "transportOrderOf", "withOptionals", "taskIdOf", "requestedAtOf", "startUnit", "issueStart", "settleIssue",
-            "settleStart", "acceptTransport", "issueDispatch", "settleDispatch", "settleFleetStart", "startNotSent", "startInDoubt",
-        ),
-        "LifecycleDoubt.kt" to listOf(
-            "resolveDoubt", "attachFromSnapshot", "holdRevisionAhead", "handleFor", "settleLookup", "lookupNotSent",
-            "lookupFound", "applyStartResponse", "lookupDownstream", "lookupOf", "reattachFromSnapshot",
-        ),
-        "LifecycleCancelAttach.kt" to listOf(
-            "holdUnsentCancel", "cancelByKey", "attachByKey", "resendHeldCancel", "heldCancelAnswered", "holdUnreachedCancel",
-            "cancelWaitsOnHeldDoubt", "holdUnrequestedCancel", "attachForCancel", "unansweredAttach", "attachUnit",
-            "attachTransportForCancel", "findNow", "statusNow", "waitUnattached",
-        ),
-        "LifecycleCancel.kt" to listOf(
-            "sendCancel", "markOtherFailed", "cancelFleet", "cancelNotReached", "cancelReached", "noteRefusal", "cancelRobot",
-            "pollCancel", "pollFleetCancel", "pollRobotCancel", "settleCancel",
-        ),
         "ClockSkew.kt" to listOf("readNow", "measureClock", "clockSuspicionOf"),
         "UnitDrivers.kt" to listOf(
             "noteProgress", "pumpRobotUnit", "loseStream", "settleLate", "pumpSignalUnit", "describe", "pumpFleetUnit", "holdOf",
@@ -44,6 +29,9 @@ internal object MiddlewareSeams {
         "EvidenceBinding.kt" to listOf(
             "judgeEffectMismatch", "beginVerify", "checkEvidence", "failWithEvidenceCheck", "reworkAsNewAttempt", "skippedPair",
             "resolveSkipped", "skippedReworkRefusal",
+        ),
+        "CommandPorts.kt" to listOf(
+            "transportOrderOf", "issueStart", "issueDispatch", "handleFor", "lookupOf", "unansweredAttach", "findNow", "statusNow",
         ),
     )
 

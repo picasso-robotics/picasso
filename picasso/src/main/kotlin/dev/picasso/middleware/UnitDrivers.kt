@@ -103,7 +103,7 @@ internal fun Middleware.pumpRobotUnit(execution: Execution, unit: ExecutionUnit)
             if (execution.cancelRequested) {
                 unit.state = UnitState.ABORTED
             } else {
-                holdUnrequestedCancel(execution, unit, downstreamDetail(last), last.fault.takeIf { last.hasFault() })
+                execution.command.holdUnrequestedCancel(unit, downstreamDetail(last), last.fault.takeIf { last.hasFault() })
             }
 
         else -> {
@@ -172,7 +172,7 @@ private fun Middleware.settleLate(execution: Execution, unit: ExecutionUnit, upd
             if (execution.cancelRequested) {
                 unit.state = UnitState.ABORTED
             } else {
-                holdUnrequestedCancel(execution, unit, downstreamDetail(update), update.fault.takeIf { update.hasFault() })
+                execution.command.holdUnrequestedCancel(unit, downstreamDetail(update), update.fault.takeIf { update.hasFault() })
             }
         else -> failWithEvidenceCheck(
             execution, unit, canonicalClass(update),
@@ -299,7 +299,7 @@ internal fun Middleware.pumpFleetUnit(execution: Execution, unit: ExecutionUnit)
             if (execution.cancelRequested) {
                 unit.state = UnitState.ABORTED
             } else {
-                holdUnrequestedCancel(execution, unit, "fleet=${TransportState.CANCELLED.name} ${status.detail.orEmpty()}".trim())
+                execution.command.holdUnrequestedCancel(unit, "fleet=${TransportState.CANCELLED.name} ${status.detail.orEmpty()}".trim())
             }
 
         // 플릿 계약은 분류를 안 싣는다 — 프로젝트용 계약의 남은 자리이며 여기서는 UNCLASSIFIED 다.
