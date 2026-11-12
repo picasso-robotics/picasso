@@ -1,7 +1,6 @@
 package dev.picasso.middleware
 
 import dev.picasso.contracts.v1.ConnectionState
-import dev.picasso.contracts.v1.Event
 import dev.picasso.contracts.v1.Fault
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.capability.Remedy
@@ -642,35 +641,6 @@ class Middleware(
     }
 
     /**
-     * 보고서 11.3 — 능력은 최고 등급을 선언하고 요청은 요구 등급을 지정한다. 확인 수단이 없으면 제공 불가다.
-     * 받아 놓고 UNVERIFIED 로 끝내는 것은 상류에 "될지도 모른다" 고 말한 셈이다.
-     */
-    internal fun evidenceRefusal(order: JobOrder, capability: LogicalCapability): Submission.Rejected? =
-        if (order.requiredEvidence > capability.maxEvidence) {
-            Submission.Rejected(
-                "요구 근거 등급 ${order.requiredEvidence} 은 ${capability.workMasterId} 의 최고 등급 ${capability.maxEvidence} 를 넘는다 — 확인 수단이 없다",
-            )
-        } else {
-            null
-        }
-
-    /**
-     * 계획의 단위 id 가 겹치면 거부, 아니면 널(§15.227).
-     *
-     * 리비전은 단위 id 로 접고 인시던트는 단위 id 로 찾으며 작업 응답은 단위 id 로 완료·미완료를 적는다 — 겹치면 한쪽이 가려진다.
-     * 대기 단위의 id 는 임무 정의의 노드 id 이고 반복 단위의 id 는 작업 지시의 설비 id 라, 둘이 같은지는 작업 지시가 와야 안다.
-     * 그래서 검증기가 아니라 작업 수락([submit])과 리비전([revise])이 본다. **id 를 바꿔 피하지 않는다** — 태스크 id
-     * `jobOrderId#unitId` 가 단위 id 를 싣고, 겹치지 않는 작업 지시의 id 는 그대로여야 한다.
-     */
-    internal fun duplicateUnitIdRefusal(planned: List<ExecutionUnit>): Submission.Rejected? {
-        val repeated = planned.groupingBy { it.unitId }.eachCount().filterValues { it > 1 }.keys
-        if (repeated.isEmpty()) return null
-        return Submission.Rejected(
-            "$DUPLICATE_UNIT_ID: ${repeated.joinToString()} — 작업 지시의 설비 id 가 다른 단위의 id(임무 정의의 노드 id 등)와 같다",
-        )
-    }
-
-    /**
      * **배정 관문**(설계안 §7)의 공개 창구. 판정은 [AdmissionGate.admits] 가 한다.
      *
      * 이름을 여기 두는 이유: `orchestration.md` §2 와 ADR 42 가 `Middleware.admits` 로 대고,
@@ -900,80 +870,6 @@ class Middleware(
         trail(PUMP_FAILED, "$where 중 포트가 던졌다 ($cause) — 상태는 그대로 두고 다음 라운드에 다시 본다")
     }
 
-    /**
-     * 기체 하나를 동기화한다 — 스냅샷(현재값) + 재생(그 사이의 사실). 이벤트는 관계있는 실행의 자취에 남긴다:
-     * 태스크 전이는 그 태스크를 든 실행에, 결함·능력 변경은 그 기체의 실행 전부에.
-     *
-     * 미리 읽는 포트([RobotPort.prefetched])면 그 읽기를 받는다(§15.267). 시각은 그 읽기가 실제로 보낸·받은 시각이다 — 받아 든 시각으로
-     * 찍으면 낡은 값이 방금 본 값이 되고, 끊김 유예와 시계 차가 그만큼 어긋난다. 읽는 중이면 뷰를 그대로 둔다.
-     */
-    private fun sync(robotId: String, live: List<Execution>) {
-        val view = views.getOrPut(robotId) { RobotView() }
-        val read = robots.prefetched(robotId) ?: readNow(robotId)
-        val (snapshot, sentAt, receivedAt) = when (read) {
-            PrefetchedRead.Pending -> return
-            PrefetchedRead.Unread -> {
-                view.observable = false
-                return
-            }
-            // 던지는 포트도 «못 물어봤다» 다 — 낡은 값을 관측한 값으로 두지 않는다. 던진 사실은 부른 쪽이 트레이스에 남긴다.
-            is PrefetchedRead.Failed -> {
-                view.observable = false
-                throw read.failure
-            }
-            is PrefetchedRead.Read -> Triple(read.snapshot, read.sentAt, read.receivedAt)
-        }
-        if (snapshot == null) {
-            view.observable = false
-            return
-        }
-        view.observable = true
-        view.lastObservedAt = receivedAt
-        measureClock(robotId, view, snapshot, sentAt, receivedAt, live)
-        // **결함을 못 본 스냅숏은 결함이 걷혔다는 관측이 아니다**(§15.263). 수용을 놓지 않고, 낡은 결함도 현재값으로 두지 않는다 —
-        // 막는 관문은 [blockingFaults] 가 못 본 것으로 다룬다.
-        view.faultsObservable = snapshot.faultsObservable
-        view.faults = if (snapshot.faultsObservable) snapshot.faults.associateBy { faultKey(it) } else emptyMap()
-        if (snapshot.faultsObservable) {
-            live.forEach { e -> e.acknowledgedFaults.filter { it !in view.faults }.forEach { e.forgetAcknowledged(robotId, it, "robot=$robotId 의 스냅숏에 없다") } }
-        }
-        view.connection = snapshot.connection
-        view.tasks = snapshot.tasks
-        view.taskRevisions = snapshot.revisions
-        val previousSession = view.session
-        if (snapshot.session.isNotEmpty()) view.session = snapshot.session
-
-        val cursor = view.cursor
-        if (cursor == null) {
-            view.cursor = snapshot.sequence
-            view.resyncs += 1
-            val faults = if (snapshot.faultsObservable) snapshot.faults.size.toString() else "not observable"
-            live.forEach { it.trail("RESYNC", "snapshot: next sequence=${snapshot.sequence}, faults=$faults, connection=${snapshot.connection.name}") }
-            return
-        }
-        // **세션이 바뀌었으면 커서를 잴 수 없다.** 번호는 세션 안의 것이고 다시 뜬 하위는 번호를 처음부터 센다. 앞 세션의
-        // 커서로 재생을 물으면 발신자는 축출이 아니라 빈 답을 주고, 그 번호에 닿을 때까지 새 세션의 이벤트를 건너뛴다(§15.215).
-        if (snapshot.session.isNotEmpty() && previousSession != null && previousSession != snapshot.session) {
-            view.cursor = snapshot.sequence
-            view.resyncs += 1
-            live.forEach { it.trail("RESYNC", "session changed at cursor=$cursor ($previousSession -> ${snapshot.session}); rebuilt from snapshot sequence=${snapshot.sequence}") }
-            return
-        }
-        when (val replay = robots.replay(robotId, cursor)) {
-            null -> Unit // 못 물어봤다 — 다음 펌프에 같은 cursor 로 다시 묻는다
-            Replay.Evicted -> {
-                // 버퍼를 벗어났다 — 놓친 이벤트가 있다. 스냅샷은 이미 세웠으니 거기서부터 이어 붙인다(17장 9번).
-                view.cursor = snapshot.sequence
-                view.resyncs += 1
-                live.forEach { it.trail("RESYNC", "replay evicted at cursor=$cursor; rebuilt from snapshot sequence=${snapshot.sequence}") }
-            }
-            is Replay.Events -> {
-                replay.events.forEach { event -> record(robotId, event, live); view.eventsSeen += 1 }
-                replay.events.lastOrNull()?.let { view.cursor = it.header.sequence + 1 }
-            }
-        }
-    }
-
     /** 시계 차 의심을 트레이스에 한 번 남긴다. 같은 방향·같은 크기 등급이면 되풀이하지 않고, 허용 안으로 들어오면 표시를 지운다. */
     internal fun Execution.noteClockSkew(robot: String, offset: ClockOffset) {
         val suspicion = clockSuspicionOf(this, offset)
@@ -986,39 +882,6 @@ class Middleware(
             CLOCK_SKEW,
             "robot=$robot ${suspicion.describe()} (임계 ${suspicion.threshold.toMillis() / 1000.0}초) — 근거 시간 윈도우가 이 차를 그대로 먹는다. 판정은 바꾸지 않는다",
         )
-    }
-
-    private fun record(robotId: String, event: Event, live: List<Execution>) {
-        val at = event.header.occurredAt
-        val seq = event.header.sequence
-        when {
-            event.hasTaskTransition() -> {
-                val tr = event.taskTransition
-                live.filter { e -> e.units.any { it.taskId == tr.taskId } }.forEach {
-                    it.eventTrail += ObservedEvent(seq, at, "TASK_TRANSITION", "${tr.taskId} ${tr.from.name}->${tr.to.name} rev=${tr.revision} attempt=${tr.attempt}")
-                }
-            }
-            event.hasFaultEvent() -> {
-                val f = event.faultEvent
-                val kind = if (f.cleared) "FAULT_CLEARED" else "FAULT_RAISED"
-                live.forEach { it.eventTrail += ObservedEvent(seq, at, kind, "${f.fault.errorType} class=${canonicalClassOf(f.fault)} can_accept_new_task=${f.fault.canAcceptNewTask}") }
-                // 스냅숏 둘 사이에 걷혔다가 다시 생긴 결함은 스냅숏만으로는 같은 결함으로 보인다 — 걷힘 이벤트가 그것을 가른다.
-                if (f.cleared) faultKey(f.fault).let { key -> live.forEach { it.forgetAcknowledged(robotId, key, "robot=$robotId 가 걷혔다고 알렸다(seq=$seq)") } }
-            }
-            event.hasCapabilityChanged() -> {
-                val c = event.capabilityChanged
-                live.forEach { it.eventTrail += ObservedEvent(seq, at, "CAPABILITY_CHANGED", "epoch=${c.capabilityEpoch} added=${c.addedList} removed=${c.removedList} cause=${c.cause.name}") }
-            }
-            event.hasSkillTransition() -> {
-                // 스킬 인스턴스의 전이(READY→ACTIVE→HALTED…). 태스크 전이가 결과를 말하지만 이것이 그 아래의 걸음이고,
-                // **재생을 이어 붙이는 검사가 이것에 기댄다** — 마지막으로 읽은 이벤트가 스킬 전이일 때 커서가 안 나아가면 여기서 중복이 보인다.
-                val st = event.skillTransition
-                live.filter { e -> e.units.any { it.taskId == st.taskId } }.forEach {
-                    it.eventTrail += ObservedEvent(seq, at, "SKILL_TRANSITION", "${st.taskId} ${st.skillType} ${st.from.name}->${st.to.name}")
-                }
-            }
-            else -> Unit
-        }
     }
 
     /** [at] 은 이 줄의 시각이다. 기본은 지금이고, 같은 시각을 다른 사실과 나눠 써야 하는 자리만 넘긴다([reopenHold]). */
@@ -1129,7 +992,7 @@ class Middleware(
             execution.transport = null
             if (execution.cancelRequested && !execution.command.cancelWaitsOnHeldDoubt()) {
                 // 하류 갱신을 읽은 경로는 abort 를 이미 적었다. 검증 대기 중에 취소가 걸린 경우만 여기서 적는다.
-                if (execution.physicalState != PhysicalState.ABORTED) abort(execution, inProgress = active, hold = active.hold, cleanup = "not_applicable")
+                if (execution.physicalState != PhysicalState.ABORTED) execution.command.abort(inProgress = active, hold = active.hold, cleanup = "not_applicable")
                 return
             }
             // **설비 대기의 기한이 실행을 중단했다**(`onDeadline = ABORTED`). 취소 요청이 아니라서 위 분기에 안 걸리고,
@@ -1142,7 +1005,7 @@ class Middleware(
             // 다시 지은 실행이 아직 붙지 않은 태스크가 기체에 있으면 그것부터 멈춘다. 붙지 않은 채 정착하면 기체가 그 태스크를 하는
             // 동안 실행이 기체를 내준다. 플릿에 맡긴 운반도 같다(§15.254).
             if (RouteDriver.ATTACH_ORDER.any { it.attachForCancel(execution.command) }) return
-            abort(execution, inProgress = null, hold = null, cleanup = "nothing_to_clean")
+            execution.command.abort(inProgress = null, hold = null, cleanup = "nothing_to_clean")
             return
         }
 
@@ -1262,24 +1125,6 @@ class Middleware(
         }
         return view.faults.values.filter { !it.canAcceptNewTask && faultKey(it) !in execution.acknowledgedFaults }
     }
-
-    /**
-     * 감수한 결함이 [robotId] 에서 걷혔으면 그 열쇠를 놓는다(§15.248). 감수는 그 결함이 남아 있는 동안의 것이다 — 같은 열쇠로 다시
-     * 생기면 새 결함이라 다시 막는다. 부르는 쪽은 스냅숏을 읽은 라운드와 걷힘 이벤트뿐이다. 못 읽은 것은 걷혔다는 관측이 아니다.
-     *
-     * **이 실행의 다른 기체가 지금 그 열쇠를 보이면 놓지 않는다.** 열쇠에 기체가 없어서, 놓으면 그 결함이 없는 기체의 스냅숏 하나가
-     * 다른 기체에서 감수한 결함을 라운드마다 다시 막는다.
-     */
-    private fun Execution.forgetAcknowledged(robotId: String, key: String, why: String) {
-        if (key !in acknowledgedFaults) return
-        if (robots.any { it != robotId && views[it]?.let { v -> v.observable && v.faultsObservable && key in v.faults } == true }) return
-        acknowledgedFaults -= key
-        trail(ACKNOWLEDGED_FAULT_CLEARED, "$key: $why — 다시 생기면 새 결함으로 막는다")
-    }
-
-    /** 결함의 정체 — 모드 이름과 참조. 미믹의 `FaultRegistry` 가 같은 열쇠로 중복을 막는다. */
-    private fun faultKey(fault: Fault): String =
-        fault.errorType + fault.referencesList.joinToString(prefix = "[", postfix = "]") { "${it.key}=${it.value}" }
 
     /**
      * 운영자의 해제 — *지금 막고 있는* 결함을 감수하고 다음 단위로 간다. 결함을 지우지 않는다(그것은 기체 쪽 일이고
@@ -1612,48 +1457,6 @@ class Middleware(
 
     fun lastCancel(executionId: String): CancelReport? = executions[executionId]?.lastCancel
 
-    /**
-     * @param requested 상위의 취소 요청([cancel])으로 멈췄는가. 거짓이면 이 계층이 정해 둔 규칙(설비 대기의 기한 뒤
-     *   `ABORTED`)으로 멈춘 것이고, **취소 응답([CancelReport])을 남기지 않는다** — 아무도 취소를 안 했는데 취소 응답이
-     *   있으면 «누가 멈췄나» 에 거짓으로 응답한다.
-     */
-    internal fun abort(
-        execution: Execution,
-        inProgress: ExecutionUnit?,
-        hold: HoldState?,
-        cleanup: String,
-        requested: Boolean = true,
-    ) {
-        // 끝난 실행에는 낼 것이 없다 — 막음과 미룬 갱신을 걷는다. 막혔던 사실은 자취의 `ISSUE_WITHHELD` 에 남아 있다.
-        execution.permitBlock = null
-        execution.command.deferredUpdate = null
-        if (!requested) {
-            execution.physicalState = PhysicalState.ABORTED
-            notify(execution)
-            return
-        }
-        // 단위가 끝까지 갔으면(하류가 중단을 거절했거나, 취소가 닿기 전에 끝났거나) 중단된 단위가 아니라 **그 뒤에서 멈춘** 경계다.
-        val refused = inProgress != null && (inProgress.state == UnitState.DONE || inProgress.state == UnitState.UNVERIFIED)
-        val report = CancelReport(
-            executionId = execution.executionId,
-            version = execution.order.version,
-            completedUnits = execution.completedUnits,
-            inProgressUnit = if (refused) null else inProgress?.unitId,
-            stoppedAfter = if (refused) inProgress.unitId else null,
-            notStartedUnits = execution.units.filter { it.state == UnitState.PENDING }.map { it.unitId },
-            // 든 단위가 없으면 마지막 관측(빈손) — JobResponse 와 같은 규칙이다(§15.145, 리뷰 C7).
-            residualHold = hold ?: execution.units.lastOrNull { it.hold.kind != HoldKind.HOLD_KIND_UNSPECIFIED }?.hold ?: HoldState.getDefaultInstance(),
-            cleanup = cleanup,
-            finalState = PhysicalState.ABORTED,
-            // 하위가 거부한 사유가 먼저다. 거부도 응답도 없이 끝났는데 취소가 닿지 못했다면 «닿지 못했다» 가 사유다 — 비워 두면
-            // 하위에 닿지 않은 취소가 «멈췄다» 로 읽힌다.
-            refusal = execution.cancelRefusal ?: CANCEL_NOT_SENT.takeIf { execution.cancelUnsent },
-        )
-        execution.command.cancelIntent = CancelIntent.Reported(report)
-        execution.physicalState = PhysicalState.ABORTED
-        notify(execution)
-    }
-
     // ── 결과 통보 (보고서 13.3 — 명령 재시도와 통보 재시도의 분리)
 
     internal fun notify(execution: Execution) {
@@ -1798,41 +1601,12 @@ class Middleware(
         )
     }
 
-    /** 사정을 덧붙인다 — 앞의 것을 지우지 않는다. 지연 이벤트·미확정 같은 사정은 종착 사유와 함께 남아야 한다. */
-    internal fun ExecutionUnit.annotate(message: String) {
-        note = if (note.isNullOrBlank()) message else "$note; $message"
-    }
-
-    /** [annotate] 와 같되 이미 든 사정이면 다시 덧붙이지 않는다 — 라운드마다 되풀이되는 사정(보내지 못한 명령)이 사유를 덮지 않게. */
-    internal fun ExecutionUnit.annotateOnce(message: String) {
-        if (note?.contains(message) != true) annotate(message)
-    }
-
-    /** 계약의 정준 분류 이름(접두사 없이). 결함이 없거나 분류가 비어 있으면 [UNCLASSIFIED]. */
-    internal fun canonicalClass(update: WatchTaskResponse): String =
-        if (update.hasFault()) canonicalClassOf(update.fault) else UNCLASSIFIED
-
-    /** 하류가 말한 그대로 — 상태 이름, 모드 이름, 벤더 원문. 로그의 것이지 분기의 것이 아니다. */
-    internal fun downstreamDetail(update: WatchTaskResponse): String = buildString {
-        append("downstream=").append(update.state.name)
-        if (update.hasFault()) {
-            if (update.fault.errorType.isNotBlank()) append(" error_type=").append(update.fault.errorType)
-            if (update.fault.vendorDetail.isNotBlank()) append(" vendor=").append(update.fault.vendorDetail)
-        }
-    }
-
     /** 하류 갱신의 시각 — 헤더의 `state_as_of`(§5.5). 없거나 못 읽으면 지금. */
     internal fun stateTime(update: WatchTaskResponse): Instant = try {
         update.header.stateAsOf.takeIf { it.isNotBlank() }?.let { Instant.parse(it) } ?: now()
     } catch (_: DateTimeParseException) {
         now()
     }
-
-    internal fun TaskState.isTerminal(): Boolean = this == TaskState.TASK_STATE_SUCCEEDED ||
-        this == TaskState.TASK_STATE_FAILED || this == TaskState.TASK_STATE_CANCELLED ||
-        this == TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED ||
-        // 사람이 와야 진행되는 것은 이 층에서 단위의 종착이다 — 운영자 판단은 상류의 것.
-        this == TaskState.TASK_STATE_NEEDS_INTERVENTION || this == TaskState.TASK_STATE_RETRIABLE
 
     companion object {
         /** 검증 불일치 — 하류는 성공이라는데 설비가 다른 것을 봤다(보고서 12.3 넷째 행). */

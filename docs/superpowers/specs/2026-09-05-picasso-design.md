@@ -3140,6 +3140,14 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+305. **재설계 R5 — `Execution` 과 실행 표는 `Middleware` 안에 두고, 상태 없는 절차를 밖으로 옮겨 실코드를 843 으로 내린다(한계 대장 «§15.298»).**
+
+    ★**`Execution` 을 빼지 않기로 했다.** 계획서(§15.299)는 «빼지 않기로 하면 그 까닭을 적는다» 고 했다. 까닭은 다른 저장소다. `mission-ops` 의 실행 호스트(`MissionHost.kt`·`MockRunner.kt`)가 `includeBuild` 로 이 저장소를 물고 출하 코드 열여섯 곳(두 파일)에서 `Middleware.Execution` 을 타입으로 쓴다. 이 저장소의 시험도 일흔한 곳에서 그 이름을 잡는다. 빼면 그 저장소의 빌드가 깨진다. 이 저장소는 다른 저장소 파일을 고치지 않는다(CLAUDE.md §5). 그러니 옮기려면 `handoff/` 로 넘기고 받는 쪽이 정해야 한다. 상태의 주인이 하나인 근원은 R3 이 생애 상태를 `CommandLifecycle` 로 옮겨 이미 덜었다. 실행 표를 밖의 저장소로 빼는 것은 상태의 모양을 바꾸지 않고 이름만 옮긴다.
+
+    대신 `Middleware` 에 있을 까닭이 없는 것을 옮겼다. 기체 동기화(`sync`·`record`·`forgetAcknowledged`, 88줄)는 새 접합부 `RobotSync.kt` 로 갔다. 결함 열쇠 `faultKey` 는 순수 함수라 그 파일의 최상위로 갔다. 취소 응답을 짓는 `abort` 는 취소 생애(`CommandLifecycle`, `LifecycleCancel.kt`)로 갔다. 응답이 취소 의도 축(`CancelIntent.Reported`)을 쓰기 때문이다. 순수 함수 일곱(`evidenceRefusal` `duplicateUnitIdRefusal` `annotate` `annotateOnce` `canonicalClass` `downstreamDetail` `isTerminal`)은 `UnitFacts.kt` 의 최상위로 갔다. `Middleware.kt` 실코드는 1,005 에서 843 이 되어 목표 900 아래다. `MIDDLEWARE` 상한은 1,080 에서 843 으로, `TOTAL` 은 1,829 에서 1,769 로, `OPEN_MEMBERS` 는 30 에서 22 로 내렸다. 셋 다 1 낮추는 주입에서 빨개졌다.
+
+    ★**남은 `internal` 22 는 저마다 까닭이 있다.** 포트와 시계는 접합부·생애·드라이버가 하위를 부르는 길이다(`robots` `cell` `fleet` `now`). 공유 상태와 부품은 실행을 가로지른다(`executions` `views` `droppedOptionals` `desk` `gate` `issuing` `incidentLog`). 라운드 값은 `private` 인 현장 값을 열지 않으려고 함수로 연 것이다(`windowOf` `inDoubtGraceOf` `stallWindowOf`). 기록 창구는 통보 열(`outbox`)과 주의 칸을 `private` 로 두려고 연 것이다(`trail` `markIncident` `notify` `noteAttention` `noteClockSkew`). 관측과 시계 읽기도 있다(`observeCell` `observeHold` `stateTime`). 멤버마다의 부르는 파일은 `docs/superpowers/plans/2026-11-12-middleware-r0-state-map.md` §10 에 있다. 더 닫으려면 포트·시계·기록 창구를 든 문맥 객체를 접합부에 넘기는 모양이 필요하다. 그것은 재설계 다음의 일이다.
+
 304. **재설계 R4 — 경로마다 다른 일을 `RouteDriver` 의 구현으로 모은다(한계 대장 «§15.298»).**
 
     `RouteDrivers.kt` 의 봉인 타입 `RouteDriver`(`Robot`·`Fleet`·`Signal`)가 명령 생애의 경로별 연산을 든다. 출발, 보내는 중인 조회 받기, 조회 앞의 해소(스냅숏 부착, 리비전 앞섬), 조회의 관문과 송신, 라운드 진행, 붙기 전 취소, 조회 종류, 키 취소 여부, 갱신 수용이다. `resolveDoubt`·`startUnit`·`holdUnsentCancel`·`resendHeldCancel` 과 `pumpRound`·`notify`·`revise` 는 `RouteDriver.of(unit.route)` 로 드라이버를 얻어 부른다. 생애 네 파일과 `CommandLifecycle.kt` 에는 경로 `when` 갈래가 없다. 새 시험 «명령 생애 파일에 경로별 when 갈래가 없다» 가 그것을 지키고, 갈래 하나를 넣으면 빨개진다(주입으로 확인). `lookupOf` 는 `RouteDriver.lookupKind` 가 됐다.

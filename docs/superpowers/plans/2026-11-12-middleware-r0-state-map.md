@@ -281,3 +281,32 @@ R1 이 «취소(R1)» 묶음 아홉과 송신 묶음의 취소 둘을 `CancelAxe
 | `lookupOf(route)` | `lookupKind` |
 | `holdUnsentCancel`·`resendHeldCancel` 의 로봇 여부 | `cancelsByKey` |
 | `revise` 의 `updatable` | `takesUpdate` |
+
+## 10. R5 뒤 — 남은 `internal` 멤버 (§15.305)
+
+`Middleware.kt` 의 클래스 본문에 남은 `internal` 선언 22개와 그것을 부르는 출하 파일이다. 까닭의 갈래는 §15.305 에 있다. 표는 기계로 뽑았다(주석을 뺀 본문에서 이름을 찾았다).
+
+| 멤버 | 까닭 | 부르는 파일 |
+|---|---|---|
+| `robots` | 포트 | AdmissionGate, ClockSkew, CommandPorts, EvidenceBinding, IncidentLog, IssuingGate, LifecycleCancel, LifecycleIssue, Ports, RemedyDesk, Revision, RobotSync, RouteDrivers, UnitDrivers |
+| `cell` | 포트 | AdmissionGate, UnitDrivers |
+| `fleet` | 포트 | CancelAxes, CommandPorts, LifecycleCancel, LifecycleCancelAttach, RouteDrivers, UnitDrivers |
+| `now` | 시계 | ClockSkew, CommandLanes, CommandPorts, EvidenceBinding, InMemoryMissionCatalog, IncidentLog, IssuingFleetPort, IssuingGate, IssuingRobotPort, LifecycleCancelAttach, LifecycleDoubt, LifecycleIssue, Ports, PrefetchingFleetPort, PrefetchingRobotPort, RemedyDesk, Resume, Revision, UnitDrivers |
+| `executions` | 공유 상태 | AdmissionGate, EvidenceBinding, RemedyDesk, Retention |
+| `views` | 공유 상태 | EvidenceBinding, LifecycleCancelAttach, LifecycleDoubt, RobotSync |
+| `gate` | 부품 | Revision |
+| `issuing` | 부품 | Revision |
+| `desk` | 부품 | Resume, Revision |
+| `incidentLog` | 부품 | EvidenceBinding |
+| `windowOf` | 라운드 값 | ClockSkew, EvidenceBinding, LifecycleDoubt |
+| `inDoubtGraceOf` | 라운드 값 | LifecycleCancelAttach, LifecycleDoubt |
+| `stallWindowOf` | 라운드 값 | UnitDrivers |
+| `Execution.noteClockSkew` | 기록 창구 | ClockSkew |
+| `Execution.trail` | 기록 창구 | LifecycleCancel, LifecycleCancelAttach, LifecycleDoubt, LifecycleIssue, Resume, Revision, RobotSync, UnitDrivers |
+| `droppedOptionals` | 공유 상태 | LifecycleIssue |
+| `Execution.markIncident` | 기록 창구 | EvidenceBinding, LifecycleCancelAttach, LifecycleDoubt, LifecycleIssue, Resume, UnitDrivers |
+| `ExecutionUnit.observeHold` | 관측 | UnitDrivers |
+| `Execution.observeCell` | 관측 | EvidenceBinding, LifecycleDoubt |
+| `notify` | 기록 창구 | EvidenceBinding, LifecycleCancel, LifecycleIssue, UnitDrivers |
+| `noteAttention` | 기록 창구 | Revision |
+| `stateTime` | 시계 | UnitDrivers |

@@ -118,8 +118,7 @@ internal fun Middleware.pumpRobotUnit(execution: Execution, unit: ExecutionUnit)
         }
     }
     if (execution.cancelRequested) {
-        abort(
-            execution, inProgress = unit, hold = last.hold,
+        execution.command.abort(inProgress = unit, hold = last.hold,
             cleanup = when (last.state) {
                 TaskState.TASK_STATE_CANCELLED -> "done"
                 TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED -> "failed"
@@ -204,7 +203,7 @@ internal fun Middleware.pumpSignalUnit(execution: Execution, unit: ExecutionUnit
     if (execution.cancelRequested) {
         unit.state = UnitState.ABORTED
         unit.annotate("cancelled while waiting for ${wait.signal}")
-        abort(execution, inProgress = unit, hold = null, cleanup = "not_applicable")
+        execution.command.abort(inProgress = unit, hold = null, cleanup = "not_applicable")
         return true
     }
 
@@ -244,7 +243,7 @@ internal fun Middleware.pumpSignalUnit(execution: Execution, unit: ExecutionUnit
                 it.state = UnitState.ABORTED
                 it.annotate("not started: ${wait.signal} deadline aborted the execution")
             }
-            abort(execution, inProgress = unit, hold = null, cleanup = "not_applicable", requested = false)
+            execution.command.abort(inProgress = unit, hold = null, cleanup = "not_applicable", requested = false)
         }
     }
     return true
@@ -308,8 +307,7 @@ internal fun Middleware.pumpFleetUnit(execution: Execution, unit: ExecutionUnit)
         )
     }
     if (execution.cancelRequested) {
-        abort(
-            execution, inProgress = unit, hold = unit.hold,
+        execution.command.abort(inProgress = unit, hold = unit.hold,
             cleanup = if (status.holding) "failed" else "done",
         )
     }

@@ -1,7 +1,10 @@
 package dev.picasso.middleware
 
 import dev.picasso.contracts.v1.CancelTaskResponse
+import dev.picasso.contracts.v1.HoldKind
+import dev.picasso.contracts.v1.HoldState
 import dev.picasso.contracts.v1.TaskHandle
+import dev.picasso.middleware.Middleware.Companion.CANCEL_NOT_SENT
 import dev.picasso.middleware.Middleware.Companion.CANCEL_RESENT
 import dev.picasso.middleware.Middleware.Companion.CANCEL_UNSENT
 
@@ -253,4 +256,47 @@ internal class CancelFlight(
 internal class FleetCancelFlight(val reference: String, val handle: TransportHandle) {
     /** 같은 호출의 로봇 취소가 실패했는가. 그러면 플릿이 답해도 «닿았다» 로 내리지 않는다. */
     var otherFailed: Boolean = false
+}
+
+/**
+ * @param requested 상위의 취소 요청([cancel])으로 멈췄는가. 거짓이면 이 계층이 정해 둔 규칙(설비 대기의 기한 뒤
+ *   `ABORTED`)으로 멈춘 것이고, **취소 응답([CancelReport])을 남기지 않는다** — 아무도 취소를 안 했는데 취소 응답이
+ *   있으면 «누가 멈췄나» 에 거짓으로 응답한다.
+ */
+internal fun CommandLifecycle.abort(
+    inProgress: ExecutionUnit?,
+    hold: HoldState?,
+    cleanup: String,
+    requested: Boolean = true,
+) {
+    with(mw) {
+        // 끝난 실행에는 낼 것이 없다 — 막음과 미룬 갱신을 걷는다. 막혔던 사실은 자취의 `ISSUE_WITHHELD` 에 남아 있다.
+        execution.permitBlock = null
+        execution.command.deferredUpdate = null
+        if (!requested) {
+            execution.physicalState = PhysicalState.ABORTED
+            notify(execution)
+            return
+        }
+        // 단위가 끝까지 갔으면(하류가 중단을 거절했거나, 취소가 닿기 전에 끝났거나) 중단된 단위가 아니라 **그 뒤에서 멈춘** 경계다.
+        val refused = inProgress != null && (inProgress.state == UnitState.DONE || inProgress.state == UnitState.UNVERIFIED)
+        val report = CancelReport(
+            executionId = execution.executionId,
+            version = execution.order.version,
+            completedUnits = execution.completedUnits,
+            inProgressUnit = if (refused) null else inProgress?.unitId,
+            stoppedAfter = if (refused) inProgress.unitId else null,
+            notStartedUnits = execution.units.filter { it.state == UnitState.PENDING }.map { it.unitId },
+            // 든 단위가 없으면 마지막 관측(빈손) — JobResponse 와 같은 규칙이다(§15.145, 리뷰 C7).
+            residualHold = hold ?: execution.units.lastOrNull { it.hold.kind != HoldKind.HOLD_KIND_UNSPECIFIED }?.hold ?: HoldState.getDefaultInstance(),
+            cleanup = cleanup,
+            finalState = PhysicalState.ABORTED,
+            // 하위가 거부한 사유가 먼저다. 거부도 응답도 없이 끝났는데 취소가 닿지 못했다면 «닿지 못했다» 가 사유다 — 비워 두면
+            // 하위에 닿지 않은 취소가 «멈췄다» 로 읽힌다.
+            refusal = execution.cancelRefusal ?: CANCEL_NOT_SENT.takeIf { execution.cancelUnsent },
+        )
+        execution.command.cancelIntent = CancelIntent.Reported(report)
+        execution.physicalState = PhysicalState.ABORTED
+        notify(execution)
+    }
 }
