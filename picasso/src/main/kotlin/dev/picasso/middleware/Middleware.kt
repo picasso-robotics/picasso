@@ -924,37 +924,7 @@ class Middleware(
         // 없이 «닿지 못했다» 로 적는다.
         if (execution.cancelInFlight != null || execution.fleetCancelInFlight != null) return
 
-        // **연결이 끊기면 도는 단위의 결과는 미확정이다.** 계약이 OFFLINE 과 CONNECTION_BROKEN 을 가른다(완료 기준 5);
-        // HIBERNATING 은 침묵하지만 정상이다(§4.7). 되돌아오면 스냅샷으로 태스크 상태를 다시 세워 이어 간다 —
-        // 재실행이 아니다. 어느 쪽도 상류에 한 번씩 알린다(16장 — 결과가 아직 확인되지 않았다는 사실).
-        // **스냅숏을 못 읽는 것도 유예가 지나면 끊김이다**(§15.242). 하위가 다시 뜨지 않고 끊기면 포트가 던지지도 끊김을 말하지도 않는다.
-        val runningRobotUnit = execution.active?.takeIf { it.route == Route.ROBOT && it.state == UnitState.RUNNING }
-        val view = runningRobotUnit?.let { views[execution.robotOf(it)] }
-        val unseenSince = view?.takeIf { !it.observable }?.lastObservedAt
-            ?.takeIf { !now().isBefore(it.plus(execution.capability.linkLossWindow)) }
-        if (unseenSince != null && runningRobotUnit != null && !execution.linkBroken) {
-            execution.linkBroken = true
-            execution.trail("LINK_BROKEN", "snapshot unreadable since $unseenSince while ${runningRobotUnit.unitId} is running — result unconfirmed")
-            execution.physicalState = PhysicalState.IN_DOUBT
-            notify(execution)
-        }
-        if (view != null && view.observable && runningRobotUnit != null) {
-            val down = view.connection == ConnectionState.CONNECTION_STATE_CONNECTION_BROKEN ||
-                view.connection == ConnectionState.CONNECTION_STATE_OFFLINE
-            if (down && !execution.linkBroken) {
-                execution.linkBroken = true
-                execution.trail("LINK_BROKEN", "${view.connection.name} while ${runningRobotUnit.unitId} is running — result unconfirmed")
-                execution.physicalState = PhysicalState.IN_DOUBT
-                notify(execution)
-            } else if (!down && execution.linkBroken) {
-                execution.linkBroken = false
-                val downstream = view.tasks[runningRobotUnit.taskId]?.name ?: "(not in snapshot)"
-                execution.trail("LINK_RESTORED", "snapshot says ${runningRobotUnit.taskId}=$downstream — resuming tracking, no re-execution")
-                runningRobotUnit.annotate("link restored; snapshot state $downstream")
-                execution.physicalState = PhysicalState.RUNNING
-                notify(execution)
-            }
-        }
+        trackLink(execution)
 
         // **미룬 개정의 갱신**(ADR 52). 허가가 돌아왔으면 지금 보낸다. 취소가 걸렸으면 보내지 않는다 — 멈추라는 말 뒤에 새 판을
         // 보내면 기체가 그 판으로 다시 움직일 수 있다.
