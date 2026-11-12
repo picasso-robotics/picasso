@@ -101,7 +101,7 @@ private fun CommandLifecycle.cancelNotReached(failure: RuntimeException) {
 }
 
 /** 닿았다 — 닿지 않은 채였으면 그 사실을 자취에 남기고 걷는다. */
-private fun CommandLifecycle.cancelReached() {
+internal fun CommandLifecycle.cancelReached() {
     with(mw) {
         when (cancelDelivery) {
             is CancelDelivery.Unsent -> {

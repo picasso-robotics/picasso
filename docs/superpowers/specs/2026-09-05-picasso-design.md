@@ -3142,7 +3142,7 @@ mimic/
 
 307. **의존 정비 S1 — 낮은 층 타입을 제자리로 옮겨 포트·모델 순환을 없앤다.**
 
-    R0~R5 뒤 의존 방향을 검토했다(Codex·Fable 자문 두 라운드). 계획은 S0 소비자 검증(PR #12) → S1 타입 이사 → S2 `Execution` 최상위 → S3 공개 세터·가변 컬렉션 폐쇄 → 층 시험 → S4 내부 핵심과 좁은 생애 환경, 호스트 부품 모듈 분리 순이다. 이 항목은 S1 이다(번호 306 은 열린 PR #11 이 쓴다). 동작 변경, 공개 이름·패키지 변경, 시험 수 변경은 없다. 파일 사이 이름 기반 참조(주석·문자열·private 제외) 측정 결과, 기존 6개 파일(`Model`, `Occupancy`, `Ports`, `LogicalCapability`, `PrefetchingFleetPort`, `PrefetchingRobotPort`)과 21개 파일 성분 중 6개 파일 성분이 완전히 해소되었다. 21개 파일 성분은 19개 파일(`CancelAxes`·`Canonical` 제외)로 줄었다. 기존 순환 원인은 `Model`의 `ExecutionUnit`이 `Occupancy`의 관측 값을 쓰고, `Occupancy`가 `Ports`의 `SlotSignal`을 쓰며, 포트 인터페이스 반환 타입(`PrefetchedRead`·`FleetRead`)이 구현 파일에 있던 점이다.
+    R0~R5 뒤 의존 방향을 검토했다(Codex·Fable 자문 두 라운드). 계획은 S0 소비자 검증(PR #12) → S1 타입 이사 → S2 `Execution` 최상위 → S3 공개 세터·가변 컬렉션 폐쇄 → 층 시험 → S4 내부 핵심과 좁은 생애 환경, 호스트 부품 모듈 분리 순이다. 이 항목은 S1 이다(번호 306 은 PR #11 이 썼다). 동작 변경, 공개 이름·패키지 변경, 시험 수 변경은 없다. 파일 사이 이름 기반 참조(주석·문자열·private 제외) 측정 결과, 기존 6개 파일(`Model`, `Occupancy`, `Ports`, `LogicalCapability`, `PrefetchingFleetPort`, `PrefetchingRobotPort`)과 21개 파일 성분 중 6개 파일 성분이 완전히 해소되었다. 21개 파일 성분은 19개 파일(`CancelAxes`·`Canonical` 제외)로 줄었다. 기존 순환 원인은 `Model`의 `ExecutionUnit`이 `Occupancy`의 관측 값을 쓰고, `Occupancy`가 `Ports`의 `SlotSignal`을 쓰며, 포트 인터페이스 반환 타입(`PrefetchedRead`·`FleetRead`)이 구현 파일에 있던 점이다.
 
     선언 본문은 그대로 둔 채 같은 패키지 안에서 타입을 옮겼다. `PrefetchedRead`와 `FleetRead`는 `Ports.kt`의 각 포트 인터페이스 옆으로 옮겼다. `SourceObservation`·`SourceUnobserved`·`DestinationObservation`은 `Model.kt`로 옮겼다. 이 이사가 순환을 끊었다. `SourceCheck`·`DestinationCheck`는 `Occupancy.kt`에 남겼다. 포트 계약 파일에 섞여 있던 gRPC 어댑터 `ClientRobotPort`는 새 `ClientRobotPort.kt`로 분리했다. 승인·판단 기록·결과 내보내기가 번들 내보내기 파일에 기대던 문제는 `Obj`와 `Json`을 새 `Json.kt`로 분리해 해소했다. 구체 업무 `PrepareSequencedRack`·`DeliverContainer`·`InspectAsset`는 새 `CodeCapabilities.kt`로 옮겨 `LogicalCapability.kt`에는 계약만 남겼다. mission-ops가 쓰는 공개 companion 멤버 `MissionCatalog.codeCapabilities()`는 같은 패키지라 고치지 않고 컴파일된다. 이로 인해 남은 «포트 → 구체 업무» 간선 하나는 조립용 예외이며, 이 분리가 아닌 관측 값 이사로 순환을 끊었다.
 
@@ -3151,6 +3151,17 @@ mimic/
     ★**`Middleware.Submission`은 옮기지 않고 공개 결과 계약으로 인정한다.** 하위 파일(`AdmissionGate`·`RemedyDesk`·`UnitFacts`)이 `Submission.Rejected`를 직접 만들고, 공개 `Admission.Refused.rejection`과 공개 `Unassigned : Middleware.Submission`이 이 타입을 쓴다. 내부 거부 값을 따로 두고 창구에서 바꾸는 안은 버렸다. `Rejected`의 필드 7개 중 6개가 기본값이라 변환에서 하나를 빠뜨려도 컴파일되고, 공개 타입 쪽 간선은 어차피 남기 때문이다. `typealias`로는 `Middleware.Submission.Rejected` 같은 중첩 경로를 이어 줄 수 없음을 컴파일로 확인했다. S3 뒤 층 시험에서는 하위 파일이 `Middleware.kt`에서 쓸 수 있는 이름을 `Submission`과 그 하위로만 허용한다(S2 전에는 `Execution`도 허용).
 
     19개 파일 성분에 남은 원인은 `Execution`이 `Middleware` 안 inner class인 점(S2)과 생애·드라이버가 `Middleware`의 포트·시계·트레이스·통보를 부르는 점(S4)이다. 생애 파일들의 companion 상수 import 약 45줄은 해당 성분 내부라 옮기지 않았다. `./gradlew cleanTest build -x :harness:test -x :registry:test` 실행 결과 시험 XML 실패 0건이다. mission-ops(`fcb1a30`)를 이 변경으로 다시 빌드했다. picasso 미들웨어를 쓰는 mission-host·site·e2e 344 시험은 실패 0 이다. ops-service 498 은 앞 두 번의 실행에서 서로 다른 시험 하나씩이 시험용 DB 의 연결 실패로 떨어졌고, 세 번째 실행에서 실패 0 이었다. ops-service 는 picasso 미들웨어를 컴파일하지 않는다. 바뀐 시험은 한 곳이다. `DocumentClaimsTest` 가 그림의 실패 분류 이름을 찾을 때 `LogicalCapability.kt` 와 `CodeCapabilities.kt` 를 함께 읽는다.
+306. **R0 이 표시한 의심 동작 다섯((a)~(e), §15.300)을 고친다.**
+
+    - **(b) 이미 끝난 태스크라는 거절도 기체가 그 태스크를 안다는 답이다.** 키로 지은 핸들의 취소에 기체가 `INVALID_TRANSITION` 으로 답하면, `CANCEL_UNSUPPORTED` 처럼 그 핸들로 붙어 끝까지 따라가 단위를 그 종료로 판정한다(`KNOWN_TASK_REFUSALS`). 답을 받았으니 취소는 닿았다. «닿지 않음» 을 걷고, 취소 응답의 사유는 그 거절 코드다. 앞에서는 붙지 않아 미확정 유예 끝에 운영자 보류로 갔고, 취소 응답은 `CANCEL_NOT_SENT` 를 실었다. 끊긴 채 개정 갱신을 잃은 조합 시험에서는 기체가 옛 리비전으로 점검을 마쳤다. 그래서 이제 지연 이벤트로 새 판의 기대에 대고 설비가 확인하고(확인 못 하면 `UNVERIFIED`), 실행은 «그 뒤에서 멈춤» 으로 끝난다. 기체가 그 태스크를 모른다는 쪽은 그대로다. 그것은 기체가 쉰다는 증거가 아니다(§15.219).
+    - **(a) 핸들이 있어도 취소가 닿지 않은 채면 보류에 묶는다.** 미확정 유예가 끝나 단위를 운영자 보류에 둘 때, 앞에서는 핸들이 없을 때만 취소를 보류에 묶었다. 이제는 핸들로 보낸 취소가 닿지 않은 채일 때도 묶는다. 그래야 실행이 중단으로 닫히지 않고 운영자 판단을 기다린다(§15.243 과 같은 까닭). 새 시험 «…링크가 돌아와도 닿지 않으면 단위와 실행을 운영자 보류에 둔다» 가 지킨다.
+    - **(c) 미확정 단위의 끊김도 링크가 돌아오면 걷는다.** 끊김 추적은 `RobotSync.kt` 의 `trackLink` 로 옮겼다(라운드 안의 자리는 그대로). 같은 자리에서 **(c′)** 를 함께 고쳤다. 링크가 돌아올 때 취소가 걸려 있으면 실행 상태를 `RUNNING` 이 아니라 `CANCELING` 으로 되돌린다. 앞에서는 걸린 취소가 있는데도 상위에 `RUNNING` 을 알렸다.
+    - **(d) 붙기 전 취소의 핸들은 기체가 든 리비전으로 짓는다.** 스냅숏의 태스크 리비전을 쓰고, 없을 때만 단위의 리비전을 쓴다.
+    - **(e) 취소가 걸리면 붙기 전 단위를 개정이 바꾸지 않는다.** 붙기 전 단위는 기체에서 돌고 있으므로 §15.256 의 도는 단위와 같은 규칙을 탄다.
+
+    ★**조합 시험의 단언을 고친 동작으로 바꿨다.** `LifecycleCombinationTest` 에 (a) 시험 하나를 더했다(2,448 → 2,449). 고침을 하나씩 되돌리면 각자의 조합 시험이 이름으로 빨개진다. (c) 를 끈 첫 주입은 스마트 캐스트를 깨 컴파일이 실패했다. 그때 XML 은 앞 실행의 것이었다. 컴파일되는 변이로 다시 넣어 확인했다. 나머지 picasso 시험은 예산 둘(이 PR 에서 고침)을 빼고 그대로 초록이었다. 의심 동작 다섯은 어느 기존 시험도 고정하고 있지 않았다.
+
+    ★**`TOTAL` 을 올린다.** 고침이 접합부에 17줄을 더해 합이 1,786 이 됐다. 같은 고침이 `Middleware.kt` 를 843 에서 817 로, `pumpRound` 를 173 줄에서 143 줄로 줄였다. 그래서 `MIDDLEWARE` 와 `PUMP_ROUND` 는 내렸다. 접합부에 둔 것은 상태 없는 절차라 CLAUDE.md §5 의 자리다. 소유자 승인 대상이다.
 
 305. **재설계 R5 — `Execution` 과 실행 표는 `Middleware` 안에 두고, 상태 없는 절차를 밖으로 옮겨 실코드를 843 으로 내린다(한계 대장 «§15.298»).**
 

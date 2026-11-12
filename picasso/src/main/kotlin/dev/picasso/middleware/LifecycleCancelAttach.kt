@@ -32,9 +32,10 @@ internal fun CommandLifecycle.holdUnsentCancel(unit: ExecutionUnit) {
     with(mw) {
         val keyed = RouteDriver.of(unit.route).cancelsByKey
         val cause = if (keyed) KEYED_UNSENT_CAUSE else HOLD_UNSENT_CAUSE
+        val reason = if (execution.handle == null && execution.transport == null) "no task handle" else "the cancel sent was not answered"
         cancelDelivery = cancelDelivery.unsent(cause)
         cancelWait = CancelWait.Held(unit.unitId)
-        unit.annotate("cancel requested but never reached the downstream: no task handle" + if (keyed) ", keyed cancel not accepted" else "")
+        unit.annotate("cancel requested but never reached the downstream: $reason" + if (keyed) ", keyed cancel not accepted" else "")
         execution.trail(CANCEL_UNSENT, "${unit.unitId}: 취소를 하위에 보내지 못했다 ($cause) — 운영자 판단을 기다린다")
     }
 }
@@ -71,9 +72,11 @@ internal fun CommandLifecycle.cancelByKey(unit: ExecutionUnit): Boolean {
 internal fun CommandLifecycle.attachByKey(unit: ExecutionUnit, handle: TaskHandle, response: CancelTaskResponse): Boolean {
     with(mw) {
         val refusal = response.takeUnless { it.hasState() }?.rejection?.code
-        if (refusal != null && refusal != RejectionCode.REJECTION_CODE_CANCEL_UNSUPPORTED) return false
+        if (refusal != null && refusal !in KNOWN_TASK_REFUSALS) return false
 
         cancelIntent = refusal?.let { CancelIntent.Refused(it.name) } ?: CancelIntent.Requested
+        // 기체가 답했다 — 거부여도 취소는 닿았다. 닿지 않은 채였으면 걷는다(§15.306 (b)).
+        cancelReached()
         execution.handle = handle
         unit.state = UnitState.RUNNING
         unit.streamLostAt = null
@@ -228,7 +231,8 @@ internal fun CommandLifecycle.attachForCancel(): Boolean {
 
         val robot = execution.robotOf(unit)
         val taskId = taskIdOf(unit)
-        val handle = handleFor(robot, taskId, unit.revision)
+        // 핸들은 기체가 든 리비전으로 짓는다 — 붙기 전에 개정이 단위의 리비전을 올렸으면 기체와 어긋난다(§15.306 (d)).
+        val handle = handleFor(robot, taskId, views[robot]?.taskRevisions?.get(taskId) ?: unit.revision)
         val sent = !state.endedOnRobot()
         if (sent) {
             when (val result = cancelRobot(CancelFlight(CancelFlight.Site.ATTACH, robot, handle, unit.unitId, state.name))) {

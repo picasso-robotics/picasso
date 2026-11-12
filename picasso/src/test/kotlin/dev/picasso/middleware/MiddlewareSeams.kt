@@ -30,7 +30,7 @@ internal object MiddlewareSeams {
             "judgeEffectMismatch", "beginVerify", "checkEvidence", "failWithEvidenceCheck", "reworkAsNewAttempt", "skippedPair",
             "resolveSkipped", "skippedReworkRefusal",
         ),
-        "RobotSync.kt" to listOf("sync", "record", "forgetAcknowledged"),
+        "RobotSync.kt" to listOf("sync", "record", "forgetAcknowledged", "trackLink"),
         "CommandPorts.kt" to listOf(
             "transportOrderOf", "issueStart", "issueDispatch", "handleFor", "unansweredAttach", "findNow", "statusNow",
         ),
