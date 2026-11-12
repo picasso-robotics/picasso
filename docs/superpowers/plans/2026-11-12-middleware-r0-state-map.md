@@ -265,3 +265,19 @@ R1 이 «취소(R1)» 묶음 아홉과 송신 묶음의 취소 둘을 `CancelAxe
 | 포트 보조 여덟과 `TaskState.endedOnRobot` | `CommandPorts.kt` |
 
 §2.2 표의 «쓰는 곳» 에서 생애 네 파일은 이제 `CommandLifecycle` 의 확장이다. 함수 이름은 같다.
+
+## 9. R4 뒤 (§15.304)
+
+경로마다 다른 일은 `RouteDrivers.kt` 의 `RouteDriver.Robot`·`Fleet`·`Signal` 이 한다. §2 의 필드는 그대로다. 바뀐 것은 부르는 자리다.
+
+| 옛 갈래 | 드라이버 연산 |
+|---|---|
+| `startUnit` 의 `if (unit.route == ROBOT/FLEET)` 와 설비 대기의 `lookupDownstream` | `start` |
+| `resolveDoubt` 머리의 보내는 중인 조회 둘 | `settlePendingLookup` |
+| `resolveDoubt` 의 리비전 앞섬·스냅숏 부착(로봇) | `resolveBeforeLookup` |
+| `resolveDoubt` 의 조회 관문(로봇)과 조회 송신 셋 | `lookupPermitted`·`sendLookup` |
+| `pumpRound` 의 `when (active.route)` | `pump` |
+| `pumpRound` 의 `attachForCancel() || attachTransportForCancel()` | `ATTACH_ORDER` 의 `attachForCancel` |
+| `lookupOf(route)` | `lookupKind` |
+| `holdUnsentCancel`·`resendHeldCancel` 의 로봇 여부 | `cancelsByKey` |
+| `revise` 의 `updatable` | `takesUpdate` |

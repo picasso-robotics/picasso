@@ -108,10 +108,7 @@ internal fun Middleware.revise(
                 // **취소가 걸렸으면 로봇 단위도 그대로 둔다**(§15.256). 멈추라는 말 뒤에 새 버전을 보내면 기체가 그 버전으로 다시
                 // 움직일 수 있고(미룬 갱신과 같은 규칙), 원 요청이 안 닿은 미확정 단위면 갱신이 새 태스크로 접수된다. 리비전도
                 // 올리지 않는다 — 기체에서 도는 것이 옛 리비전이라, 올리면 스냅숏 부착과 키로 짓는 취소 핸들이 기체와 어긋난다.
-                val updatable = when (unit.route) {
-                    Route.ROBOT -> !execution.cancelRequested
-                    Route.FLEET, Route.SIGNAL -> false
-                }
+                val updatable = RouteDriver.of(unit.route).takesUpdate && !execution.cancelRequested
                 if (fresh != null && updatable) {
                     val previous = unit.revision
                     unit.revision = order.version

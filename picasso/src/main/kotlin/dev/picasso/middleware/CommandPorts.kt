@@ -50,17 +50,6 @@ internal fun Middleware.issueDispatch(order: TransportOrder): DispatchIssue =
 internal fun Middleware.handleFor(robot: String, taskId: String, revision: Int): TaskHandle =
     TaskHandle.newBuilder().setTaskId(taskId).setRevision(revision).setRobotId(robot).build()
 
-/**
- * 경로마다 하위가 클라이언트 참조로 기존 실행을 찾아 주는가(13.2 ①).
- *
- * 설비 대기는 요청을 보내지 않으므로 미확정이 생기지 않는다 — 실행의 미확정 자동 해소를 막지 않는 쪽으로 응답한다.
- */
-internal fun Middleware.lookupOf(route: Route): ExecutionLookup = when (route) {
-    Route.ROBOT -> robots.executionLookup
-    Route.FLEET -> fleet.executionLookup
-    Route.SIGNAL -> ExecutionLookup.CLIENT_REFERENCE
-}
-
 internal fun Middleware.unansweredAttach(taskId: String) = "$taskId 의 취소에 답이 없다 — 다음 라운드에 스냅숏부터 다시 본다"
 
 /** 미리 읽지 않는 플릿에는 지금 찾는다. 던지면 [FleetRead.Failed] 다. */
