@@ -107,21 +107,23 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-12 재설계 R5 실측: Middleware.kt 843(기체 동기화를 RobotSync.kt 로, abort 를 취소 생애로, 순수 함수 일곱을 UnitFacts.kt 로,
+        // §15.305), 합 1,769, Middleware 의 internal 멤버 22.
         // 2026-11-12 재설계 R4 실측: Middleware.kt 와 접합부 파일의 합 1,829(경로 갈래를 RouteDriver 로, §15.304).
         // 2026-11-12 재설계 R3 실측: 실행의 가변 필드 13(취소 네 축과 송신 기록 셋을 CommandLifecycle 로, §15.303), Middleware.kt 와
         // 접합부 파일의 합 1,840(명령 생애 넷이 접합부 목록을 떠났다), Middleware 의 internal 멤버 30.
         // 2026-11-12 재설계 R2 실측: 실행의 가변 필드 20, 가변 컬렉션 10(«한 번만 알림» 아홉을 Noticed 하나로, §15.302).
         // 2026-11-12 재설계 R1 실측: 실행의 가변 필드 25(취소 필드 열하나를 네 축으로, §15.301).
         // 2026-11-12 재설계 R0 실측: 실행의 가변 컬렉션 14, 실행 단위의 가변 필드 36(생성자 30, 본문 6).
-        const val MIDDLEWARE = 1_080
+        const val MIDDLEWARE = 843
         const val SEAM = 500
-        const val TOTAL = 1_829
+        const val TOTAL = 1_769
         const val OTHER = 600
         const val EXECUTION_VARS = 13
         const val PUMP_ROUND = 180
         const val EXECUTION_COLLECTIONS = 10
         const val UNIT_VARS = 36
-        const val OPEN_MEMBERS = 30
+        const val OPEN_MEMBERS = 22
 
         /** 네 칸 들여 쓴(클래스 본문의) `internal` 선언. 무리 1 은 선언 줄이다. */
         val OPEN_MEMBER = Regex("^    (internal (?:fun|val|var|(?:data |sealed |enum )?(?:class|object|interface)) .*)$")
