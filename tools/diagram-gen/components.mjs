@@ -34,6 +34,7 @@ const rootEdges = Object.values(graph).flat().filter(d => ROOTS.includes(d)).len
 // ── 칸. 열은 x 32 부터 160 간격, 폭 128(사이 통로 32). 행 A 112, B 216, C 352, 바닥 456
 const col = i => 32 + 160 * i;
 const BOX = {
+  'host-kit': [col(0), 112, 'host-kit', T.COMP_ROLE_HOSTKIT],
   harness: [col(1), 112, 'harness', T.COMP_ROLE_HARNESS],
   orbit: [col(3), 112, 'orbit', T.COMP_ROLE_ORBIT],
   picasso: [col(0), 216, 'picasso', T.COMP_ROLE_PICASSO],
@@ -49,7 +50,7 @@ const BOX = {
 };
 // 역할 영역. 칸에서 8 떨어져 두르고, 영역 사이 통로(폭 16)의 한가운데로 선이 지난다.
 const ZONES = [
-  [24, 188, 144, 224, T.COMP_ZONE_CONSUMER],
+  [24, 84, 144, 328, T.COMP_ZONE_CONSUMER],
   [184, 84, 304, 192, T.COMP_ZONE_RUNTIME],
   // 위에서 내려오는 화살표가 이 영역의 윗변을 많이 지나므로 라벨은 칸 아래에 둔다.
   [184, 324, 304, 112, T.COMP_ZONE_LIB, 'bottom'],
@@ -65,6 +66,7 @@ const cell = m => CELL[m] || m;
 
 // ── 경로. 표시 칸 쌍마다 하나. 행 사이 가로 구간은 영역 밖(y 284~316)에 둔다
 const ROUTES = {
+  'host-kit>picasso': 'M96,164 V214',
   'picasso>client': 'M96,268 V350',
   'picasso>capability': 'M128,268 V292 H224 V350',
   'mimic>capability': 'M256,268 V350',
@@ -75,7 +77,8 @@ const ROUTES = {
   'vendor3>adapter-core': 'M600,268 V350',
   'registry>gate': 'M736,268 V350',
   'harness>mimic': 'M256,164 V214',
-  'harness>client': 'M192,128 H16 V378 H30',
+  // 왼쪽 열 맨 위에 host-kit 이 서서 바깥으로 돌던 길을 통로(x 172, 영역 테두리 168 바로 안쪽)로 옮겼다. harness>capability 의 세로 구간(x 176)과 한 번 직각으로 엇갈린다.
+  'harness>client': 'M192,160 H172 V378 H162',
   // 통로(x 168~184)의 한가운데로 내려간다. picasso>capability 의 가로 구간(y 292)과 한 번 직각으로 엇갈린다.
   'harness>capability': 'M192,148 H176 V392 H190',
   'harness>uplink': 'M320,148 H340 V384 H350',

@@ -11,6 +11,7 @@ import dev.picasso.contracts.v1.HoldState
 import dev.picasso.contracts.v1.Precondition
 import dev.picasso.contracts.v1.PreconditionSubject
 import dev.picasso.harness.Harness
+import dev.picasso.host.BundleWriter
 import dev.picasso.mimic.control.v1.ForceFaultRequest
 import java.nio.file.Files
 import java.nio.file.Path

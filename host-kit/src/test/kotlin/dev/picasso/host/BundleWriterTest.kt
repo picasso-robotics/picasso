@@ -1,5 +1,12 @@
-package dev.picasso.middleware
+package dev.picasso.host
 
+import dev.picasso.middleware.Evidence
+import dev.picasso.middleware.JobResponse
+import dev.picasso.middleware.LedgerExport
+import dev.picasso.middleware.PhysicalState
+import dev.picasso.middleware.RemedyOutcome
+import dev.picasso.middleware.RemedySearchRecord
+import dev.picasso.middleware.ResultExport
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -107,20 +114,31 @@ class BundleWriterTest {
         //   ★**바늘이 둘이다.** 원자적 이름 바꾸기 하나만 보면 그것을 안 쓰고 다시 적은 쓰개는
         //   안 보인다. 한 벌을 내려면 안내를 짓는 수밖에 없으므로 그 부름도 함께 센다 —
         //   `LedgerExportTest` 는 그 인코더 자체를 재는 자리라 목록에 든다.
+        //
+        //   ★**두 모듈을 함께 훑고 저장소 상대 경로로 댄다**(의존 정비 H1, §15.314). 쓰개는 이 모듈(`host-kit`)로 나왔지만 내보내기
+        //   시험과 참조 실행기는 picasso 에 남았다 — 한쪽만 보면 다른 쪽에 사본이 서도 초록이고, 파일 이름만 보면 같은 이름의 사본을
+        //   못 가른다.
         val declared = mapOf(
-            "ATOMIC_" + "MOVE" to setOf("BundleWriter.kt"),
-            "LedgerExport." + "manifest(" to setOf("BundleWriter.kt", "LedgerExportTest.kt"),
+            "ATOMIC_" + "MOVE" to setOf("host-kit/src/main/kotlin/dev/picasso/host/BundleWriter.kt"),
+            "LedgerExport." + "manifest(" to setOf(
+                "host-kit/src/main/kotlin/dev/picasso/host/BundleWriter.kt",
+                "picasso/src/test/kotlin/dev/picasso/middleware/LedgerExportTest.kt",
+            ),
         )
 
-        val sources = Files.walk(Path.of("src")).use { paths ->
-            paths.asSequence()
-                .filter { it.isRegularFile() && it.toString().endsWith(".kt") }
-                .map { it.fileName.toString() to Files.readString(it) }
-                .toList()
+        val root = Path.of("..").toAbsolutePath().normalize()
+        val sources = listOf("host-kit", "picasso").flatMap { module ->
+            Files.walk(root.resolve(module).resolve("src")).use { paths ->
+                paths.asSequence()
+                    .filter { it.isRegularFile() && it.toString().endsWith(".kt") }
+                    .map { root.relativize(it).toString().replace('\\', '/') to Files.readString(it) }
+                    .toList()
+            }
         }
         // ★**소스를 하나도 못 읽으면 통과가 아니다.** 훑는 자리가 틀리면 아래가 전부 빈 집합으로
         //   맞아떨어져 「한 벌뿐이다」와 「안 훑었다」가 같은 모양이 된다.
-        assertTrue(sources.size > 20, "이 모듈의 소스를 못 훑었다: ${sources.size}")
+        assertTrue(sources.count { it.first.startsWith("picasso/") } > 20, "picasso 의 소스를 못 훑었다: ${sources.size}")
+        assertTrue(sources.count { it.first.startsWith("host-kit/") } >= 5, "host-kit 의 소스를 못 훑었다: ${sources.size}")
 
         declared.forEach { (needle, allowed) ->
             // **양방향으로 댄다.** 「목록에 없는 자리가 생겼다」만 보면 목록이 낡아도 모르고,
