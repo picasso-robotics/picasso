@@ -126,20 +126,33 @@ internal class AdmissionGate(
      * **권위는 발신자다.** 여기서 막는 것은 *알고도 보내는* 일뿐이다. 도는 단위가 없으면 관측이 없는 것이고 —
      * 종착한 단위의 파지는 낡을 수 있으며 다시 볼 길이 없으므로(리뷰 C2) 쓰지 않는다 — 발신자가 접수 때 판정한다.
      * 능력을 못 물은 로봇도, 계약에 없는 주어([PreconditionCheck.Unknown.DEFER])도 같다: 모르는 조건을 지어내지 않는다.
+     *
+     * **개정이면 그 실행 자신의 도는 단위가 사슬의 0번째 고리다**(§15.315). [revising] 은 개정(`Revision.kt` 의 `revise`)만 준다. 그 실행에서
+     * 지금 도는 단위가 [planned] 에 없으면(개정이 다시 재단하지 않는 단위) 그 단위의 관측에 그 단위의 효과를 굴린 값 — 그 단위가
+     * 끝난 뒤의 파지 — 에서 출발한다. 남은 단위에 이미 하는 성공 가정을 빠졌던 고리에도 하는 것이다. [planned] 에 든 단위(보내는
+     * 중인 첫 출발)의 관측은 쓰지 않는다 — 그 단위는 사슬이 직접 굴리고, 남은 관측은 앞 시도의 것일 수 있다. 다른 실행의 관측은
+     * 날것 그대로다. 실패해 든 채 남는 현실은 여전히 발신자가 판정한다.
      */
-    fun chainRefusal(robotId: String, planned: List<ExecutionUnit>): Submission.Rejected? {
+    fun chainRefusal(robotId: String, planned: List<ExecutionUnit>, revising: Execution? = null): Submission.Rejected? {
         // **사슬은 기체마다다.** 손은 기체에 달렸으므로 단위가 묶인 기체의 파지로 그 기체의 단위들을 굴린다. 묶지 않은 단위는
         // [robotId] 의 사슬이다. 다른 기체의 사슬에서 찾은 조치 열은 싣지 않는다 — 제안은 (주문을 받을 기체, 주문)으로 서므로
         // 실으면 그 조치가 [robotId] 에서 돈다.
+        val replanned = planned.mapTo(HashSet()) { it.unitId }
         for ((robot, units) in planned.groupBy { it.robotBinding ?: robotId }) {
-            chainOf(robot, units)?.let { return if (robot == robotId) it else it.copy(remedy = null) }
+            chainOf(robot, units, revising, replanned)?.let { return if (robot == robotId) it else it.copy(remedy = null) }
         }
         return null
     }
 
     /** 기체 하나의 사슬 검사. [chainRefusal] 이 기체마다 부른다. */
-    private fun chainOf(robotId: String, planned: List<ExecutionUnit>): Submission.Rejected? {
-        var hold = liveHold(robotId) ?: return null
+    private fun chainOf(
+        robotId: String,
+        planned: List<ExecutionUnit>,
+        revising: Execution?,
+        replanned: Set<String>,
+    ): Submission.Rejected? {
+        val (start, rolled) = startHold(robotId, revising, replanned) ?: return null
+        var hold = start
         val declared = robots.capabilities(robotId)?.skillsList ?: return null
         val byType = declared.associateBy { it.skillType }
         for (unit in planned) {
@@ -149,8 +162,9 @@ internal class AdmissionGate(
                 ?.let { PreconditionCheck.check(it, hold, PreconditionCheck.Unknown.DEFER) }
                 .orEmpty()
             if (violations.isNotEmpty()) {
+                val basis = if (rolled && hold === start) "지금 도는 단위가 끝난 뒤의 파지" else "지금 도는 단위의 관측"
                 val reason = "단위 ${unit.unitId}(${unit.skillType}) 의 사전 조건이 어긋난다 — " +
-                    PreconditionCheck.rejectionDetail(violations) + " (지금 도는 단위의 관측, 보내지 않았다)"
+                    PreconditionCheck.rejectionDetail(violations) + " ($basis, 보내지 않았다)"
                 // **대안은 여기서만 계산할 수 있다.** 관측(liveHold)과 선언이 둘 다 있는 자리가 여기뿐이다 —
                 // 스냅샷은 파지를 싣지 않으므로 도는 단위가 없으면 관측이 없다.
                 // **계산은 여기서, 기록은 밖에서.** 탐색 자체는 부작용이 없으므로 관문 안에 둘 수 있다.
@@ -299,6 +313,26 @@ internal class AdmissionGate(
             }
         }
         .associateBy { it.location }
+
+    /**
+     * 사슬 검사의 출발 파지와, 그것이 개정 실행의 도는 단위 효과를 굴린 값인가([chainRefusal] 의 개정 규칙). 고를 것이 없으면 널.
+     * [revising] 이 없으면 [liveHold] 와 같은 답이다.
+     */
+    private fun startHold(robotId: String, revising: Execution?, replanned: Set<String>): Pair<HoldState, Boolean>? {
+        val holds = executions.values
+            .filter { !it.physicalState.isSettled }
+            .mapNotNull { execution ->
+                val unit = execution.active?.takeIf { execution.robotOf(it) == robotId } ?: return@mapNotNull null
+                when {
+                    execution !== revising -> unit.hold to false
+                    unit.unitId in replanned -> null
+                    unit.hold.kind != HoldKind.HOLD_KIND_HOLDING && unit.hold.kind != HoldKind.HOLD_KIND_EMPTY -> null
+                    else -> HoldEffects.after(unit.skillType, unit.hold).let { it to (it.kind != unit.hold.kind) }
+                }
+            }
+        return holds.firstOrNull { it.first.kind == HoldKind.HOLD_KIND_HOLDING }
+            ?: holds.firstOrNull { it.first.kind == HoldKind.HOLD_KIND_EMPTY }
+    }
 
     /**
      * 이 기체에서 **지금 도는** 단위들의 파지 관측. 든 것이 하나라도 있으면 든 채(손은 한 쌍이다), 아니면 빈손 관측이
