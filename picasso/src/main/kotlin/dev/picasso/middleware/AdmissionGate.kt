@@ -132,6 +132,11 @@ internal class AdmissionGate(
      * 끝난 뒤의 파지 — 에서 출발한다. 남은 단위에 이미 하는 성공 가정을 빠졌던 고리에도 하는 것이다. [planned] 에 든 단위(보내는
      * 중인 첫 출발)의 관측은 쓰지 않는다 — 그 단위는 사슬이 직접 굴리고, 남은 관측은 앞 시도의 것일 수 있다. 다른 실행의 관측은
      * 날것 그대로다. 실패해 든 채 남는 현실은 여전히 발신자가 판정한다.
+     *
+     * **도는 단위가 없으면 기체 스냅숏의 손에서 출발한다**(§15.316, 계약 0.11.0). 새 접수에만 쓰고 개정에는 쓰지 않는다. 스냅숏의 손은 발신자가
+     * 주기적으로 다시 읽은 값이라 C2 가 버린 «다시 볼 길 없는 종착 파지» 가 아니다. 든 채·빈손으로 답했을 때만 쓰고, 관측 불가·말하지 않음·못 물음이면 지금처럼
+     * 출발점이 없다(발신자가 판정). 그 기체를 **다른 실행이 쥐고 있으면**([PhysicalState.occupiesRobot]) 거절은 하되 조치 제안은 세우지 않고
+     * ([Submission.Rejected.heldBy]), 조치 걸음을 실은 계획(승인 접수)은 위반이 없어도 받지 않는다 — 그 손에 든 것이 그 실행의 일일 수 있다.
      */
     fun chainRefusal(robotId: String, planned: List<ExecutionUnit>, revising: Execution? = null): Submission.Rejected? {
         // **사슬은 기체마다다.** 손은 기체에 달렸으므로 단위가 묶인 기체의 파지로 그 기체의 단위들을 굴린다. 묶지 않은 단위는
@@ -151,10 +156,25 @@ internal class AdmissionGate(
         revising: Execution?,
         replanned: Set<String>,
     ): Submission.Rejected? {
-        val (start, rolled) = startHold(robotId, revising, replanned) ?: return null
-        var hold = start
         val declared = robots.capabilities(robotId)?.skillsList ?: return null
         val byType = declared.associateBy { it.skillType }
+        val carriesRemedy = planned.any { it.unitId.startsWith("remedy-") }
+        val live = startHold(robotId, revising, replanned)
+        val observed = live?.let { Start(it.first, if (it.second) Basis.ROLLED else Basis.LIVE) }
+            ?: revising?.let { return null }
+            // 스냅숏은 볼 까닭이 있을 때만 묻는다 — 조건을 선언한 단위나 조치 열이 없으면 읽을 것이 없다(남쪽 읽기는 비용이다).
+            ?: (if (carriesRemedy || planned.any { (byType[it.skillType]?.preconditionsCount ?: 0) > 0 }) snapshotHold(robotId) else null)
+                ?.let { Start(it, Basis.SNAPSHOT) }
+            ?: return null
+        val start = observed.hold
+        var hold = start
+        // 남이 쥔 기체의 든 것으로 조치 열을 보내지 않는다. 승인 접수는 조치 열을 앞에 붙여 다시 이 검사를 지나므로, 제안이 선 뒤 점유가 생겨도 여기서 막힌다.
+        val holder = if (observed.basis == Basis.SNAPSHOT && start.kind == HoldKind.HOLD_KIND_HOLDING) occupant(robotId) else null
+        if (holder != null && carriesRemedy) {
+            return Submission.Rejected(
+                "그 기체를 다른 실행 ${holder.executionId} 가 쥐고 있어 조치 열을 보내지 않는다 (기체 스냅숏의 파지, 보내지 않았다)",
+            )
+        }
         for (unit in planned) {
             if (unit.route != Route.ROBOT) continue
             val target = byType[unit.skillType]
@@ -162,11 +182,15 @@ internal class AdmissionGate(
                 ?.let { PreconditionCheck.check(it, hold, PreconditionCheck.Unknown.DEFER) }
                 .orEmpty()
             if (violations.isNotEmpty()) {
-                val basis = if (rolled && hold === start) "지금 도는 단위가 끝난 뒤의 파지" else "지금 도는 단위의 관측"
+                val basis = when {
+                    hold !== start -> "지금 도는 단위의 관측"
+                    observed.basis == Basis.ROLLED -> "지금 도는 단위가 끝난 뒤의 파지"
+                    observed.basis == Basis.SNAPSHOT -> "기체 스냅숏의 파지"
+                    else -> "지금 도는 단위의 관측"
+                }
                 val reason = "단위 ${unit.unitId}(${unit.skillType}) 의 사전 조건이 어긋난다 — " +
                     PreconditionCheck.rejectionDetail(violations) + " ($basis, 보내지 않았다)"
-                // **대안은 여기서만 계산할 수 있다.** 관측(liveHold)과 선언이 둘 다 있는 자리가 여기뿐이다 —
-                // 스냅샷은 파지를 싣지 않으므로 도는 단위가 없으면 관측이 없다.
+                // **대안은 여기서만 계산할 수 있다.** 관측(도는 단위 또는 기체 스냅숏)과 선언이 둘 다 있는 자리가 여기뿐이다.
                 // **계산은 여기서, 기록은 밖에서.** 탐색 자체는 부작용이 없으므로 관문 안에 둘 수 있다.
                 val remedy = target?.let { RemedySearch.search(it, declared, hold) }
                 return Submission.Rejected(reason, remedy)
@@ -333,6 +357,38 @@ internal class AdmissionGate(
         return holds.firstOrNull { it.first.kind == HoldKind.HOLD_KIND_HOLDING }
             ?: holds.firstOrNull { it.first.kind == HoldKind.HOLD_KIND_EMPTY }
     }
+
+    /** 사슬 검사의 출발점이 어디서 왔나 — 거절 사유와 점유 규칙이 가른다. */
+    private enum class Basis { LIVE, ROLLED, SNAPSHOT }
+
+    private class Start(val hold: HoldState, val basis: Basis)
+
+    /**
+     * 기체 스냅숏의 손(계약 `GetSnapshotResponse.hold`, 0.11.0) — **든 채·빈손으로 답했을 때만.** 관측 불가·말하지 않음·못 물음이면 널이다:
+     * 모르는 손을 빈손으로 지어내지 않는다([PreconditionCheck] 는 관측 불가도 위반으로 세므로 여기서 거른다). 신선함은 포트가 진다 —
+     * 미리 읽는 포트는 신선한 창 밖이면 스냅숏을 주지 않는다.
+     */
+    private fun snapshotHold(robotId: String): HoldState? =
+        // 읽기가 던지면 못 본 것이다 — 접수 판단을 예외로 무너뜨리지 않는다(발신자가 판정한다).
+        runCatching { robots.snapshot(robotId) }.getOrNull()?.hold
+            ?.takeIf { it.kind == HoldKind.HOLD_KIND_HOLDING || it.kind == HoldKind.HOLD_KIND_EMPTY }
+
+    /**
+     * 도는 단위 관측이 없을 때 이 기체를 쥔 다른 실행 id. [RemedyDesk] 가 스냅숏 근거의 거절에 제안을 세울지 가른다 — 도는 단위 관측이 없는데
+     * 조치가 찾아졌다면 출발점은 스냅숏이다(개정은 도는 단위가 없으면 사슬을 안 본다).
+     */
+    fun snapshotHolder(robotId: String): String? = if (liveHold(robotId) == null) occupant(robotId)?.executionId else null
+
+    /** 이 기체를 쥔 실행(정착하지 않았거나 부분 완료로 다시 돌 수 있는 것). 단위가 묶인 기체도 센다. */
+    private fun occupant(robotId: String): Execution? =
+        executions.values.firstOrNull { it.physicalState.occupiesRobot && robotId in it.robots }
+
+    /**
+     * 승인 값을 채울 손(§15.316) — 도는 단위의 관측([liveHold])이 먼저이고, 없으면 신선한 기체 스냅숏의 손이다. 그 기체를 다른 실행이 쥐고 있으면
+     * 스냅숏을 쓰지 않는다: 제안을 세운 규칙([chainRefusal])과 같은 규칙이어야 선 조건과 채우는 조건이 갈리지 않는다.
+     */
+    fun fillHold(robotId: String): HoldState? =
+        liveHold(robotId) ?: snapshotHold(robotId)?.takeIf { occupant(robotId) == null }
 
     /**
      * 이 기체에서 **지금 도는** 단위들의 파지 관측. 든 것이 하나라도 있으면 든 채(손은 한 쌍이다), 아니면 빈손 관측이

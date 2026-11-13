@@ -398,6 +398,8 @@ internal class HostEventService(robots: Map<String, HostedRobot>, pumpOnRead: Bo
             )
             // MQTT connection 스트림과 같은 값이다(미믹의 §15.95 정정과 같은 자리).
             .setConnectionState(robot.connectionState)
+            // 손은 펌프가 읽어 둔 것이다(0.11.0) — 결함처럼 남쪽을 기다리지 않는다. 못 읽었으면 관측 불가이지 빈손이 아니다.
+            .setHold(robot.handHold)
         // **결함을 못 봤으면 없다고 하지 않는다**(계약 0.10.0, §15.263). 결함은 비우고 못 봤다고 적는다 — [HostedRobot.faults] 는
         // 마지막으로 본 낡은 값이라 싣지 않는다. 태스크·연결·번호는 그대로 현재값이라 스냅샷을 오류로 돌리지 않는다.
         if (robot.faultsObservable) {

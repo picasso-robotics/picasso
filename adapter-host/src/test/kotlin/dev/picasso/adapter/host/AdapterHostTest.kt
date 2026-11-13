@@ -96,6 +96,8 @@ class AdapterHostTest {
         var updateAnswer: Applied = Applied.Ok
         val updated = mutableListOf<Triple<String, String, Map<String, Any>>>()
         var holding: HoldObservation = HoldObservation.Empty
+        /** 주면 [hold] 가 이것을 던진다 — 남쪽 읽기가 실패한 기체. */
+        var holdFailure: RuntimeException? = null
         var observedFaults: FaultObservation = FaultObservation.Observed(emptyList())
         var failureToReport: Fault? = null
         var resultToReport: String? = null
@@ -123,7 +125,7 @@ class AdapterHostTest {
         override fun cancel(): Applied = cancelAnswer.also { if (it == Applied.Ok) { current = TaskState.TASK_STATE_CANCELLING; next = TaskState.TASK_STATE_CANCELLED } }
         override fun update(taskId: String, skillType: String, parameters: Map<String, Any>, at: Instant): Applied =
             updateAnswer.also { if (it == Applied.Ok) updated += Triple(taskId, skillType, parameters) }
-        override fun hold(): HoldObservation = holding
+        override fun hold(): HoldObservation = holdFailure?.let { throw it } ?: holding
         override fun faults(): FaultObservation = observedFaults
         override fun failure(): Fault? = failureToReport
         override fun result(): String? = resultToReport
@@ -521,6 +523,26 @@ class AdapterHostTest {
             assertEquals(FaultObservability.FAULT_OBSERVABILITY_NOT_OBSERVABLE, blind.faultObservability)
             assertTrue(blind.faultsList.isEmpty(), "못 본 결함 자리에 낡은 결함을 실었다: ${blind.faultsList.map { it.errorType }}")
             assertEquals(handle.taskId, blind.tasksList.single().taskId)
+            assertEquals(dev.picasso.contracts.v1.ConnectionState.CONNECTION_STATE_ONLINE, blind.connectionState)
+        }
+    }
+
+    @Test
+    fun `스냅샷은 펌프가 읽어 둔 손을 싣고, 못 읽으면 빈손이 아니라 NOT_OBSERVABLE 이다`() {
+        // 계약 0.11.0. 도는 태스크가 없어도 손을 싣는다 — 소비자가 든 채 쉬는 기체를 접수 전에 보는 유일한 자리다(§15.150).
+        World().use { w ->
+            fun snapshot() = w.events.getSnapshot(GetSnapshotRequest.newBuilder().setHeader(w.header("picasso.v1.GetSnapshotRequest")).setRobotId(ROBOT).build())
+            assertEquals(HoldKind.HOLD_KIND_EMPTY, snapshot().hold.kind)
+
+            w.adapter.holding = HoldObservation.Holding("BIN-A")
+            val held = snapshot().hold
+            assertEquals(HoldKind.HOLD_KIND_HOLDING to "BIN-A", held.kind to held.objectRef)
+
+            // 못 읽은 것을 마지막으로 본 값이나 빈손으로 접지 않는다. 스냅샷 자체는 오류가 아니다 — 태스크·연결은 그대로 싣는다.
+            w.adapter.holdFailure = IllegalStateException("그리퍼 상태 읽기 실패")
+            val blind = snapshot()
+            assertEquals(HoldKind.HOLD_KIND_NOT_OBSERVABLE, blind.hold.kind)
+            assertTrue("그리퍼 상태 읽기 실패" in blind.hold.reason, blind.hold.reason)
             assertEquals(dev.picasso.contracts.v1.ConnectionState.CONNECTION_STATE_ONLINE, blind.connectionState)
         }
     }

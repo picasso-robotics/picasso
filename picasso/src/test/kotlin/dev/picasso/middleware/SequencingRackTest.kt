@@ -421,10 +421,25 @@ class SequencingRackTest {
     // ── 리뷰 개선 — 낡은 관측·개정판·발신자 거절·모르는 주어
 
     @Test
-    fun `든 채로 끝난 뒤의 새 주문은 미들웨어가 막지 않는다 — 권위는 발신자다`() {
-        // 리뷰 C2 — 종착한 단위의 HOLDING 은 낡을 수 있고(사람이 비웠을 수 있다) 미들웨어에는 다시 볼 길이 없다.
-        // 계획 시점 검사는 «지금 도는 단위의 관측» 만 근거로 삼는다. 낡은 관측으로 거절하면 낡은 기록이 권위가 된다.
+    fun `든 채로 끝난 뒤의 새 주문은 종착 파지가 아니라 스냅숏의 손으로 막는다`() {
+        // 리뷰 C2 는 그대로다 — 종착한 단위의 HOLDING 은 낡을 수 있고(사람이 비웠을 수 있다) 다시 볼 길이 없어 쓰지 않는다. 이제 기체가
+        // 스냅숏마다 손을 다시 읽어 주므로(계약 0.11.0, §15.316) 도는 단위가 없어도 «지금의 손» 이 있다. 막는 근거가 그것임을 사유가 말한다.
         World(PRECOND).use { w ->
+            val rack = order(slots = mapOf("S01" to "A"), sources = mapOf("A" to "SEQ-IN-02.BIN-A"))
+            val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(rack, ROBOT)).execution
+            w.drive(step = Duration.ofSeconds(1)) { exec.units.single().hold.kind == HoldKind.HOLD_KIND_HOLDING }
+            w.forceFault("LOCALIZATION_LOST", exec.units.single().taskId)   // 든 채로 실패 — 파지는 안 바뀐다
+            w.drive(step = Duration.ofSeconds(1)) { exec.settled() }
+
+            val refused = assertIs<Middleware.Submission.Rejected>(w.mw.submit(inspection(), ROBOT))
+            assertTrue("기체 스냅숏의 파지" in refused.reason, refused.reason)
+        }
+    }
+
+    @Test
+    fun `든 채로 끝난 뒤의 새 주문은 손을 안 싣는 옛 발신자면 막지 않는다 — 권위는 발신자다`() {
+        // 리뷰 C2 — 계획 시점 검사는 낡을 수 있는 종착 파지를 근거로 삼지 않는다. 손을 싣지 않는 발신자에게는 지금의 손이 없으니 보낸다.
+        World(PRECOND, port = { HandSilentRobotPort(it) }).use { w ->
             val rack = order(slots = mapOf("S01" to "A"), sources = mapOf("A" to "SEQ-IN-02.BIN-A"))
             val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(rack, ROBOT)).execution
             w.drive(step = Duration.ofSeconds(1)) { exec.units.single().hold.kind == HoldKind.HOLD_KIND_HOLDING }

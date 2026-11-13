@@ -544,6 +544,11 @@ data class RobotSnapshot(
      * 비어 있되 *결함 없음* 이 아니다. 나머지 칸(태스크·연결·번호)은 그대로 현재값이다. 옛 발신자는 참이다(`UNSPECIFIED`).
      */
     val faultsObservable: Boolean = true,
+    /**
+     * 발신자가 지금 아는 기체 손(계약 `GetSnapshotResponse.hold`, 0.11.0). 도는 단위가 없어도 발신자가 주기적으로 다시 읽은 값이다 — 종착한 단위의 파지처럼 낡지
+     * 않는다(§15.146). 널은 발신자가 말하지 않은 것(`UNSPECIFIED`, 옛 발신자)이고 빈손이 아니다. 관측 불가는 `HOLD_KIND_NOT_OBSERVABLE` 로 온다.
+     */
+    val hold: HoldState? = null,
 )
 
 /**

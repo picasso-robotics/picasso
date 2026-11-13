@@ -155,6 +155,22 @@ class HostedRobot(
     var faults: Map<String, Fault> = emptyMap()
         private set
 
+    /**
+     * 마지막 [pump] 에서 읽은 이 기체의 손 — 계약 `GetSnapshotResponse.hold`(0.11.0). 결함([faults])과 같이 펌프가 링크 잠금 아래에서 읽어 두고
+     * 스냅샷은 그 값을 싣는다 — **스냅샷은 남쪽을 기다리지 않는다**(명령·조회가 링크를 쥔 동안에도 바로 답한다). 펌프마다 다시 읽으므로 C2
+     * (§15.146)가 버린 «다시 볼 길 없는 종착 파지» 가 아니다. 접수 전 사전 조건([precondition])과 같은 관측원이다. **못 읽으면 관측 불가다** —
+     * 빈손이 아니고 스냅샷을 오류로 돌리지도 않는다(§15.263 과 같은 태도). 첫 펌프 전에도 관측 불가다.
+     */
+    var handHold: HoldState = HoldObservation.NotObservable("아직 손을 읽지 않았다").toProto()
+        private set
+
+    /** 손을 읽는다. 링크 잠금 아래에서 부른다. 읽기가 던지면 관측 불가로 접는다 — 펌프의 다른 읽기를 무너뜨리지 않는다. */
+    private fun readHold(): HoldState = try {
+        adapter.hold().toProto()
+    } catch (e: Exception) {
+        HoldObservation.NotObservable("파지를 못 읽었다: ${e.message ?: e::class.simpleName}").toProto()
+    }
+
     /** 갱신이 적힐 때마다 부른다 — `WatchTask` 스트림이 여기 매달린다. */
     internal val onUpdate = mutableListOf<(HostedTask, TaskUpdate) -> Unit>()
 
@@ -694,6 +710,7 @@ class HostedRobot(
         val observed: Observed?,
         val faults: FaultObservation,
         val liveness: LivenessFacts? = null,
+        val hold: HoldState? = null,
     )
 
     /** 읽기에 매긴 마지막 차례. [southbound] 아래에서만 만진다. */
@@ -719,7 +736,7 @@ class HostedRobot(
         val ticket = ++readTickets
         val state = plan.task?.let { adapter.poll(clock()) }
         val observed = state?.takeIf { it != plan.last }?.let(::observe)
-        Reading(plan, ticket, state, observed, adapter.faults(), if (plan.liveness) readLiveness() else null)
+        Reading(plan, ticket, state, observed, adapter.faults(), if (plan.liveness) readLiveness() else null, readHold())
     }
 
     /** 생존 보고의 내용을 어댑터에서 읽는다. 링크 잠금 아래로 간다 — 호스트 잠금을 쥐고 부르지 않는다. */
@@ -748,6 +765,7 @@ class HostedRobot(
         if (reading.ticket <= appliedTicket) return
         appliedTicket = reading.ticket
         reading.liveness?.let { liveness = it }
+        reading.hold?.let { handHold = it }
         val task = reading.plan.task
         val observed = reading.observed
         if (task != null && observed != null && current === task && task.log.size == reading.plan.generation && sending == null) {

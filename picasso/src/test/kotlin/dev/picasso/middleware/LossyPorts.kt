@@ -378,3 +378,8 @@ class ClockShiftRobotPort(private val delegate: RobotPort, var shift: Duration) 
 class SlowSnapshotRobotPort(private val delegate: RobotPort, private val spend: () -> Unit) : RobotPort by delegate {
     override fun snapshot(robotId: String): RobotSnapshot? = delegate.snapshot(robotId).also { spend() }
 }
+
+/** 옛 발신자(계약 0.10.0) — 스냅숏에 손을 싣지 않는다(`GetSnapshotResponse.hold` 이전). 소비자는 그 손을 빈손으로도 든 채로도 지어내지 않아야 한다. */
+class HandSilentRobotPort(private val delegate: RobotPort) : RobotPort by delegate {
+    override fun snapshot(robotId: String): RobotSnapshot? = delegate.snapshot(robotId)?.copy(hold = null)
+}
