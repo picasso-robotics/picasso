@@ -60,7 +60,8 @@ internal fun CommandEnv.revise(
     }
     // **이미 승인을 든 실행의 개정은 제안을 세우지 않는다**(ADR 46, §15.175). 판단 기록이 승인 하나만 싣고, 그 열쇠에는 소모 기록이
     // 서 있다 — 세우면 재시도가 «이미 소모됐다» 를 못 본다. 승인한 조치 열을 붙인 개정의 거절은 서 있는 제안을 바꾸지 않는다.
-    gate.chainRefusal(execution.robotId, prefix + toPlan)?.let {
+    // 그 실행 자신의 도는 단위는 남은 단위 앞의 고리다 — 그 단위가 끝난 뒤의 파지에서 출발한다(§15.315).
+    gate.chainRefusal(execution.robotId, prefix + toPlan, revising = execution)?.let {
         return desk.record(
             execution.robotId, order, it, carriesApproval = execution.approval != null, approval = approvedBy != null,
         )

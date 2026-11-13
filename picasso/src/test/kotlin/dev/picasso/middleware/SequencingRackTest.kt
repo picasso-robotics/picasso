@@ -50,10 +50,14 @@ class SequencingRackTest {
             .forEach { program(it.id, it.properties["material"]) }
     }
 
-    private class World(profile: Path, port: (RobotPort) -> RobotPort = { it }) : AutoCloseable {
+    private class World(
+        profile: Path,
+        port: (RobotPort) -> RobotPort = { it },
+        missions: MissionCatalog? = null,
+    ) : AutoCloseable {
         val harness = Harness(mapOf(ROBOT to profile))
         val cell = CellMimic(now = { harness.clock.now() })
-        val mw = Middleware(port(ClientRobotPort(harness.client())), cell, now = { harness.clock.now() })
+        val mw = Middleware(port(ClientRobotPort(harness.client())), cell, now = { harness.clock.now() }, missions = missions)
 
         fun tasks() = harness.oracle.dumpInternalState(
             DumpInternalStateRequest.newBuilder().setRobotId(ROBOT).build(),
@@ -363,6 +367,7 @@ class SequencingRackTest {
         const val ROBOT = "hum-02"
         const val V17 = 17
         const val V18 = 18
+        const val GO = "GO"
     }
 
     // ── 사전 조건 (설계안 §4 — 계획 시점 사슬 검사) · 상관 실패
@@ -445,6 +450,67 @@ class SequencingRackTest {
             // 로봇이 든 채로 도는데 같은 순회의 v2 — 남은 navigate_to(HOLD requires EMPTY) 는 보내면 안 된다.
             val revised = w.mw.submit(patrol.copy(version = 2), ROBOT)
             assertIs<Middleware.Submission.Rejected>(revised, "개정판이 사슬 검사를 건너뛰었다: $revised")
+        }
+    }
+
+    /** 코드 랙 임무의 계획 끝에 이동 하나(`GO`, 빈손을 요구)를 붙인 임무. 같은 실행 안에서 놓는 단위 뒤에 이동이 선다. */
+    private class RackThenGo(private val base: PrepareSequencedRack = PrepareSequencedRack()) : LogicalCapability by base {
+        override fun plan(order: JobOrder): List<ExecutionUnit> = base.plan(order) + ExecutionUnit(
+            unitId = GO, route = Route.ROBOT, skillType = InspectAsset.NAVIGATE, parameters = mapOf(InspectAsset.P_LOCATION to "DOCK-1"),
+            expectedIdentity = null, source = null, destination = null,
+        )
+    }
+
+    /** 슬롯 하나 랙 뒤에 이동 하나 — 첫 단위(pick_place)가 든 채 도는 데까지 민다. [revise] 면 그때 같은 작업 지시의 판을 올린다. */
+    private fun rackThenGo(revise: Boolean): Triple<Middleware.Execution, Middleware.Submission?, Int> {
+        World(PRECOND, missions = MissionCatalog.of(listOf(RackThenGo()))).use { w ->
+            val rack = order(slots = mapOf("S01" to "A"), sources = mapOf("A" to "SEQ-IN-02.BIN-A"))
+            w.cell.perfect(rack)
+            val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(rack, ROBOT)).execution
+            assertEquals(listOf("RACK-204.S01", GO), exec.units.map { it.unitId })
+            w.drive(step = Duration.ofSeconds(1)) { exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
+            val revised = if (revise) w.mw.submit(rack.copy(version = V18), ROBOT) else null
+            val searches = w.mw.remedySearches().size
+            w.drive(rounds = 120, step = Duration.ofSeconds(1)) { exec.physicalState.isSettled }
+            return Triple(exec, revised, searches)
+        }
+    }
+
+    @Test
+    fun `도는 단위가 놓고 끝나는 개정은 그 단위가 끝난 뒤의 파지로 사슬을 본다`() {
+        // 같은 실행 안의 도는 pick_place 는 끝나면 빈손이다(HoldEffects). 개정 검사가 그 단위의 지금 관측(HOLDING)에서 바로 남은 GO 를
+        // 굴리면 멀쩡한 개정을 거부하고 쓸데없는 내려놓기 제안을 세운다 — 개정 없이 돌린 같은 장면에서 GO 는 거절 없이 나간다.
+        val (plain, _, _) = rackThenGo(revise = false)
+        val (revisedExec, revised, searches) = rackThenGo(revise = true)
+
+        assertIs<Middleware.Submission.Accepted>(revised, "도는 단위의 효과를 굴리지 않아 개정을 거부했다: $revised")
+        assertEquals(0, searches, "개정이 조치 탐색을 돌렸다 — 거짓 제안이 선다")
+        val ends = { e: Middleware.Execution -> e.units.map { Triple(it.unitId, it.state, it.failureClass) } }
+        assertEquals(ends(plain), ends(revisedExec), "개정 유무가 결말을 바꿨다")
+        assertEquals(null, revisedExec.units.single { it.unitId == GO }.failureClass, "GO 가 발신자에서 거절됐다")
+    }
+
+    @Test
+    fun `개정 뒤 도는 단위가 든 채 실패하면 개정이 들인 단위는 나가지 않는다`() {
+        // 끝난 뒤의 파지는 성공 가정이다. 그 가정이 틀려 든 채 실패해도 든 채인 기체로 GO 가 나가지 않아야 한다 — 실패한 단위가
+        // 운영자 판단으로 서고 다음 단위는 그 판단을 기다린다. 거기서 조치 탐색도 돌지 않는다(제안은 계획 시점 거절에만, §15.150).
+        World(PRECOND, missions = MissionCatalog.of(listOf(RackThenGo()))).use { w ->
+            val rack = order(slots = mapOf("S01" to "A"), sources = mapOf("A" to "SEQ-IN-02.BIN-A"))
+            w.cell.perfect(rack)
+            val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(rack, ROBOT)).execution
+            val s01 = exec.units.first()
+            w.drive(step = Duration.ofSeconds(1)) { s01.hold.kind == HoldKind.HOLD_KIND_HOLDING }
+            assertIs<Middleware.Submission.Accepted>(w.mw.submit(rack.copy(version = V18), ROBOT))
+
+            // 새 접수를 막지 않는 실패다(can_accept_new_task=true) — 막는 결함이 GO 를 붙잡은 것으로 읽히지 않게.
+            w.forceFault("SKILL_EXECUTION_FAILED", s01.taskId)
+            w.drive(rounds = 60, step = Duration.ofSeconds(5)) { exec.physicalState == PhysicalState.OPERATOR_HOLD }
+            assertEquals(HoldKind.HOLD_KIND_HOLDING, s01.hold.kind, "전제가 무너졌다 — 든 채로 실패하지 않았다")
+            assertEquals(UnitState.OPERATOR_HOLD, s01.state)
+            assertTrue(exec.blockedBy.isEmpty(), "막는 결함이 GO 를 붙잡았다 — 이 시험이 보려는 길이 아니다: ${exec.blockedBy}")
+            val go = exec.units.single { it.unitId == GO }
+            assertEquals(UnitState.PENDING, go.state, "든 채 실패한 뒤 GO 가 나갔다")
+            assertEquals(0, w.mw.remedySearches().size, "실패한 단위가 조치 탐색을 돌렸다")
         }
     }
 
