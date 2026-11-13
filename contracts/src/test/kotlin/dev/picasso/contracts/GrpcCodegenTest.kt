@@ -90,7 +90,7 @@ class GrpcCodegenTest {
             "picasso-contract.properties 가 클래스패스에 없다 — 헤더가 계약 신원을 못 싣는다"
         }.use(props::load)
 
-        assertEquals("0.10.0", props.getProperty("semver"))
+        assertEquals("0.11.0", props.getProperty("semver"))
 
         // 다이제스트를 리터럴로 박으면 proto를 고칠 때마다 시험을 고쳐야 하고
         // 그러면 아무도 값을 보지 않게 된다. 모양만 본다.

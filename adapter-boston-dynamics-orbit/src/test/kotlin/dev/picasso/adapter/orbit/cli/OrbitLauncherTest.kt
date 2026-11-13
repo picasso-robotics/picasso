@@ -160,6 +160,8 @@ class OrbitLauncherTest {
                 // 소비자가 리빌드에 쓸 수 있다(§15.263).
                 val blind = client.snapshot("spot-a")
                 assertEquals(FaultObservability.FAULT_OBSERVABILITY_NOT_OBSERVABLE, blind.faultObservability)
+                // 손도 같은 이유로 못 본다(계약 0.11.0) — 플릿 API 가 잔여 파지를 안 나른다. 빈손으로 접지 않는다.
+                assertEquals(dev.picasso.contracts.v1.HoldKind.HOLD_KIND_NOT_OBSERVABLE, blind.hold.kind)
                 assertTrue(blind.faultsList.isEmpty(), blind.faultsList.toString())
                 assertEquals(listOf("t-1"), blind.tasksList.map { it.taskId })
 

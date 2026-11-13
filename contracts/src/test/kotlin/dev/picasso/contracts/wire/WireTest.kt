@@ -17,7 +17,7 @@ class ContractIdentityTest {
 
     @Test
     fun `계약 신원을 클래스패스에서 읽는다`() {
-        assertEquals("0.10.0", ContractIdentity.semver)
+        assertEquals("0.11.0", ContractIdentity.semver)
         assertTrue(
             ContractIdentity.digest.matches(Regex("[0-9a-f]{64}")),
             "다이제스트가 SHA-256 16진수가 아니다: ${ContractIdentity.digest}",

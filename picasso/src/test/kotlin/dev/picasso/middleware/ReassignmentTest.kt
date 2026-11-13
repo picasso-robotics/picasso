@@ -26,11 +26,12 @@ class ReassignmentTest {
         policy: ReassignPolicy = ReassignPolicy(margin = 2, minHold = Duration.ofSeconds(30)),
         workspace: Workspace = Workspace.None,
         profiles: Map<String, Path> = mapOf(A to PRECOND, B to PRECOND, C to PRECOND),
+        port: (RobotPort) -> RobotPort = { it },
     ) : AutoCloseable {
         val harness = Harness(profiles)
         val cell = CellMimic(now = { harness.clock.now() })
         val mw = Middleware(
-            ClientRobotPort(harness.client()),
+            port(ClientRobotPort(harness.client())),
             cell,
             now = { harness.clock.now() },
             reassignPolicy = policy,
@@ -404,7 +405,8 @@ class ReassignmentTest {
     fun `든 채로 멈춘 실행은 안 옮긴다`() {
         // 첫 슬롯을 집은 채 위치를 잃었다. 끝난 단위는 없지만 물건은 A 의 손에 있다 — 옮기면 B 가 같은
         // 출발 자리에서 다시 집으러 간다.
-        World().use { w ->
+        // 부담으로 낸 순회가 스냅숏의 손(0.11.0)에 막히지 않게 손을 안 싣는 옛 발신자로 둔다 — 이 시험이 보는 것은 재할당이다.
+        World(port = { HandSilentRobotPort(it) }).use { w ->
             val exec = w.carry(A, "SEQ-H", slots = listOf("RACK.H1", "RACK.H2"), bin = "BIN.H")
             val first = exec.units.first()
             w.drive { first.hold.kind == HoldKind.HOLD_KIND_HOLDING }

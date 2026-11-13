@@ -20,12 +20,14 @@ internal class RemedyDesk(
     private val withholdEvery: Int,
     private val now: () -> Instant,
     private val wallClock: () -> Instant,
-    /** 기체에서 지금 도는 단위들의 파지 관측([AdmissionGate.liveHold]). 자동 승인의 값을 채울 때 다시 본다. */
+    /** 기체의 지금 손([AdmissionGate.fillHold] — 도는 단위의 관측, 없으면 신선한 스냅숏). 자동 승인의 값을 채울 때 다시 본다. */
     private val liveHold: (String) -> HoldState?,
     /** 보존 상한(§15.166). */
     private val retention: Retention = Retention(),
     /** 이 실행을 아직 구동이 돌리는가. 그 실행의 소모 기록은 상한을 넘어도 내리지 않는다. */
     private val live: (String) -> Boolean = { false },
+    /** 도는 단위 관측이 없을 때 그 기체를 쥔 다른 실행([AdmissionGate.snapshotHolder]). 있으면 스냅숏 근거의 거절에 제안을 세우지 않는다. */
+    private val snapshotHolder: (String) -> String? = { null },
 ) {
 
     private var searchesEvicted = 0L
@@ -104,6 +106,13 @@ internal class RemedyDesk(
             return rejection
         }
         if (remedy !is Remedy.Found || remedy.steps.isEmpty()) return rejection
+
+        // **다른 실행이 쥔 기체에는 제안을 세우지 않는다**(§15.316). 거절의 근거가 기체 스냅숏의 손이고 그 손에 든 것이 그 실행의 일일 수
+        // 있다 — 세우면 이 작업 지시의 조치가 남의 물건을 처분한다. 소유를 가리지 않고 «사람의 판단이 열린 실행이 있다» 만 읽는다. 찾은 것은 적는다.
+        snapshotHolder(robotId)?.let { holder ->
+            note(robotId, jobOrderId, RemedyOutcome.Found(remedy.steps))
+            return rejection.copy(reason = "${rejection.reason} — 그 기체를 다른 실행 $holder 가 쥐고 있어 조치 제안을 세우지 않았다", remedy = null)
+        }
 
         // **이미 승인을 든 실행의 개정 거절은 제안을 세우지 않는다**(ADR 46, §15.175). 판단 기록이 승인 하나만 실으므로 세워도 승인할
         // 수 없고, 세우면 그 열쇠에 남은 소모 기록을 가린다. 탐색의 답은 그대로 적는다 — 찾은 것도 답이다.

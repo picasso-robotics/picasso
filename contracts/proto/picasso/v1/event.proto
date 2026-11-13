@@ -170,6 +170,20 @@ message GetSnapshotResponse {
 
   // `faults`를 봤는가. 0.10.0에 더했다.
   FaultObservability fault_observability = 7;
+
+  // **발신자가 지금 아는 기체 손(잔여 물리 상태).** 0.11.0에 더했다.
+  //
+  // `WatchTaskResponse.hold`는 그 태스크 갱신 시점의 값이라, 태스크가 끝나면
+  // 다시 볼 길이 없다(§15.146). 이 칸은 발신자가 태스크와 무관하게 **주기적으로
+  // 다시 읽는** 값이다 — 도는 태스크가 없어도, 손에 든 것이 앞 태스크의 대상이어도.
+  // 스냅샷이 남쪽 읽기를 기다리지 않도록 발신자는 최근에 읽어 둔 값을 실어도 된다.
+  //
+  // 못 읽었거나 벤더가 판정을 안 주면 `HOLD_KIND_NOT_OBSERVABLE`(이유는
+  // `reason`)이고 빈손이 아니다. `HOLD_KIND_UNSPECIFIED`는 이 칸이 생기기 전의
+  // 발신자다 — 소비자는 빈손으로 읽지 않는다. `object_ref`는 든 것의 이름을
+  // 알 때만 싣는다(앞 태스크의 `is_object_reference` 값). `HoldState`의
+  // 불변식은 태스크에 묶인 것이라 여기 걸리지 않는다.
+  HoldState hold = 8;
 }
 
 message ReplayEventsRequest {

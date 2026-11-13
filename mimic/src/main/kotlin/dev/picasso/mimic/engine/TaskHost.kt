@@ -337,6 +337,12 @@ class TaskHost(
     /** 가장 최근에 기록된 쥐는 태스크의 파지. 아무것도 쥔 적 없으면 빈손이다 — 미믹은 빈손으로 태어난다. */
     private var handsHold: HoldState = EMPTY_HANDS
 
+    /**
+     * 지금 이 기체의 손 — 계약 `GetSnapshotResponse.hold`(0.11.0)가 싣는 값이다. 접수 전 사전 조건이 보는 것([precondition])과 같은 값이라,
+     * 소비자가 스냅샷으로 미리 본 손과 접수 때 이 엔진이 보는 손이 갈리지 않는다. 미믹은 언제나 관측한다.
+     */
+    fun hold(): HoldState = currentHold()
+
     private fun currentHold(): HoldState =
         // 도는 쥐는 태스크가 든 채면 그것이 먼저다 — 그 뒤에 접수된 다른 쥐는 태스크의 ACCEPTED 기록(빈손)이 덮지 못하게.
         tasks.values.firstOrNull { !it.machine.state.isTerminal && it.hold.kind == HoldKind.HOLD_KIND_HOLDING }?.hold

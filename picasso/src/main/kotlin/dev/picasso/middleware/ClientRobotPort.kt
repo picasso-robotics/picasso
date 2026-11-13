@@ -5,6 +5,7 @@ import dev.picasso.client.TaskFollower
 import dev.picasso.contracts.v1.CancelTaskResponse
 import dev.picasso.contracts.v1.Capability
 import dev.picasso.contracts.v1.FaultObservability
+import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.ParameterValue
 import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.contracts.v1.StartTaskResponse
@@ -171,6 +172,8 @@ class ClientRobotPort(
             session = s.header.sessionId,
             occurredAt = s.header.occurredAt.takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() },
             faultsObservable = s.faultObservability != FaultObservability.FAULT_OBSERVABILITY_NOT_OBSERVABLE,
+            // 칸이 없거나 UNSPECIFIED 면 옛 발신자다 — 빈손으로 읽지 않고 «말하지 않음» 으로 둔다.
+            hold = s.hold.takeIf { s.hasHold() && it.kind != HoldKind.HOLD_KIND_UNSPECIFIED },
         )
     } catch (_: RuntimeException) {
         null

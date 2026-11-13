@@ -71,6 +71,14 @@ class EventServiceTest {
     }
 
     @Test
+    fun `스냅샷이 지금의 손을 싣는다 — 미믹은 늘 관측하고 접수 전 사전 조건과 같은 값이다`() {
+        // 계약 0.11.0. 미믹은 빈손으로 태어나고 못 보는 기종이 아니므로 NOT_OBSERVABLE 을 내지 않는다.
+        assertEquals(dev.picasso.contracts.v1.HoldKind.HOLD_KIND_EMPTY, snapshot().hold.kind)
+        runTask()
+        assertEquals(host.tasks.hold(), snapshot().hold)
+    }
+
+    @Test
     fun `스냅샷의 sequence가 다음에 올 번호다`() {
         // "대응하는 번호"로 두면 0이 두 가지 뜻을 갖는다.
         //
