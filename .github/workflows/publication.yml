@@ -1,0 +1,14 @@
+# 공개 전 검사 — org 규칙(picasso-robotics/.github 의 CONTRIBUTING.md «공개 전 검사»).
+# PR 제목·본문, PR 커밋의 메시지와 작성자·커미터 메일, 더한 줄을 훑고 비밀·로컬 경로·개인정보가 있으면 실패한다.
+name: publication
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  publication:
+    uses: picasso-robotics/.github/.github/workflows/publication-check.yml@main
