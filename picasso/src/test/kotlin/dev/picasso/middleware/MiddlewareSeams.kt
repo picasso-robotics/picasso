@@ -22,7 +22,7 @@ internal object MiddlewareSeams {
     val homes: Map<String, List<String>> = linkedMapOf(
         "Resume.kt" to listOf("staleVersionRefusal", "recordRefusal", "restore", "reopenHold", "rebuildFrom", "attemptOf"),
         "Revision.kt" to listOf("revise", "sendRevisionUpdate", "settleUpdate", "issuable"),
-        "ClockSkew.kt" to listOf("readNow", "measureClock", "clockSuspicionOf"),
+        "ClockSkew.kt" to listOf("readNow", "measureClock", "clockSuspicionOf", "noteClockSkew"),
         "UnitDrivers.kt" to listOf(
             "noteProgress", "pumpRobotUnit", "loseStream", "settleLate", "pumpSignalUnit", "describe", "pumpFleetUnit", "holdOf",
         ),

@@ -65,21 +65,25 @@ class SeamPlacementTest {
      * 확장 함수는 같은 서명의 멤버에 조용히 진다. 누가 `Middleware.kt` 에 `fun resolveDoubt(` 를 다시 두면 호출이 전부
      * 그 멤버로 가고 컴파일러는 경고만 낸다(이 빌드는 경고를 실패로 안 본다). 그래서 확장 쪽의 자리만 대면 그 사고에
      * 초록이다 — 음성 바늘이 그 자리를 막는다. 접합부 파일의 확장 목록은 [MiddlewareSeams.homes] 와 같아야 하고,
-     * `fun Middleware.` 는 그 파일들 밖에 없어야 한다. 새 확장을 더하면 목록에도 더한다.
+     * `fun Middleware.`·`fun CommandEnv.` 는 그 파일들 밖에 없어야 한다. 새 확장을 더하면 목록에도 더한다. S4b(§15.312)부터 생애·드라이버가
+     * 부르는 접합부는 좁은 환경 [CommandEnv] 의 확장이고, 실행 표·게이트·장부를 쓰는 창구 절차만 `Middleware` 의 확장으로 남았다 — 수신자가
+     * 둘이어도 가려짐 사고는 같아서 `Middleware.kt` 와 `CommandEnv.kt` 둘 다에 음성 바늘을 건다.
      */
     @Test
     fun `옮긴 하위 절차는 제 파일에만 있고 Middleware 에 같은 이름의 멤버가 없다`() {
         val sources = MiddlewareSeams.sources()
-        val extension = Regex("""^(?:internal|private) fun Middleware\.([A-Za-z0-9_]+)\(""", RegexOption.MULTILINE)
+        val extension = Regex("""^(?:internal|private) fun (?:Middleware|CommandEnv)\.([A-Za-z0-9_]+)\(""", RegexOption.MULTILINE)
         val declared = sources.mapValues { (_, text) -> extension.findAll(text).map { it.groupValues[1] }.toList() }
             .filterValues { it.isNotEmpty() }
-        assertEquals(MiddlewareSeams.files, declared.keys, "fun Middleware. 확장이 접합부 목록 밖의 파일에 있거나 목록의 파일에 없다")
+        assertEquals(MiddlewareSeams.files, declared.keys, "fun Middleware.·fun CommandEnv. 확장이 접합부 목록 밖의 파일에 있거나 목록의 파일에 없다")
         MiddlewareSeams.homes.forEach { (file, names) ->
             assertEquals(names, declared[file], "$file 의 확장 목록이 MiddlewareSeams.homes 와 다르다")
         }
-        val core = sources.getValue("Middleware.kt")
-        val shadowed = MiddlewareSeams.homes.values.flatten().filter { Regex("""\bfun (?:[A-Za-z]+\.)?$it\(""").containsMatchIn(core) }
-        assertEquals(emptyList(), shadowed, "Middleware.kt 에 옮긴 절차와 같은 이름의 멤버가 있다 — 확장이 조용히 가려진다")
+        listOf("Middleware.kt", "CommandEnv.kt").forEach { file ->
+            val core = sources.getValue(file)
+            val shadowed = MiddlewareSeams.homes.values.flatten().filter { Regex("""\bfun (?:[A-Za-z]+\.)?$it\(""").containsMatchIn(core) }
+            assertEquals(emptyList(), shadowed, "$file 에 옮긴 절차와 같은 이름의 멤버가 있다 — 확장이 조용히 가려진다")
+        }
     }
 
     /**

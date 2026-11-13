@@ -351,6 +351,7 @@ class LayeringTest {
             "LedgerExport.kt" to Layer.FLOOR,
             "ResultExport.kt" to Layer.FLOOR,
             "MiddlewareCodes.kt" to Layer.FLOOR,
+            "RobotView.kt" to Layer.FLOOR,
             // 상태 — 실행, 배정 게이트, 장부, 단위의 순수 판정
             "Execution.kt" to Layer.STATE,
             "AdmissionGate.kt" to Layer.STATE,
@@ -359,8 +360,9 @@ class LayeringTest {
             "IncidentLog.kt" to Layer.STATE,
             "IssuingGate.kt" to Layer.STATE,
             "UnitFacts.kt" to Layer.STATE,
+            "CommandEnv.kt" to Layer.STATE,
+            "CommandLifecycle.kt" to Layer.STATE,
             // 전이 — 명령 생애와 접합부. 안의 순환은 허용한다.
-            "CommandLifecycle.kt" to Layer.TRANSITION,
             "LifecycleCancel.kt" to Layer.TRANSITION,
             "LifecycleCancelAttach.kt" to Layer.TRANSITION,
             "LifecycleDoubt.kt" to Layer.TRANSITION,
@@ -392,29 +394,19 @@ class LayeringTest {
             // `상태 층은 Middleware 에서 Submission 만 쓴다` 가 따로 댄다. 풀 단계 없음.
             listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "UnitFacts.kt")
                 .forEach { put(it to "Middleware.kt", "공개 결과 계약 Submission(§15.307)") }
-            // 실행이 제 명령 생애를 쥔다. 생애가 `mw` 를 쥐는 한 실행이 전이 층에 기댄다(§15.308) — S4 가 생애에 좁은 환경을 줄 때 푼다.
-            put("Execution.kt" to "CommandLifecycle.kt", "실행의 명령 생애(S4)")
-            // 생애와 접합부가 `Middleware` 의 포트·시계·트레이스·통보를 부른다(`fun Middleware.x`, `with(mw)`) — S4 가 푼다.
-            listOf(
-                "ClockSkew.kt", "CommandLifecycle.kt", "CommandPorts.kt", "EvidenceBinding.kt", "LifecycleCancel.kt",
-                "LifecycleCancelAttach.kt", "LifecycleDoubt.kt", "LifecycleIssue.kt", "Resume.kt", "Revision.kt", "RobotSync.kt",
-                "RouteDrivers.kt", "UnitDrivers.kt",
-            ).forEach { put(it to "Middleware.kt", "생애·접합부의 Middleware 역참조(S4)") }
+            // 실행 표·게이트·장부를 쓰는 창구 절차(재개, 리비전, 건너뛴 단위의 판정)가 `Middleware` 의 확장으로 남았다(§15.312). 생애·드라이버와
+            // 다른 접합부는 좁은 환경 CommandEnv 를 받는다 — S4b 가 생애·접합부 13 파일과 Execution → CommandLifecycle 간선을 걷었다.
+            listOf("EvidenceBinding.kt", "Resume.kt", "Revision.kt").forEach { put(it to "Middleware.kt", "창구 절차의 Middleware 확장(S4c)") }
         }
 
         /**
          * `Middleware.kt` 밖에서 부르는 `Middleware`(와 companion) 멤버의 JVM 이름(internal 멤버는 모듈 이름이 붙는다). 2026-11-13 실측 28 → S4a(§15.311) 21: 생애·접합부가 쓰던 companion 상수를 MiddlewareCodes 로, markIncident·observeHold 를 실행·단위로 옮겼다.
-         * S4 의 좁은 환경이 줄인다.
+         * → S4b(§15.312) 10: 생애·드라이버·접합부가 좁은 환경 CommandEnv 를 받는다. 남은 것은 창구 절차(재개·리비전·건너뛴 단위)가 쓰는 것이다.
          */
         val MIDDLEWARE_MEMBERS: Set<String> = setOf(
-            "getCell\$picasso_picasso", "getDesk\$picasso_picasso", "getDroppedOptionals\$picasso_picasso",
-            "getExecutions\$picasso_picasso", "getFleet\$picasso_picasso", "getGate\$picasso_picasso", "getIncidentLog\$picasso_picasso",
-            "getIssuing\$picasso_picasso", "getNow\$picasso_picasso",
-            "getRobots\$picasso_picasso",
-            "getViews\$picasso_picasso", "inDoubtGraceOf\$picasso_picasso",
-            "noteAttention\$picasso_picasso", "noteClockSkew\$picasso_picasso", "notify\$picasso_picasso",
-            "observeCell\$picasso_picasso", "stallWindowOf\$picasso_picasso", "stateTime\$picasso_picasso",
-            "trail\$picasso_picasso", "trail\$picasso_picasso\$default", "windowOf\$picasso_picasso",
+            "getDesk\$picasso_picasso", "getEnv\$picasso_picasso", "getExecutions\$picasso_picasso", "getGate\$picasso_picasso",
+            "getIncidentLog\$picasso_picasso", "getNow\$picasso_picasso", "noteAttention\$picasso_picasso", "notify\$picasso_picasso",
+            "trail\$picasso_picasso", "trail\$picasso_picasso\$default",
         )
     }
 }

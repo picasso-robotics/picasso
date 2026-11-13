@@ -35,9 +35,9 @@ import java.time.format.DateTimeParseException
  * 모델이고(§4.9) 어느 기체에 줄지(배차)는 이 모듈의 일이 아니다(ADR 38).
  */
 class Middleware(
-    internal val robots: RobotPort,
-    internal val cell: CellSignals = CellSignals.None,
-    internal val fleet: AmrFleetPort = AmrFleetPort.None,
+    private val robots: RobotPort,
+    private val cell: CellSignals = CellSignals.None,
+    private val fleet: AmrFleetPort = AmrFleetPort.None,
     /**
      * 코드로 정의한 케이퍼빌리티 목록. 널이면 [MissionCatalog.codeCapabilities] 다. [missions] 를 주면 쓰지 않으므로
      * 둘을 함께 주면 생성이 실패한다 — 한쪽이 조용히 무시되는 길을 두지 않는다.
@@ -155,8 +155,6 @@ class Middleware(
 
     private data class ForgottenOrder(val executionId: String, val version: Int, val state: PhysicalState)
 
-    internal val views = mutableMapOf<String, RobotView>()
-
     /** 배정 관문(설계안 §7). 실행 표를 같은 인스턴스로 넘긴다 — 관문은 이 층이 지금 든 것을 읽는다. */
     internal val gate = AdmissionGate(robots, cell, floors, workspace, executions)
 
@@ -164,7 +162,14 @@ class Middleware(
      * 발행 관문(ADR 51 결정 6, ADR 52). 배정 관문([gate])과 다르다 — 배정 관문은 작업 지시를 받을 때 한 번 묻고, 이것은 새 로봇
      * 명령이 나가기 직전마다 묻는다. 허가는 받은 뒤에도 바뀌기 때문이다.
      */
-    internal val issuing = IssuingGate(permits, retirements, now)
+    private val issuing = IssuingGate(permits, retirements, now)
+
+    /** 생애·드라이버·접합부의 좁은 환경. 기체 뷰와 이번 라운드의 현장 시간값도 여기 있다. */
+    internal val env = CommandEnv(robots, cell, fleet, now, issuing, ::notify)
+    private val views get() = env.views
+
+    /** 트레이스 한 줄([CommandEnv] 의 같은 이름). 창구 절차가 이 이름으로 쓴다. */
+    internal fun Execution.trail(kind: String, detail: String, at: Instant = now()) = with(env) { trail(kind, detail, at) }
 
     /** 제안과 승인의 장부(설계안 §6.4). 승인 뒤의 접수는 [commit] 에 남고, 승인의 기록([RemedyDesk.settle])은 접수가 된 뒤에만 한다. */
     internal val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::liveHold, retention, ::pumping)
@@ -175,54 +180,8 @@ class Middleware(
     /** 이 실행을 아직 구동이 돌리는가 — 보존 상한이 그 실행의 기록을 남길지 가른다([Retention]). */
     private fun pumping(executionId: String): Boolean = executions[executionId]?.physicalState?.pumps == true
 
-    /**
-     * 기체 하나에 대한 이 층의 관측 — 계약 §4.8 의 소비자 패턴 그대로다. 스냅샷으로 세우고(`cursor` = 다음에 올 번호)
-     * 재생으로 이어 붙이며, 버퍼를 벗어나면 스냅샷부터 다시 세운다(보고서 17장 9번 *단절 후 재동기화*).
-     *
-     * 결함과 연결 상태는 **스냅샷이 권위**다(현재값). 이벤트는 그 사이에 무슨 일이 있었는지 — 섰다가 사라진 결함,
-     * 전이 — 를 자취로 남긴다. 둘 중 하나만 쓰면 신규 소비자가 놓친 전이를 세우지 못하거나(이벤트만) 그 사이를
-     * 모른다(스냅샷만).
-     */
-    class RobotView internal constructor() {
-        var cursor: Long? = null
-            internal set
-        /** [cursor] 가 속한 세션 — 마지막으로 읽은 스냅샷의 `session_id`. 못 읽었으면 널이다. */
-        var session: String? = null
-            internal set
-        var faults: Map<String, Fault> = emptyMap()
-            internal set
-        var connection: ConnectionState = ConnectionState.CONNECTION_STATE_ONLINE
-            internal set
-        var tasks: Map<String, dev.picasso.contracts.v1.TaskState> = emptyMap()
-            internal set
-        /** [tasks] 의 태스크마다 기체가 든 리비전. 포트가 안 실으면 비어 있다. */
-        var taskRevisions: Map<String, Int> = emptyMap()
-            internal set
-        /** 마지막 동기화에서 기체를 봤는가(스냅숏을 읽었는가). 거짓이면 위의 값은 낡은 것이다. */
-        var observable: Boolean = false
-            internal set
-
-        /**
-         * 마지막으로 읽은 스냅숏이 결함을 봤는가(§15.263). 거짓이면 [faults] 는 비어 있되 *결함 없음* 이 아니다 — 결함 표면이 없는
-         * 기체다. 태스크·연결은 [observable] 이 말하는 대로 현재값이다. [observable] 이 거짓이면 의미가 없다.
-         */
-        var faultsObservable: Boolean = false
-            internal set
-
-        /** 마지막으로 스냅숏을 읽은 시각(미들웨어 시계). 널이면 한 번도 못 읽었다. 연결 끊김의 유예([LogicalCapability.linkLossWindow])를 여기부터 잰다. */
-        var lastObservedAt: Instant? = null
-            internal set
-        var resyncs: Int = 0
-            internal set
-        var eventsSeen: Long = 0
-            internal set
-
-        /**
-         * 마지막 스냅숏 왕복에서 잰 **발신자 시계 차의 구간**(발신자 시계 − 미들웨어 시계). 널이면 아직 못 쟀다 — 응답 헤더에 시각이 없었거나
-         * 스냅숏을 못 읽었다. 임계 판정은 읽는 쪽 실행의 근거 시간 윈도우로 하므로 구간 그대로 든다.
-         */
-        internal var clockOffset: ClockOffset? = null
-    }
+    /** 기체 하나의 뷰. 최상위 [dev.picasso.middleware.RobotView] 의 옛 이름이다(의존 정비 S4b, §15.312) — 이 저장소의 시험이 이 이름으로 컴파일해 별칭을 지킨다. */
+    typealias RobotView = dev.picasso.middleware.RobotView
 
     fun view(robotId: String): RobotView? = views[robotId]
     private val outbox = mutableListOf<JobResponse>()
@@ -345,7 +304,7 @@ class Middleware(
             missionVersion = active.missionVersion,
             units = planned,
             assignedAt = now(),
-            commandOf = { CommandLifecycle(this, it) },
+            commandOf = { CommandLifecycle(env, it) },
         )
         execution.units.forEach { it.revision = order.version }
         execution.approvedBy = approvedBy
@@ -661,22 +620,6 @@ class Middleware(
     // ── 구동
 
     /**
-     * 이번 라운드의 현장 시간값. [pump] 가 시작할 때 [siteTimings] 를 한 번 읽어 둔다. 널이면 케이퍼빌리티 값이다.
-     *
-     * 라운드 안에서는 다시 읽지 않는다. 판정마다 읽으면 한 라운드 안에서 두 버전의 값이 섞인다.
-     */
-    private var round: SiteTimings? = null
-
-    /** 이 라운드의 근거 시간 윈도우. 현장 값이 있으면 그것, 없으면 케이퍼빌리티 값이다. */
-    internal fun windowOf(execution: Execution): EvidenceWindow = round?.evidenceWindow ?: execution.capability.evidenceWindow
-
-    /** 이 라운드의 `IN_DOUBT` 유예. 단위에 저장하지 않는다. */
-    internal fun inDoubtGraceOf(execution: Execution): Duration = round?.inDoubtGrace ?: execution.capability.inDoubtGrace
-
-    /** 이 라운드의 진행 정체 유예. */
-    internal fun stallWindowOf(execution: Execution): Duration = round?.stallWindow ?: execution.capability.stallWindow
-
-    /**
      * 하류에서 온 것을 읽고 상태를 한 걸음 민다. 몇 번 불러도 같은 결과다(멱등).
      *
      * **포트가 던져도 한 실행의 일이다.** 기체 동기화와 실행의 라운드 진행을 각각 격리한다 — 던지면 그 기체의 실행들(동기화) 또는 그
@@ -684,14 +627,14 @@ class Middleware(
      * 던진 실행은 다음 라운드에 처음부터 다시 본다. 격리가 없으면 표에서 던지는 실행 뒤의 실행이 그 실행이 던지는 동안 매 라운드 굶는다.
      */
     fun pump() {
-        round = siteTimings.current()
+        env.round = siteTimings.current()
         val live = executions.values.filter { it.physicalState.pumps }
         // 단위가 묶인 기체까지 동기화한다 — 안 하면 그 기체의 결함·연결은 «못 봤다» 로 남아 관문이 그 단위를 막지 않는다.
         live.flatMap { it.robots }.distinct().forEach { robot ->
             val related = live.filter { robot in it.robots }
             val source = "sync:$robot"
             try {
-                sync(robot, related)
+                env.sync(robot, related)
                 related.forEach { it.noticed.clear(Notice.PumpFailure(source)) }
             } catch (e: RuntimeException) {
                 related.forEach { it.notePumpFailure(source, "robot=$robot 동기화", e) }
@@ -724,25 +667,6 @@ class Middleware(
         trail(PUMP_FAILED, "$where 중 포트가 던졌다 ($cause) — 상태는 그대로 두고 다음 라운드에 다시 본다")
     }
 
-    /** 시계 차 의심을 트레이스에 한 번 남긴다. 같은 방향·같은 크기 등급이면 되풀이하지 않고, 허용 안으로 들어오면 표시를 지운다. */
-    internal fun Execution.noteClockSkew(robot: String, offset: ClockOffset) {
-        val suspicion = clockSuspicionOf(this, offset)
-        if (suspicion == null) {
-            noticed.clear(Notice.ClockSkew(robot))
-            return
-        }
-        if (!noticed.note(Notice.ClockSkew(robot), suspicion.signature)) return
-        trail(
-            CLOCK_SKEW,
-            "robot=$robot ${suspicion.describe()} (임계 ${suspicion.threshold.toMillis() / 1000.0}초) — 근거 시간 윈도우가 이 차를 그대로 먹는다. 판정은 바꾸지 않는다",
-        )
-    }
-
-    /** [at] 은 이 줄의 시각이다. 기본은 지금이고, 같은 시각을 다른 사실과 나눠 써야 하는 자리만 넘긴다([reopenHold]). */
-    internal fun Execution.trail(kind: String, detail: String, at: Instant = now()) {
-        mutableEventTrail += ObservedEvent(views[robotId]?.cursor ?: 0, at.toString(), kind, detail, local = true)
-    }
-
     private fun pump(execution: Execution) {
         val pumped = execution.physicalState.pumps
         try {
@@ -753,7 +677,7 @@ class Middleware(
             execution.notePumpFailure(PUMP_SOURCE, "라운드 진행", e)
         }
         if (pumped) noteAttention(execution)
-        incidentLog.sealIncidents(execution, round)
+        incidentLog.sealIncidents(execution, env.round)
     }
 
     private fun pumpRound(execution: Execution) {
@@ -762,12 +686,12 @@ class Middleware(
         // **보내는 중인 출발이 있으면 그 결과부터 받는다**(§15.237). 첫 출발과 개정 갱신은 결과를 받기 전까지 이 실행의 다른 일을 하지
         // 않는다 — 취소·미룬 갱신·다음 단위가 그 결과에 달렸다. 미확정 조회는 [resolveDoubt] 가 받는다.
         execution.command.inFlight?.takeIf { it.kind != InFlight.Kind.LOOKUP }?.let { flight ->
-            execution.command.settleIssue(flight, issueStart(flight))
+            execution.command.settleIssue(flight, env.issueStart(flight))
             return
         }
         // 플릿의 첫 맡기기도 같다. 미확정 조회는 [resolveDoubt] 가 받는다.
         execution.command.fleetInFlight?.takeIf { it.kind == FleetFlight.Kind.START }?.let { flight ->
-            execution.command.settleDispatch(flight, issueDispatch(flight.order))
+            execution.command.settleDispatch(flight, env.issueDispatch(flight.order))
             return
         }
 
@@ -778,16 +702,16 @@ class Middleware(
         // 없이 «닿지 못했다» 로 적는다.
         if (execution.cancelInFlight != null || execution.fleetCancelInFlight != null) return
 
-        trackLink(execution)
+        env.trackLink(execution)
 
         // **미룬 개정의 갱신**(ADR 52). 허가가 돌아왔으면 지금 보낸다. 취소가 걸렸으면 보내지 않는다 — 멈추라는 말 뒤에 새 판을
         // 보내면 기체가 그 판으로 다시 움직일 수 있다.
         execution.active?.let { unit ->
             val previous = execution.command.deferredUpdate ?: return@let
             if (execution.cancelRequested || unit.state != UnitState.RUNNING) return@let
-            if (issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
+            if (env.issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
                 execution.command.deferredUpdate = null
-                sendRevisionUpdate(execution, unit, previous)
+                env.sendRevisionUpdate(execution, unit, previous)
             }
         }
         // 갱신이 보내는 중이면 이 라운드는 여기까지다(§15.237). 이어서 단위를 읽으면 태스크가 이미 끝난 경우 다음 단위의 출발이 나가
@@ -798,7 +722,7 @@ class Middleware(
         if (active != null) {
             val settled = when {
                 active.state == UnitState.IN_DOUBT -> execution.command.resolveDoubt(active)
-                active.state == UnitState.VERIFYING -> checkEvidence(execution, active)
+                active.state == UnitState.VERIFYING -> env.checkEvidence(execution, active)
                 else -> RouteDriver.of(active.route).pump(execution.command, active)
             }
             if (!settled) return
@@ -864,7 +788,7 @@ class Middleware(
         // 이 관문은 모르면(UNKNOWN) 막는다. 허가를 모른 채 내는 것은 «막혀 있을지 모르는 셀에 새 일을 낸다» 이다.
         // 로봇 경로만 묻는다 — 플릿 운반은 어느 기체가 갈지 플릿이 정하고, 설비 대기는 아무것도 보내지 않는다.
         val permitted = if (next.route == Route.ROBOT) {
-            issuable(execution, next, WithheldIssue.START)
+            env.issuable(execution, next, WithheldIssue.START)
         } else {
             if (execution.permitBlock?.withheld == WithheldIssue.START) execution.permitBlock = null
             true
@@ -973,22 +897,6 @@ class Middleware(
         return true
     }
 
-    /** 이미 적은 (기체, 선택 키). 같은 사실을 되풀이하면 운영자가 곧 무시한다. */
-    internal val droppedOptionals = mutableSetOf<Pair<String, String>>()
-
-    /** 설비에 묻고 **그 사실을 자취에 남긴다** — 조회하고 버리면 번들의 근거 창에서 설비 쪽이 빈다. */
-    internal fun Execution.observeCell(unit: ExecutionUnit): SlotSignal? {
-        val where = unit.destination ?: return null
-        val signal = cell.observe(where)
-        val what = if (signal == null) {
-            "no signal"
-        } else {
-            "occupied=${signal.occupied} identity=${signal.identity ?: "(none)"} at=${signal.observedAt?.toString() ?: "(read now)"}"
-        }
-        trail("CELL_SIGNAL", "$where: $what")
-        return signal
-    }
-
     private fun settleExecution(execution: Execution) {
         val states = execution.units.map { it.state }
         val before = execution.physicalState
@@ -1038,7 +946,7 @@ class Middleware(
                 unit.state = UnitState.DONE
                 unit.note = "operator confirmed" + (if (unit.verification == Verification.MATCHED) "" else " without equipment evidence") + ": ${unit.note}"
             }
-            OperatorDecision.REWORK -> reworkAsNewAttempt(unit)
+            OperatorDecision.REWORK -> env.reworkAsNewAttempt(unit)
         }
         // 다른 단위가 아직 보류이면 실행은 보류 그대로이고 그 단위를 이미 알린 것으로 둔다. 아니면 보류가 걷힌다.
         val stillHeld = execution.units.firstOrNull { it.state == UnitState.OPERATOR_HOLD }
@@ -1297,7 +1205,7 @@ class Middleware(
             blockedBy = execution.blockedBy.map { canonicalClassOf(it) },
             // 기체 연결은 도는 단위가 묶인 기체의 것이다. 도는 단위가 없으면 실행의 기체다.
             connection = (views[execution.active?.let(execution::robotOf) ?: execution.robotId]?.takeIf { it.observable }?.connection ?: ConnectionState.CONNECTION_STATE_UNSPECIFIED).name,
-            autoResolvesInDoubt = units.all { RouteDriver.of(it.route).lookupKind(this) == ExecutionLookup.CLIENT_REFERENCE },
+            autoResolvesInDoubt = units.all { RouteDriver.of(it.route).lookupKind(env) == ExecutionLookup.CLIENT_REFERENCE },
         )
         outbox += response
         execution.noticed.set(Notice.Attention, Attention.of(response.physicalState, response.blockedBy, response.inDoubtUnits))
@@ -1412,13 +1320,6 @@ class Middleware(
         return Submission.Rejected(
             "$FORGOTTEN_JOB_ORDER: $jobOrderId · ${gone.executionId} · 판 ${gone.version} · ${gone.state} — 다시 할 일은 새 작업 지시 id 로 낸다",
         )
-    }
-
-    /** 하류 갱신의 시각 — 헤더의 `state_as_of`(§5.5). 없거나 못 읽으면 지금. */
-    internal fun stateTime(update: WatchTaskResponse): Instant = try {
-        update.header.stateAsOf.takeIf { it.isNotBlank() }?.let { Instant.parse(it) } ?: now()
-    } catch (_: DateTimeParseException) {
-        now()
     }
 
     companion object {
@@ -1556,7 +1457,7 @@ class Middleware(
          * 발신자(어댑터 호스트·에뮬레이터) 시계가 미들웨어 시계와 임계 넘게 어긋났다는 실행 트레이스의 종류(환경 전제 K). 스냅숏 왕복에서 잰 차의
          * 구간 전체가 임계 밖일 때 남고, 같은 방향·같은 크기 등급이면 한 번만 남는다. 판정은 바꾸지 않는다.
          */
-        const val CLOCK_SKEW = "CLOCK_SKEW"
+        const val CLOCK_SKEW = MiddlewareCodes.CLOCK_SKEW
 
         /** 건 취소를 하위에 보내지 못했다는 실행 트레이스의 종류(§15.237). 같은 까닭은 한 번만 남고, 닿을 때까지 다시 보낸다. */
         const val CANCEL_UNSENT = MiddlewareCodes.CANCEL_UNSENT

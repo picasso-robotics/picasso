@@ -27,7 +27,7 @@ import java.time.Duration
  * 2. **잴 수 있는데 안 움직이면 알린다.** 실패로 적지 않고 상태도 안 바꾼다. 느린 것과 멈춘 것을 우리가
  *    못 가르기 때문이고, 그래서 판단은 사람의 것이다.
  */
-private fun Middleware.noteProgress(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse) {
+private fun CommandEnv.noteProgress(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse) {
     val basis = update.progressBasis
     val measured = basis.kind == ProgressKind.PROGRESS_KIND_MEASURED
     if (unit.progressObservable == null) {
@@ -60,7 +60,7 @@ private fun Middleware.noteProgress(execution: Execution, unit: ExecutionUnit, u
 }
 
 /** @return 단위가 이 펌프에서 종착(또는 검증 대기로 이행)해 active 에서 내려와도 되는가. */
-internal fun Middleware.pumpRobotUnit(execution: Execution, unit: ExecutionUnit): Boolean {
+internal fun CommandEnv.pumpRobotUnit(execution: Execution, unit: ExecutionUnit): Boolean {
     val robot = execution.robotOf(unit)
     val handle = execution.handle!!
     val updates = robots.watch(robot, handle)
@@ -137,7 +137,7 @@ internal fun Middleware.pumpRobotUnit(execution: Execution, unit: ExecutionUnit)
  *
  * @return 늘 거짓 — 단위는 이 펌프에서 종착하지 않는다.
  */
-private fun Middleware.loseStream(execution: Execution, unit: ExecutionUnit, handle: TaskHandle, why: String): Boolean {
+private fun CommandEnv.loseStream(execution: Execution, unit: ExecutionUnit, handle: TaskHandle, why: String): Boolean {
     robots.release(execution.robotOf(unit), handle)
     execution.handle = null
     unit.state = UnitState.IN_DOUBT
@@ -158,7 +158,7 @@ private fun Middleware.loseStream(execution: Execution, unit: ExecutionUnit, han
  * 기대에 맞는지는 **설비가 새 버전의 기대에 대고** 판정한다 — 요구 등급이 E0 라도 설비를 묻고(`strict`), 설비가
  * 없으면 `UNVERIFIED` 다. 실패·중단은 버전과 무관한 물리 사실이라 그대로 옮기되 어느 버전의 것인지를 남긴다.
  */
-private fun Middleware.settleLate(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse): Boolean {
+private fun CommandEnv.settleLate(execution: Execution, unit: ExecutionUnit, update: WatchTaskResponse): Boolean {
     unit.observeHold(update.hold)
     unit.annotate("late event: revision ${update.revision} ${update.state.name} arrived under revision ${unit.revision}")
     when (update.state) {
@@ -197,7 +197,7 @@ private fun Middleware.settleLate(execution: Execution, unit: ExecutionUnit, upd
  *
  * @return 단위가 이 진행에서 종료(운영자 보류 포함)했는가.
  */
-internal fun Middleware.pumpSignalUnit(execution: Execution, unit: ExecutionUnit): Boolean {
+internal fun CommandEnv.pumpSignalUnit(execution: Execution, unit: ExecutionUnit): Boolean {
     val wait = unit.wait ?: error("설비 대기 단위에 대기 사양이 없다: ${unit.unitId}")
     if (execution.cancelRequested) {
         unit.state = UnitState.ABORTED
@@ -248,11 +248,11 @@ internal fun Middleware.pumpSignalUnit(execution: Execution, unit: ExecutionUnit
     return true
 }
 
-internal fun Middleware.describe(reading: NamedSignal?): String =
+internal fun CommandEnv.describe(reading: NamedSignal?): String =
     if (reading == null) NO_SIGNAL else "value=${reading.value} at=${reading.observedAt?.toString() ?: "(read now)"}"
 
 /** @return 단위가 종착했는가. */
-internal fun Middleware.pumpFleetUnit(execution: Execution, unit: ExecutionUnit): Boolean {
+internal fun CommandEnv.pumpFleetUnit(execution: Execution, unit: ExecutionUnit): Boolean {
     val handle = execution.transport!!
     // 미리 읽는 포트면 그 읽기를 받는다(§15.237). 읽는 중이면 이번 라운드에는 단위를 두고, 기한 넘게 답이 없으면 동기 읽기가 던지던
     // 것과 같이 다룬다. 끝난 시각은 그 읽기가 받은 시각이다 — 받아 든 시각으로 찍으면 근거 창이 그만큼 밀린다.
@@ -313,7 +313,7 @@ internal fun Middleware.pumpFleetUnit(execution: Execution, unit: ExecutionUnit)
     return true
 }
 
-private fun Middleware.holdOf(status: TransportStatus, unit: ExecutionUnit): HoldState =
+private fun CommandEnv.holdOf(status: TransportStatus, unit: ExecutionUnit): HoldState =
     if (status.holding) {
         HoldState.newBuilder().setKind(HoldKind.HOLD_KIND_HOLDING).setObjectRef(status.observedContainer ?: unit.unitId).build()
     } else {

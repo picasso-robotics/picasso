@@ -19,7 +19,7 @@ internal fun TaskState.endedOnRobot(): Boolean = this == TaskState.TASK_STATE_SU
     this == TaskState.TASK_STATE_FAILED || this == TaskState.TASK_STATE_CANCELLED ||
     this == TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED
 
-internal fun Middleware.transportOrderOf(unit: ExecutionUnit) = TransportOrder(
+internal fun CommandEnv.transportOrderOf(unit: ExecutionUnit) = TransportOrder(
     reference = unit.taskId,
     containerId = unit.expectedIdentity ?: unit.unitId,
     source = unit.source ?: "",
@@ -31,7 +31,7 @@ internal fun Middleware.transportOrderOf(unit: ExecutionUnit) = TransportOrder(
  * ([RobotPort.issue]) 기다리지 않고 그 처지를 돌려주고, 아니면 [RobotPort.start] 를 지금 불러 그 결과를 같은 넷으로 감싼다. 보내는
  * 중인 출발의 결과를 다시 물을 때도 이것을 부른다 — 같은 키면 포트가 같은 송신의 처지를 준다.
  */
-internal fun Middleware.issueStart(flight: InFlight): Issue =
+internal fun CommandEnv.issueStart(flight: InFlight): Issue =
     robots.issue(flight.robot, flight.taskId, flight.revision, flight.skillType, flight.parameters) ?: try {
         Issue.Answered(robots.start(flight.robot, flight.taskId, flight.revision, flight.skillType, flight.parameters), sentAt = null)
     } catch (e: CommandNotSent) {
@@ -45,7 +45,7 @@ internal fun Middleware.issueStart(flight: InFlight): Issue =
  * 기다리지 않고 그 처지를 돌려주고, 아니면 [AmrFleetPort.dispatch] 를 지금 불러 그 결과를 같은 넷으로 감싼다. 보내는 중인 맡기기의
  * 결과를 다시 물을 때도 이것을 부른다.
  */
-internal fun Middleware.issueDispatch(order: TransportOrder): DispatchIssue =
+internal fun CommandEnv.issueDispatch(order: TransportOrder): DispatchIssue =
     fleet.issueDispatch(order) ?: try {
         DispatchIssue.Answered(fleet.dispatch(order), sentAt = null)
     } catch (e: CommandNotSent) {
@@ -55,20 +55,20 @@ internal fun Middleware.issueDispatch(order: TransportOrder): DispatchIssue =
     }
 
 /** 스냅숏으로 짓는 태스크 핸들 — [attachForCancel] 과 [attachFromSnapshot] 이 같은 값을 짓는다. */
-internal fun Middleware.handleFor(robot: String, taskId: String, revision: Int): TaskHandle =
+internal fun CommandEnv.handleFor(robot: String, taskId: String, revision: Int): TaskHandle =
     TaskHandle.newBuilder().setTaskId(taskId).setRevision(revision).setRobotId(robot).build()
 
-internal fun Middleware.unansweredAttach(taskId: String) = "$taskId 의 취소에 답이 없다 — 다음 라운드에 스냅숏부터 다시 본다"
+internal fun CommandEnv.unansweredAttach(taskId: String) = "$taskId 의 취소에 답이 없다 — 다음 라운드에 스냅숏부터 다시 본다"
 
 /** 미리 읽지 않는 플릿에는 지금 찾는다. 던지면 [FleetRead.Failed] 다. */
-internal fun Middleware.findNow(reference: String): FleetRead<TransportHandle?> = try {
+internal fun CommandEnv.findNow(reference: String): FleetRead<TransportHandle?> = try {
     FleetRead.Read(fleet.find(reference), now(), now())
 } catch (e: RuntimeException) {
     FleetRead.Failed(e)
 }
 
 /** 미리 읽지 않는 플릿에는 지금 읽는다. 던지면 [FleetRead.Failed] 다. */
-internal fun Middleware.statusNow(handle: TransportHandle): FleetRead<TransportStatus> = try {
+internal fun CommandEnv.statusNow(handle: TransportHandle): FleetRead<TransportStatus> = try {
     FleetRead.Read(fleet.status(handle), now(), now())
 } catch (e: RuntimeException) {
     FleetRead.Failed(e)

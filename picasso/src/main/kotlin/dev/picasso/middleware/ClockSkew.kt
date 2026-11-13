@@ -1,13 +1,13 @@
 package dev.picasso.middleware
 
-import dev.picasso.middleware.Middleware.RobotView
+import dev.picasso.middleware.MiddlewareCodes.CLOCK_SKEW
 import java.time.Duration
 import java.time.Instant
 
 // 지금 읽기와 발신자 시계 차 구간(환경 전제 K). 상태(뷰, 실행)는 Middleware 에 있다.
 
 /** 미리 읽지 않는 포트에는 지금 묻는다. 보낸 시각과 받은 시각은 미들웨어 시계다. */
-internal fun Middleware.readNow(robotId: String): PrefetchedRead {
+internal fun CommandEnv.readNow(robotId: String): PrefetchedRead {
     val sentAt = now()
     val snapshot = try {
         robots.snapshot(robotId)
@@ -25,7 +25,7 @@ internal fun Middleware.readNow(robotId: String): PrefetchedRead {
  * 임계에 걸치면 시계 차인지 왕복 지연인지 가를 수 없으므로 남기지 않는다. **판정은 바꾸지 않는다** — 보정은 계약 §4 가 하지 않는다고 한 일이다.
  * 셀 시계는 잴 수단이 없어 다루지 않는다.
  */
-internal fun Middleware.measureClock(
+internal fun CommandEnv.measureClock(
     robotId: String,
     view: RobotView,
     snapshot: RobotSnapshot,
@@ -36,7 +36,7 @@ internal fun Middleware.measureClock(
     val occurred = snapshot.occurredAt ?: return
     val offset = ClockOffset(low = Duration.between(receivedAt, occurred), high = Duration.between(sentAt, occurred))
     view.clockOffset = offset
-    live.forEach { it.noteClockSkew(robotId, offset) }
+    live.forEach { noteClockSkew(it, robotId, offset) }
 }
 
 /**
@@ -46,7 +46,7 @@ internal fun Middleware.measureClock(
  * 허용 폭은 발신자가 늦는 쪽이 `뒤 폭 − L`, 빠른 쪽이 `앞 폭 − L` 이고 L(셀 폴링 주기·pump 주기·전달 지연의 합)은 현장 값이라 여기서 모른다.
  * 그래서 폭의 절반에서 알린다 — 허용 폭에 닿기 전에 사람이 보게 하는 여유다(`docs/environment-preconditions.md` 절 K).
  */
-internal fun Middleware.clockSuspicionOf(execution: Execution, offset: ClockOffset?): ClockSuspicion? {
+internal fun CommandEnv.clockSuspicionOf(execution: Execution, offset: ClockOffset?): ClockSuspicion? {
     offset ?: return null
     val window = windowOf(execution)
     val threshold = minOf(window.before, window.after).dividedBy(2)
@@ -55,4 +55,18 @@ internal fun Middleware.clockSuspicionOf(execution: Execution, offset: ClockOffs
         offset.low > threshold -> ClockSuspicion(behind = false, nearest = offset.low, farthest = offset.high, threshold = threshold)
         else -> null
     }
+}
+
+/** 시계 차 의심을 트레이스에 한 번 남긴다. 같은 방향·같은 크기 등급이면 되풀이하지 않고, 허용 안으로 들어오면 표시를 지운다. */
+internal fun CommandEnv.noteClockSkew(execution: Execution, robot: String, offset: ClockOffset): Unit = with(execution) {
+    val suspicion = clockSuspicionOf(execution, offset)
+    if (suspicion == null) {
+        noticed.clear(Notice.ClockSkew(robot))
+        return@with
+    }
+    if (!noticed.note(Notice.ClockSkew(robot), suspicion.signature)) return@with
+    trail(
+        CLOCK_SKEW,
+        "robot=$robot ${suspicion.describe()} (임계 ${suspicion.threshold.toMillis() / 1000.0}초) — 근거 시간 윈도우가 이 차를 그대로 먹는다. 판정은 바꾸지 않는다",
+    )
 }

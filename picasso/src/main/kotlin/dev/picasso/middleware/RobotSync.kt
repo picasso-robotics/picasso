@@ -3,7 +3,6 @@ package dev.picasso.middleware
 import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.contracts.v1.Event
 import dev.picasso.contracts.v1.Fault
-import dev.picasso.middleware.Middleware.RobotView
 import dev.picasso.middleware.MiddlewareCodes.ACKNOWLEDGED_FAULT_CLEARED
 
 // 기체 동기화(재설계 R5, 설계 일지 §15.305): 스냅숏과 재생을 읽어 기체 뷰를 세우고, 이벤트를 관계있는 실행의 자취에 남기며, 걷힌
@@ -16,7 +15,7 @@ import dev.picasso.middleware.MiddlewareCodes.ACKNOWLEDGED_FAULT_CLEARED
  * 미리 읽는 포트([RobotPort.prefetched])면 그 읽기를 받는다(§15.267). 시각은 그 읽기가 실제로 보낸·받은 시각이다 — 받아 든 시각으로
  * 찍으면 낡은 값이 방금 본 값이 되고, 끊김 유예와 시계 차가 그만큼 어긋난다. 읽는 중이면 뷰를 그대로 둔다.
  */
-internal fun Middleware.sync(robotId: String, live: List<Execution>) {
+internal fun CommandEnv.sync(robotId: String, live: List<Execution>) {
     val view = views.getOrPut(robotId) { RobotView() }
     val read = robots.prefetched(robotId) ?: readNow(robotId)
     val (snapshot, sentAt, receivedAt) = when (read) {
@@ -83,7 +82,7 @@ internal fun Middleware.sync(robotId: String, live: List<Execution>) {
     }
 }
 
-private fun Middleware.record(robotId: String, event: Event, live: List<Execution>) {
+private fun CommandEnv.record(robotId: String, event: Event, live: List<Execution>) {
     val at = event.header.occurredAt
     val seq = event.header.sequence
     when {
@@ -123,7 +122,7 @@ private fun Middleware.record(robotId: String, event: Event, live: List<Executio
  * **이 실행의 다른 기체가 지금 그 열쇠를 보이면 놓지 않는다.** 열쇠에 기체가 없어서, 놓으면 그 결함이 없는 기체의 스냅숏 하나가
  * 다른 기체에서 감수한 결함을 라운드마다 다시 막는다.
  */
-private fun Middleware.forgetAcknowledged(execution: Execution, robotId: String, key: String, why: String) {
+private fun CommandEnv.forgetAcknowledged(execution: Execution, robotId: String, key: String, why: String) {
     with(execution) {
         if (key !in acknowledgedFaults) return
         if (robots.any { it != robotId && views[it]?.let { v -> v.observable && v.faultsObservable && key in v.faults } == true }) return
@@ -144,7 +143,7 @@ internal fun faultKey(fault: Fault): String =
  *
  * 라운드 머리([Middleware.pumpRound])가 송신 결과와 취소 다시 보내기 뒤, 미룬 갱신 앞에서 부른다(§15.306).
  */
-internal fun Middleware.trackLink(execution: Execution) {
+internal fun CommandEnv.trackLink(execution: Execution) {
     val runningRobotUnit = execution.active?.takeIf { it.route == Route.ROBOT && it.state == UnitState.RUNNING }
     val view = runningRobotUnit?.let { views[execution.robotOf(it)] }
     val unseenSince = view?.takeIf { !it.observable }?.lastObservedAt
