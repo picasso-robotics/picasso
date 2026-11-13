@@ -113,6 +113,8 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-13 의존 정비 S4b 실측: Middleware.kt 696, 합 1,670, Middleware 의 internal 멤버 9(§15.312). 기체 뷰·라운드 시간값·트레이스·설비 관측이
+        // 좁은 환경 CommandEnv.kt 로 나가 세는 범위 밖으로 갔다(코드가 준 것이 아니다). robots·cell·fleet·issuing 은 private 로 닫았다.
         // 2026-11-13 의존 정비 S4a 실측: Middleware.kt 754, 합 1,717, Middleware 의 internal 멤버 20(§15.311). 생애·접합부가 쓰던 companion 상수의
         // 값을 MiddlewareCodes.kt 로(여러 줄 값이 한 줄이 됐다), markIncident·observeHold 를 실행·단위의 멤버로 옮겼다.
         // 2026-11-13 의존 정비 S3 실측: 실행의 가변 컬렉션 11. 단위 열이 생성자 인자에서 실행이 쥔 뒷받침(mutableUnits = units.toMutableList())이
@@ -129,15 +131,15 @@ class SourceSizeBudgetTest {
         // 2026-11-12 재설계 R2 실측: 실행의 가변 필드 20, 가변 컬렉션 10(«한 번만 알림» 아홉을 Noticed 하나로, §15.302).
         // 2026-11-12 재설계 R1 실측: 실행의 가변 필드 25(취소 필드 열하나를 네 축으로, §15.301).
         // 2026-11-12 재설계 R0 실측: 실행의 가변 컬렉션 14, 실행 단위의 가변 필드 36(생성자 30, 본문 6).
-        const val MIDDLEWARE = 754
+        const val MIDDLEWARE = 696
         const val SEAM = 500
-        const val TOTAL = 1_717
+        const val TOTAL = 1_670
         const val OTHER = 600
         const val EXECUTION_VARS = 13
         const val PUMP_ROUND = 143
         const val EXECUTION_COLLECTIONS = 11
         const val UNIT_VARS = 36
-        const val OPEN_MEMBERS = 20
+        const val OPEN_MEMBERS = 9
 
         /** 네 칸 들여 쓴(클래스 본문의) `internal` 선언. 무리 1 은 선언 줄이다. */
         val OPEN_MEMBER = Regex("^    (internal (?:fun|val|var|(?:data |sealed |enum )?(?:class|object|interface)) .*)$")

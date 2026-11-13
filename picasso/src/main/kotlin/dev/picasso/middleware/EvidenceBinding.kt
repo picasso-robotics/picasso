@@ -17,7 +17,7 @@ import java.time.Instant
  * **플릿의 운반은 보지 않는다** — 카탈로그에 없는 단위의 효과를 지어내지 않는다. 그리고 관측이 없거나
  * 볼 수 없으면 [HoldEffects.compare] 가 판정하지 않는다(§5.2).
  */
-internal fun Middleware.judgeEffectMismatch(execution: Execution, unit: ExecutionUnit, completed: Boolean) {
+internal fun CommandEnv.judgeEffectMismatch(execution: Execution, unit: ExecutionUnit, completed: Boolean) {
     if (unit.route != Route.ROBOT) return
     val expected = HoldEffects.expectedAtEnd(unit.skillType, unit.everHeld, completed) ?: return
     // **어긋나지 않아도 기대를 남긴다.** 판단 경로는 판정이 났을 때만 필요한 것이 아니다 —
@@ -39,7 +39,7 @@ internal fun Middleware.judgeEffectMismatch(execution: Execution, unit: Executio
  * 아니면 [UnitState.VERIFYING] 으로 옮기고 시간창이 닫힐 때까지([EvidenceWindow.after])
  * 설비에 묻는다 — PLC 는 폴링이라 신호가 보고보다 **늦게** 읽힐 수 있다. 첫 확인은 지금 한다.
  */
-internal fun Middleware.beginVerify(
+internal fun CommandEnv.beginVerify(
     execution: Execution,
     unit: ExecutionUnit,
     reachedByDownstream: Evidence,
@@ -74,7 +74,7 @@ internal fun Middleware.beginVerify(
  *
  * @return 단위가 종착했는가(아직 기다리는 중이면 `false`).
  */
-internal fun Middleware.checkEvidence(execution: Execution, unit: ExecutionUnit): Boolean {
+internal fun CommandEnv.checkEvidence(execution: Execution, unit: ExecutionUnit): Boolean {
     val doneAt = unit.downstreamDoneAt!!
     val window = windowOf(execution)
     val current = now()
@@ -131,7 +131,7 @@ internal fun Middleware.checkEvidence(execution: Execution, unit: ExecutionUnit)
  * 요구 등급이 설비 확인을 포함하면 지금 묻고, 시간창 안에 기대한 것이 있으면 `FAILED` 로
  * 적지 않고 [UnitState.OPERATOR_HOLD] 로 세운다 — 운영자가 [resolve] 로 판단한다.
  */
-internal fun Middleware.failWithEvidenceCheck(
+internal fun CommandEnv.failWithEvidenceCheck(
     execution: Execution,
     unit: ExecutionUnit,
     failureClass: String,
@@ -168,7 +168,7 @@ internal fun Middleware.failWithEvidenceCheck(
  * 단위를 새 시도로 되돌린다. 다음 [startUnit] 이 `@rN` 태스크 id 로 낸다. [resolve] 의 재작업이 보류 단위와 건너뛴 대상 두 경로에서
  * 같은 되돌림을 쓴다 — 경로마다 풀어 쓰면 한쪽만 고치는 날 시도 번호와 태스크 id 가 어긋난다.
  */
-internal fun Middleware.reworkAsNewAttempt(unit: ExecutionUnit) {
+internal fun CommandEnv.reworkAsNewAttempt(unit: ExecutionUnit) {
     unit.attempt += 1
     unit.state = UnitState.PENDING
     unit.taskId = ""
@@ -205,7 +205,7 @@ internal fun Middleware.reworkAsNewAttempt(unit: ExecutionUnit) {
  * 이 실행에 있으며 `FAILED` 이고 태스크를 썼다(시도된 실패). 선행이 `UNVERIFIED`·`ABORTED` 이거나 점검 자신이 시도 뒤에 실패한
  * 단위는 이 경로의 범위 밖이다.
  */
-private fun Middleware.skippedPair(execution: Execution, unit: ExecutionUnit): ExecutionUnit? {
+private fun CommandEnv.skippedPair(execution: Execution, unit: ExecutionUnit): ExecutionUnit? {
     if (unit.state != UnitState.FAILED || unit.failureClass != PREDECESSOR_NOT_DONE || unit.taskId.isNotEmpty()) return null
     val predecessor = execution.units.firstOrNull { it.unitId == unit.after } ?: return null
     if (predecessor.state != UnitState.FAILED || predecessor.taskId.isEmpty()) return null
@@ -229,7 +229,7 @@ private fun Middleware.skippedPair(execution: Execution, unit: ExecutionUnit): E
  */
 internal fun Middleware.resolveSkipped(execution: Execution, unitId: String, decision: OperatorDecision, approver: Approver): ResolveOutcome {
     val skipped = execution.units.firstOrNull { it.unitId == unitId } ?: return ResolveOutcome.NotHeld
-    val travel = skippedPair(execution, skipped) ?: return ResolveOutcome.NotHeld
+    val travel = env.skippedPair(execution, skipped) ?: return ResolveOutcome.NotHeld
     if (decision == OperatorDecision.CONFIRM_DONE) {
         return ResolveOutcome.Refused("점검을 하지 않은 단위는 확인할 것이 없다 — 재작업만 받는다: $unitId")
     }
@@ -238,7 +238,7 @@ internal fun Middleware.resolveSkipped(execution: Execution, unitId: String, dec
     val at = now()
     for (unit in listOf(travel, skipped)) {
         execution.decisions[unit.unitId] = RecordedDecision(decision, approver, at, unit.attempt)
-        reworkAsNewAttempt(unit)
+        env.reworkAsNewAttempt(unit)
     }
     execution.noticed.clear(Notice.Hold)
     execution.physicalState = PhysicalState.RUNNING

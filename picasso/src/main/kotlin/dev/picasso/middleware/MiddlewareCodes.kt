@@ -43,6 +43,7 @@ internal object MiddlewareCodes {
     const val ISSUE_WITHHELD = "ISSUE_WITHHELD"
     const val ISSUE_RESUMED = "ISSUE_RESUMED"
     const val PREDECESSOR_NOT_DONE = "PREDECESSOR_NOT_DONE"
+    const val CLOCK_SKEW = "CLOCK_SKEW"
     val OPEN_UNIT_STATES = setOf(UnitState.PENDING, UnitState.RUNNING, UnitState.VERIFYING, UnitState.IN_DOUBT, UnitState.OPERATOR_HOLD)
     val RETRY_SUFFIX = Regex("""@r([1-9]\d*)""")
 }

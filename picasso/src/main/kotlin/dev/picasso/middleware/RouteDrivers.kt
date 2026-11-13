@@ -7,7 +7,7 @@ package dev.picasso.middleware
 /** 단위의 경로([Route]) 하나가 명령 생애에 내놓는 연산. */
 internal sealed interface RouteDriver {
     /** 같은 참조로 기존 실행을 찾을 수 있는가(13.2 ①). */
-    fun lookupKind(mw: Middleware): ExecutionLookup
+    fun lookupKind(env: CommandEnv): ExecutionLookup
 
     /** 미확정 단위의 취소를 키로 지은 핸들로 보내는 경로인가(§15.219). 로봇만 그렇다. */
     val cancelsByKey: Boolean get() = false
@@ -37,12 +37,12 @@ internal sealed interface RouteDriver {
     fun attachForCancel(cl: CommandLifecycle): Boolean = false
 
     data object Robot : RouteDriver {
-        override fun lookupKind(mw: Middleware) = mw.robots.executionLookup
+        override fun lookupKind(env: CommandEnv) = env.robots.executionLookup
         override val cancelsByKey get() = true
         override val takesUpdate get() = true
 
         override fun start(cl: CommandLifecycle, unit: ExecutionUnit, restore: StartRestore) = with(cl) {
-            with(mw) {
+            with(env) {
                 val flight = InFlight(
                     InFlight.Kind.START, unit.unitId, execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType,
                     withOptionals(unit, unit.parameters), previous = unit.revision, restore = restore,
@@ -53,7 +53,7 @@ internal sealed interface RouteDriver {
         }
 
         override fun settlePendingLookup(cl: CommandLifecycle, unit: ExecutionUnit): Boolean? = with(cl) {
-            with(mw) {
+            with(env) {
                 inFlight?.takeIf { it.kind == InFlight.Kind.LOOKUP && it.unitId == unit.unitId }?.let { flight ->
                     val settled = settleIssue(flight, issueStart(flight))
                     if (inFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
@@ -72,10 +72,10 @@ internal sealed interface RouteDriver {
         }
 
         override fun lookupPermitted(cl: CommandLifecycle, unit: ExecutionUnit) =
-            cl.mw.issuable(cl.execution, unit, WithheldIssue.IN_DOUBT_LOOKUP)
+            cl.env.issuable(cl.execution, unit, WithheldIssue.IN_DOUBT_LOOKUP)
 
         override fun sendLookup(cl: CommandLifecycle, unit: ExecutionUnit): Boolean = with(cl) {
-            with(mw) {
+            with(env) {
                 val flight = InFlight(
                     InFlight.Kind.LOOKUP, unit.unitId, execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType,
                     withOptionals(unit, unit.parameters), previous = unit.revision, restore = null,
@@ -87,16 +87,16 @@ internal sealed interface RouteDriver {
         }
 
         override fun pump(cl: CommandLifecycle, unit: ExecutionUnit) =
-            cl.holdUnreachedCancel(unit) || cl.mw.pumpRobotUnit(cl.execution, unit)
+            cl.holdUnreachedCancel(unit) || cl.env.pumpRobotUnit(cl.execution, unit)
 
         override fun attachForCancel(cl: CommandLifecycle) = cl.attachForCancel()
     }
 
     data object Fleet : RouteDriver {
-        override fun lookupKind(mw: Middleware) = mw.fleet.executionLookup
+        override fun lookupKind(env: CommandEnv) = env.fleet.executionLookup
 
         override fun start(cl: CommandLifecycle, unit: ExecutionUnit, restore: StartRestore) = with(cl) {
-            with(mw) {
+            with(env) {
                 val flight = FleetFlight(FleetFlight.Kind.START, unit.unitId, transportOrderOf(unit), restore)
                 settleDispatch(flight, issueDispatch(flight.order))
                 Unit
@@ -104,7 +104,7 @@ internal sealed interface RouteDriver {
         }
 
         override fun settlePendingLookup(cl: CommandLifecycle, unit: ExecutionUnit): Boolean? = with(cl) {
-            with(mw) {
+            with(env) {
                 fleetInFlight?.takeIf { it.kind == FleetFlight.Kind.LOOKUP && it.unitId == unit.unitId }?.let { flight ->
                     val settled = settleDispatch(flight, issueDispatch(flight.order))
                     if (fleetInFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
@@ -114,7 +114,7 @@ internal sealed interface RouteDriver {
         }
 
         override fun sendLookup(cl: CommandLifecycle, unit: ExecutionUnit): Boolean = with(cl) {
-            with(mw) {
+            with(env) {
                 val flight = FleetFlight(FleetFlight.Kind.LOOKUP, unit.unitId, transportOrderOf(unit), restore = null)
                 val settled = settleDispatch(flight, issueDispatch(flight.order))
                 if (fleetInFlight != null) execution.physicalState = PhysicalState.IN_DOUBT
@@ -122,7 +122,7 @@ internal sealed interface RouteDriver {
             }
         }
 
-        override fun pump(cl: CommandLifecycle, unit: ExecutionUnit) = cl.mw.pumpFleetUnit(cl.execution, unit)
+        override fun pump(cl: CommandLifecycle, unit: ExecutionUnit) = cl.env.pumpFleetUnit(cl.execution, unit)
 
         override fun attachForCancel(cl: CommandLifecycle) = cl.attachTransportForCancel()
     }
@@ -130,7 +130,7 @@ internal sealed interface RouteDriver {
     /** 설비 대기. 하위에 보낼 요청이 없다 — 시작이 곧 기다림의 시작이고, 읽기는 [pumpSignalUnit] 이 한다. */
     data object Signal : RouteDriver {
         /** 요청을 보내지 않으므로 미확정이 생기지 않는다 — 실행의 미확정 자동 해소를 막지 않는 쪽으로 답한다. */
-        override fun lookupKind(mw: Middleware) = ExecutionLookup.CLIENT_REFERENCE
+        override fun lookupKind(env: CommandEnv) = ExecutionLookup.CLIENT_REFERENCE
 
         override fun start(cl: CommandLifecycle, unit: ExecutionUnit, restore: StartRestore) {
             unit.state = UnitState.RUNNING
@@ -139,7 +139,7 @@ internal sealed interface RouteDriver {
 
         override fun sendLookup(cl: CommandLifecycle, unit: ExecutionUnit) = cl.lookupFound(unit, true)
 
-        override fun pump(cl: CommandLifecycle, unit: ExecutionUnit) = cl.mw.pumpSignalUnit(cl.execution, unit)
+        override fun pump(cl: CommandLifecycle, unit: ExecutionUnit) = cl.env.pumpSignalUnit(cl.execution, unit)
     }
 
     companion object {

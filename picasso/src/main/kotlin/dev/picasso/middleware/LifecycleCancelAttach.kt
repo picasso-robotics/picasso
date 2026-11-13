@@ -21,7 +21,7 @@ import dev.picasso.middleware.MiddlewareCodes.UNATTACHED_UNSENT_CAUSE
 // 취소용 붙이기: 핸들 없는 취소, 키로 보낸 취소, 붙기 전에 건 취소와 그 기다림.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는
 /// 하위 상태기계 하나다. 상태(취소의 네 축, 송신 기록)는 실행마다의 CommandLifecycle 이 들고, 전이는 그 객체의 확장인
-// 이 넷이 한다(§15.303). 포트와 자취는 with(mw) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
+// 이 넷이 한다(§15.303). 포트와 자취는 with(env) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
 
 /**
  * 취소가 걸린 채 미확정이 안 풀린 [unit] 의 취소를 «보내지 못한 취소» 로 표시한다([Execution.cancelUnsent]). 실행은 단위가 운영자
@@ -29,7 +29,7 @@ import dev.picasso.middleware.MiddlewareCodes.UNATTACHED_UNSENT_CAUSE
  * [CANCEL_NOT_SENT] 가 실린다.
  */
 internal fun CommandLifecycle.holdUnsentCancel(unit: ExecutionUnit) {
-    with(mw) {
+    with(env) {
         val keyed = RouteDriver.of(unit.route).cancelsByKey
         val cause = if (keyed) KEYED_UNSENT_CAUSE else HOLD_UNSENT_CAUSE
         val reason = if (execution.handle == null && execution.transport == null) "no task handle" else "the cancel sent was not answered"
@@ -56,7 +56,7 @@ internal fun CommandLifecycle.holdUnsentCancel(unit: ExecutionUnit) {
  * @return 붙었는가.
  */
 internal fun CommandLifecycle.cancelByKey(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         val last = unit.keyedCancelAt
         if (last != null && now().isBefore(last.plus(LOOKUP_INTERVAL))) return false
         unit.keyedCancelAt = now()
@@ -70,7 +70,7 @@ internal fun CommandLifecycle.cancelByKey(unit: ExecutionUnit): Boolean {
 
 /** [cancelByKey] 가 답을 받은 뒤. 잠금 밖에서 보냈으면 다음 라운드에 [settleCancel] 이 부른다. @return 붙었는가. */
 internal fun CommandLifecycle.attachByKey(unit: ExecutionUnit, handle: TaskHandle, response: CancelTaskResponse): Boolean {
-    with(mw) {
+    with(env) {
         val refusal = response.takeUnless { it.hasState() }?.rejection?.code
         if (refusal != null && refusal !in KNOWN_TASK_REFUSALS) return false
 
@@ -95,7 +95,7 @@ internal fun CommandLifecycle.attachByKey(unit: ExecutionUnit, handle: TaskHandl
  * 말하지 않는다. 던지면 간격([LOOKUP_INTERVAL]) 뒤에 스냅숏부터 다시 본다. 스냅숏을 못 읽었거나 태스크가 끝났으면 보내지 않는다.
  */
 internal fun CommandLifecycle.resendHeldCancel(unit: ExecutionUnit) {
-    with(mw) {
+    with(env) {
         if (!RouteDriver.of(unit.route).cancelsByKey) return
         val robot = execution.robotOf(unit)
         val view = views[robot]?.takeIf { it.observable } ?: return
@@ -112,7 +112,7 @@ internal fun CommandLifecycle.resendHeldCancel(unit: ExecutionUnit) {
 
 /** [resendHeldCancel] 이 답을 받은 뒤. 잠금 밖에서 보냈으면 다음 라운드에 [settleCancel] 이 부른다. */
 internal fun CommandLifecycle.heldCancelAnswered(unit: ExecutionUnit, stateName: String, response: CancelTaskResponse) {
-    with(mw) {
+    with(env) {
         noteRefusal(response)
         cancelDelivery = CancelDelivery.Clear
         unit.annotate("held cancel re-sent by key: snapshot showed ${unit.taskId}=$stateName")
@@ -128,7 +128,7 @@ internal fun CommandLifecycle.heldCancelAnswered(unit: ExecutionUnit, stateName:
  * @return 단위가 이 라운드에 운영자 보류가 됐는가.
  */
 internal fun CommandLifecycle.holdUnreachedCancel(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         val delivery = when (val d = cancelDelivery) {
             is CancelDelivery.Unsent -> d.takeIf { execution.cancelRequested && execution.linkBroken }
                 ?: run {
@@ -152,7 +152,7 @@ internal fun CommandLifecycle.holdUnreachedCancel(unit: ExecutionUnit): Boolean 
 
 /** 걸린 취소가 [holdUnsentCancel] 로 서 있고 그 단위가 아직 운영자 보류다 — 실행은 운영자 판단을 기다린다. */
 internal fun CommandLifecycle.cancelWaitsOnHeldDoubt(): Boolean {
-    with(mw) {
+    with(env) {
         return when (val wait = cancelWait) {
             is CancelWait.Held -> execution.units.any { it.unitId == wait.unitId && it.state == UnitState.OPERATOR_HOLD }
             is CancelWait.Attaching, CancelWait.None -> false
@@ -172,7 +172,7 @@ internal fun CommandLifecycle.cancelWaitsOnHeldDoubt(): Boolean {
  * **분류를 지어내지 않는다.** 하위가 결함을 실었으면 그 정준 분류, 아니면 비워 두고 하위가 말한 것을 메모에 남긴다.
  */
 internal fun CommandLifecycle.holdUnrequestedCancel(unit: ExecutionUnit, detail: String, fault: Fault? = null) {
-    with(mw) {
+    with(env) {
         unit.failureClass = fault?.let { canonicalClassOf(it) }
         unit.fault = fault
         unit.annotate("$detail without a cancel request from this layer — not proceeding; operator decides")
@@ -211,7 +211,7 @@ internal fun CommandLifecycle.holdUnrequestedCancel(unit: ExecutionUnit, detail:
  * @return 붙었거나 기다린다 — 이번 라운드에 정착하지 않는다. 거짓이면 기체에 붙을 이 실행의 태스크가 없다.
  */
 internal fun CommandLifecycle.attachForCancel(): Boolean {
-    with(mw) {
+    with(env) {
         val candidates = execution.units.filter {
             it.route == Route.ROBOT && it.state == UnitState.PENDING && execution.unattached[it.unitId] == it.attempt
         }
@@ -248,7 +248,7 @@ internal fun CommandLifecycle.attachForCancel(): Boolean {
 
 /** [attachForCancel] 이 붙는다. 잠금 밖에서 취소를 보냈으면 다음 라운드에 [settleCancel] 이 부른다. */
 internal fun CommandLifecycle.attachUnit(unit: ExecutionUnit, taskId: String, handle: TaskHandle, stateName: String, sent: Boolean) {
-    with(mw) {
+    with(env) {
         unit.taskId = taskId
         unit.requestedAt = requestedAtOf(unit)
         unit.lookups = 0
@@ -290,7 +290,7 @@ internal fun CommandLifecycle.attachUnit(unit: ExecutionUnit, taskId: String, ha
  * @return 붙었거나 기다리거나 보류에 뒀다 — 이번 라운드에 정착하지 않는다.
  */
 internal fun CommandLifecycle.attachTransportForCancel(): Boolean {
-    with(mw) {
+    with(env) {
         for (unit in execution.units.filter { it.route == Route.FLEET && it.state == UnitState.PENDING }) {
             val reference = taskIdOf(unit)
             if (fleet.executionLookup == ExecutionLookup.NONE) {
@@ -350,7 +350,7 @@ internal fun CommandLifecycle.attachTransportForCancel(): Boolean {
  */
 
 internal fun CommandLifecycle.waitUnattached(unit: ExecutionUnit, why: String): Boolean {
-    with(mw) {
+    with(env) {
         val waiting = when (val wait = cancelWait) {
             is CancelWait.Attaching -> wait
             // 보류에 묶였던 단위는 운영자가 판단했다 — 그래야 이 자리에 온다([cancelWaitsOnHeldDoubt]).

@@ -8,7 +8,7 @@ import java.time.Instant
 // IssuingGate, CommandLanes, Prefetching 포트와의 것이다.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는
 /// 하위 상태기계 하나다. 상태(취소의 네 축, 송신 기록)는 실행마다의 CommandLifecycle 이 들고, 전이는 그 객체의 확장인
-// 이 넷이 한다(§15.303). 포트와 자취는 with(mw) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
+// 이 넷이 한다(§15.303). 포트와 자취는 with(env) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
 
 /**
  * 능력이 쓰고 싶다는 **선택 파라미터**를 붙인다 — **로봇이 선언한 것만.**
@@ -24,7 +24,7 @@ import java.time.Instant
  * 막는 방향이다(§15.41).
  */
 internal fun CommandLifecycle.withOptionals(unit: ExecutionUnit, base: Map<String, String>): Map<String, String> {
-    with(mw) {
+    with(env) {
         val wanted = execution.capability.preferredOptionals
         if (wanted.isEmpty()) return base
 
@@ -45,7 +45,7 @@ internal fun CommandLifecycle.withOptionals(unit: ExecutionUnit, base: Map<Strin
 }
 
 /** 이 단위의 지금 시도가 쓰는 태스크 id. 재작업은 새 정체성이다 — 같은 task_id 는 계약이 같은(종착한) 핸들로 돌려준다. */
-internal fun CommandLifecycle.taskIdOf(unit: ExecutionUnit): String = with(mw) {
+internal fun CommandLifecycle.taskIdOf(unit: ExecutionUnit): String = with(env) {
     "${execution.order.jobOrderId}#${unit.unitId}" + if (unit.attempt > 0) "@r${unit.attempt}" else ""
 }
 
@@ -53,12 +53,12 @@ internal fun CommandLifecycle.taskIdOf(unit: ExecutionUnit): String = with(mw) {
  * 판단 기록이 이 시도의 요청 시각을 넘겼으면 그것이다(§15.221). 다시 지은 뒤 같은 시도를 다시 보내는 것이지 새 요청이 아니므로,
  * 미확정 유예·관측 창·설비 대기의 기한은 처음 보낸 시각부터 이어 잰다. 다른 시도(재작업)면 쓰지 않는다.
  */
-internal fun CommandLifecycle.requestedAtOf(unit: ExecutionUnit): Instant = with(mw) {
+internal fun CommandLifecycle.requestedAtOf(unit: ExecutionUnit): Instant = with(env) {
     execution.restoredRequests.remove(unit.unitId)?.takeIf { it.first == unit.attempt }?.second ?: now()
 }
 
 internal fun CommandLifecycle.startUnit(unit: ExecutionUnit) {
-    with(mw) {
+    with(env) {
         // 보내지 못하면 이 시도 앞의 자리로 되돌린다. 판단 기록([judgmentRecord])은 태스크 id 가 있으면 낸 것으로 읽어 요청 시각을
         // 남긴다 — 되돌리지 않으면 보내지 않은 시각이 재기동 뒤 미확정 유예의 기준이 된다. 재기동 뒤 다시 세운 실행의 요청 시각과 붙지 않은
         // 태스크는 다음 출발이 다시 쓴다.
@@ -90,7 +90,7 @@ internal fun CommandLifecycle.startUnit(unit: ExecutionUnit) {
  * @return 단위가 이 라운드에 종료(운영자 보류 포함)했는가 — 미확정 조회([resolveDoubt])만 쓴다.
  */
 internal fun CommandLifecycle.settleIssue(flight: InFlight, issue: Issue): Boolean {
-    with(mw) {
+    with(env) {
         if (issue is Issue.Pending) {
             inFlight = flight
             return false
@@ -116,7 +116,7 @@ internal fun CommandLifecycle.settleIssue(flight: InFlight, issue: Issue): Boole
  * **보내는 중에 걸린 취소는 접수를 본 뒤 보낸다**(§15.237). 미확정이면 [resolveDoubt] 의 취소 길로, 보내지 않았으면 지울 것이 없다.
  */
 private fun CommandLifecycle.settleStart(unit: ExecutionUnit, flight: InFlight, issue: Issue) {
-    with(mw) {
+    with(env) {
         val restore = checkNotNull(flight.restore)
         when (issue) {
             Issue.Pending -> Unit
@@ -146,7 +146,7 @@ private fun CommandLifecycle.settleStart(unit: ExecutionUnit, flight: InFlight, 
 
 /** 플릿이 준 운반 [handle] 을 잡는다. 널이면 플릿이 맡지 않은 것이라 단위를 실패로 적는다. @return 잡았는가. */
 internal fun CommandLifecycle.acceptTransport(unit: ExecutionUnit, handle: TransportHandle?): Boolean {
-    with(mw) {
+    with(env) {
         if (handle != null) {
             execution.transport = handle
             return true
@@ -165,7 +165,7 @@ internal fun CommandLifecycle.acceptTransport(unit: ExecutionUnit, handle: Trans
  * @return 단위가 이 라운드에 종료(운영자 보류 포함)했는가 — 미확정 조회([resolveDoubt])만 쓴다.
  */
 internal fun CommandLifecycle.settleDispatch(flight: FleetFlight, issue: DispatchIssue): Boolean {
-    with(mw) {
+    with(env) {
         if (issue is DispatchIssue.Pending) {
             fleetInFlight = flight
             return false
@@ -189,7 +189,7 @@ internal fun CommandLifecycle.settleDispatch(flight: FleetFlight, issue: Dispatc
 
 /** 첫 맡기기의 결과. 요청 시각과 보내는 중에 걸린 취소는 로봇의 첫 출발([settleStart])과 같은 규칙이다. */
 private fun CommandLifecycle.settleFleetStart(unit: ExecutionUnit, restore: StartRestore, issue: DispatchIssue) {
-    with(mw) {
+    with(env) {
         when (issue) {
             DispatchIssue.Pending -> Unit
             is DispatchIssue.NotSent -> startNotSent(unit, restore)
@@ -216,7 +216,7 @@ private fun CommandLifecycle.settleFleetStart(unit: ExecutionUnit, restore: Star
  * 비운다. 다음 라운드가 결함·허가 게이트를 다시 지나 처음부터 낸다 — 요청 시각도 그때 다시 찍혀 실제로 보낸 시각이 된다.
  */
 private fun CommandLifecycle.startNotSent(unit: ExecutionUnit, restore: StartRestore) {
-    with(mw) {
+    with(env) {
         execution.active = null
         unit.taskId = restore.taskId
         unit.requestedAt = restore.requestedAt
@@ -231,7 +231,7 @@ private fun CommandLifecycle.startNotSent(unit: ExecutionUnit, restore: StartRes
  * [resolveDoubt] 가 한다. 상류에는 미확정이라는 사실을 드러낸다(16장).
  */
 private fun CommandLifecycle.startInDoubt(unit: ExecutionUnit) {
-    with(mw) {
+    with(env) {
         unit.state = UnitState.IN_DOUBT
         execution.physicalState = PhysicalState.IN_DOUBT
         if (execution.noticed.note(Notice.Doubt, unit.unitId)) {

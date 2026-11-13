@@ -3140,6 +3140,20 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+312. **의존 정비 S4b — 생애·드라이버·접합부가 `Middleware` 대신 좁은 환경 `CommandEnv` 를 받는다.**
+
+    의존 정비 S4의 둘째 PR(S4b)이다. S4a(PR #17, §15.311) 다음 작업이다. 동작 변경은 없다. 상태 층에 새 `CommandEnv.kt`(`internal class CommandEnv`)를 두었다. 포트(`robots`·`cell`·`fleet`), 시계 `now`, 발행 게이트 `issuing`, 기체 뷰 표 `views`, 이번 라운드의 현장 시간값 `round`, 선택 인자 중복 표시 `droppedOptionals`, 시간창 셋(`windowOf`·`inDoubtGraceOf`·`stallWindowOf`), `Execution.trail`, `Execution.observeCell`, `stateTime`, `notify`를 담는다. `notify`는 창구의 `Middleware.notify`를 함수로 받는다. 실행 표·배정 게이트·장부(`executions`·`gate`·`desk`·`incidentLog`)와 `noteAttention`은 넣지 않았다. 넣으면 환경이 이름만 바꾼 `Middleware`가 된다. 상태 층이라 전이 층 절차를 부르지 않는다. 그래서 `noteClockSkew`는 환경 멤버가 아니라 `ClockSkew.kt`의 환경 확장으로 갔다.
+
+    ★**인터페이스가 아니라 구체 클래스로 했다.** 구현이 하나다. 공개 클래스 `Middleware`는 internal 인터페이스를 구현할 수 없다. 멤버를 `Middleware.kt` 밖 파일로 옮겨야 줄이 준다. 자문(Codex·Fable)에서 Codex는 인터페이스와 private 구현을, Fable은 구체 클래스를 권했다.
+
+    `CommandLifecycle(env, execution)`을 적용해 생애는 `mw` 대신 `env`를 쥔다. 생애 네 파일과 `RouteDrivers`의 `with(mw)` 53곳을 `with(env)`로 바꾸고 `RouteDriver.lookupKind(env)`를 쓴다. 접합부의 `fun Middleware.x` 가운데 환경만 쓰는 것(UnitDrivers·CommandPorts·RobotSync·ClockSkew 전부, EvidenceBinding의 판정, Revision의 `sendRevisionUpdate`·`settleUpdate`·`issuable`)은 `fun CommandEnv.x`로 바꿨다. 실행 표·게이트·장부를 쓰는 창구 절차(Resume 전부, `revise`, `resolveSkipped`·`skippedReworkRefusal`)는 `fun Middleware.x`로 남고 환경 확장은 `env.`로 부른다. `Middleware`는 환경 확장을 `env.x(...)`로 부르고, 창구 절차가 쓰는 `trail`은 환경의 것으로 위임한다. 바이트코드로 위임 대상이 `CommandEnv.trail`임을 확인했다.
+
+    `Middleware.RobotView`는 최상위 `RobotView.kt`(바닥 층)로 옮기고 `Middleware` 안에 중첩 별칭을 남겼다(S2의 `Execution`과 같은 방식). 상태 층의 환경이 `Middleware`의 중첩 타입을 쓰면 층 시험의 «상태 층은 Middleware에서 Submission만»이 깨지기 때문이다. JVM 이름이 바뀌어 바이너리는 다시 컴파일해야 한다. S2 병합 때 소유자가 «기존 바이너리 재사용을 요구하지 않는다»고 정했다. mission-ops는 `RobotView`와 `view()`를 쓰지 않는다. `CommandLifecycle.kt`는 상태 필드만 든 보유자라 층 표에서 상태 층으로 옮겼다(생애 확장은 전이 층의 Lifecycle* 파일에 있다). `CLOCK_SKEW` 값도 `MiddlewareCodes`로 옮겼다.
+
+    층을 거스르는 허용 간선은 18개에서 7개로 줄었다(남은 것: `Submission` 계약 넷, 창구 절차 파일 셋 `Resume`·`Revision`·`EvidenceBinding` → `Middleware`). 멤버 래칫은 21개에서 10개로 줄었다. `Middleware.kt` 실코드는 754줄에서 696줄로, 접합부 합은 1,717줄에서 1,670줄로 줄었다. `Middleware`의 internal 멤버는 20개에서 9개로 줄었다(`robots`·`cell`·`fleet`·`issuing`을 private로 닫았다). 줄 수는 환경 파일로 나가 세는 범위 밖으로 간 것이지 코드가 준 것이 아니다. 접합부 배치 시험은 `fun CommandEnv.`도 세고 `CommandEnv.kt`에도 가려짐 음성 바늘을 건다.
+
+    `./gradlew cleanTest build -x :harness:test -x :registry:test` 결과 시험 1,836건 실패 0건, 번들 동치 12/12를 확인했다. 층 시험 변이 아홉(«환경이 전이 층 절차를 부름» 추가, «상태가 이름 없이 생애를 씀»은 생애 보유자가 상태 층이 되어 «상태가 전이 층 타입을 씀»으로 바꿈) 모두 빨강을 확인했다. 예산 상한 셋 결함 주입도 모두 잡혔다. mission-ops 재빌드는 842 시험(site 41, mission-host 226, ops-service 498, e2e 77) 실패 0다. 다음(S4c)에서는 창구 절차 셋을 창구 층으로 분류할지, 절차를 `Middleware.kt`로 들일지 정한다.
+
 311. **의존 정비 S4a — 생애·접합부가 `Middleware` 를 거치지 않고 쓸 상수와 단위 절차를 아래로 옮긴다.**
 
     의존 정비 S4 의 첫 PR(S4a)이다. 층 시험(PR #16, §15.310) 다음이다. 동작 변경과 공개 이름 변경은 없다. S4 의 목표는 생애·접합부의 `Middleware` 역참조(층 시험의 허용 목록 `UPWARD` 18 가운데 14, 멤버 래칫 28)를 걷는 것이다. 자문(Codex·Fable)이 둘 다 여러 PR 로 나누라고 했다. 멤버가 `Middleware` 를 떠나는 순간 부르는 파일이 모두 새 환경을 거쳐야 하므로 그 단계는 한 번에 해야 한다. 그 앞에 수신자를 바꾸지 않는 준비를 둔다. 이 PR 이 그 준비다.

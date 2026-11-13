@@ -128,11 +128,11 @@ internal fun Middleware.revise(
                         // **보내는 중인 출발이 있으면 갱신을 그 결과 뒤로 미룬다**(§15.237). 같은 기체에 명령 둘을 함께 내지 않는다.
                         // 결과가 접수면 기체에서 도는 것은 보내는 중인 리비전이고, 미룬 갱신이 다음 라운드에 이 리비전으로 나간다.
                         execution.command.deferredUpdate = execution.command.deferredUpdate ?: sending.revision
-                    } else if (issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
+                    } else if (env.issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
                         // 앞 판의 갱신이 미뤄져 있었으면 이 갱신이 그것까지 싣는다 — 기체에서 도는 것은 그 앞 판이다.
                         val running = execution.command.deferredUpdate ?: previous
                         execution.command.deferredUpdate = null
-                        sendRevisionUpdate(execution, unit, running)
+                        env.sendRevisionUpdate(execution, unit, running)
                     } else if (unit.state == UnitState.RUNNING) {
                         // 막힌 채 판이 또 오르면 기체에서 도는 것은 여전히 처음 리비전이다 — 그것을 지킨다.
                         execution.command.deferredUpdate = execution.command.deferredUpdate ?: previous
@@ -175,7 +175,7 @@ internal fun Middleware.revise(
  *
  * @param previous 기체에서 지금 도는 리비전. 거절 사유에 «어느 판으로 끝났나» 로 남는다.
  */
-internal fun Middleware.sendRevisionUpdate(execution: Execution, unit: ExecutionUnit, previous: Int) {
+internal fun CommandEnv.sendRevisionUpdate(execution: Execution, unit: ExecutionUnit, previous: Int) {
     val flight = InFlight(
         InFlight.Kind.UPDATE, unit.unitId, execution.robotOf(unit), unit.taskId, unit.revision, unit.skillType,
         execution.command.withOptionals(unit, unit.parameters), previous = previous, restore = null,
@@ -187,7 +187,7 @@ internal fun Middleware.sendRevisionUpdate(execution: Execution, unit: Execution
  * 개정 갱신의 결과. **보내는 중에 걸린 취소는 이 결과 뒤에 보낸다**(§15.237) — 갱신이 닿았든 안 나갔든 기체에서 도는 태스크의 핸들은
  * 그대로다. 미확정이면 [resolveDoubt] 의 취소 길로 간다.
  */
-internal fun Middleware.settleUpdate(execution: Execution, unit: ExecutionUnit, flight: InFlight, issue: Issue) {
+internal fun CommandEnv.settleUpdate(execution: Execution, unit: ExecutionUnit, flight: InFlight, issue: Issue) {
     val revision = flight.revision
     val previous = flight.previous
     when (issue) {
@@ -245,7 +245,7 @@ internal fun Middleware.settleUpdate(execution: Execution, unit: ExecutionUnit, 
  *
  * 사건을 열지 않는다. 실패가 아니라 기다림이고, 운영자가 판단할 것이 없다.
  */
-internal fun Middleware.issuable(execution: Execution, unit: ExecutionUnit, withheld: WithheldIssue): Boolean =
+internal fun CommandEnv.issuable(execution: Execution, unit: ExecutionUnit, withheld: WithheldIssue): Boolean =
     when (val verdict = issuing.check(setOf(execution.robotOf(unit)))) {
         is IssueVerdict.Issue -> {
             execution.permitBlock?.let { lifted ->

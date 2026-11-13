@@ -11,7 +11,7 @@ import dev.picasso.middleware.MiddlewareCodes.RESUME_REATTACHED
 // 미확정 해소: 보냈는지 모르는 명령을 조회와 스냅숏으로 확정하고, 다시 붙는다.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는
 /// 하위 상태기계 하나다. 상태(취소의 네 축, 송신 기록)는 실행마다의 CommandLifecycle 이 들고, 전이는 그 객체의 확장인
-// 이 넷이 한다(§15.303). 포트와 자취는 with(mw) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
+// 이 넷이 한다(§15.303). 포트와 자취는 with(env) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
 
 /**
  * `IN_DOUBT` 의 해소 — 보고서 13.2 의 순서에 스냅숏 부착을 앞에 더했다(§15.238).
@@ -33,12 +33,12 @@ import dev.picasso.middleware.MiddlewareCodes.RESUME_REATTACHED
  * @return 단위가 이 펌프에서 종착(운영자 보류 포함)했는가.
  */
 internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         // **보내는 중인 조회가 있으면 그 결과부터 받는다**(§15.237). 그동안 스냅숏 부착도 키 취소도 하지 않는다 — 조회의 답이 이 단위를
         // 붙이거나 거부로 끝낼 수 있다.
         val driver = RouteDriver.of(unit.route)
         driver.settlePendingLookup(this@resolveDoubt, unit)?.let { return it }
-        val lookup = driver.lookupKind(mw)
+        val lookup = driver.lookupKind(env)
         // ⓪ 스냅숏 부착 — 붙었으면 이 라운드는 여기까지다. 다음 라운드의 [pumpRobotUnit] 이 처음부터 되짚는다. 기체가 더 높은
         // 리비전을 들었으면 붙지도 묻지도 않고 운영자에게 간다. 로봇 경로만 그 길이 있다([RouteDriver.resolveBeforeLookup]).
         driver.resolveBeforeLookup(this@resolveDoubt, unit)?.let { return it }
@@ -122,7 +122,7 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
  * @return 붙었는가.
  */
 internal fun CommandLifecycle.attachFromSnapshot(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         val robot = execution.robotOf(unit)
         val view = views[robot]?.takeIf { it.observable } ?: return false
         val state = view.tasks[unit.taskId] ?: return false
@@ -151,7 +151,7 @@ internal fun CommandLifecycle.attachFromSnapshot(unit: ExecutionUnit): Boolean {
  * @return 운영자 보류에 두었는가.
  */
 internal fun CommandLifecycle.holdRevisionAhead(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         val view = views[execution.robotOf(unit)]?.takeIf { it.observable } ?: return false
         if (view.tasks[unit.taskId] == null) return false
         val held = view.taskRevisions[unit.taskId]?.takeIf { it > unit.revision } ?: return false
@@ -170,7 +170,7 @@ internal fun CommandLifecycle.holdRevisionAhead(unit: ExecutionUnit): Boolean {
  * @return 단위가 이 라운드에 종료했는가.
  */
 internal fun CommandLifecycle.settleLookup(unit: ExecutionUnit, issue: Issue): Boolean {
-    with(mw) {
+    with(env) {
         val found = when (issue) {
             Issue.Pending -> return false
             is Issue.NotSent -> return lookupNotSent(unit)
@@ -187,7 +187,7 @@ internal fun CommandLifecycle.settleLookup(unit: ExecutionUnit, issue: Issue): B
  * «하류가 답하지 않았다» 가 아닌 것이 그렇게 적힌다. 간격은 쓴다 — 다음 시도는 [LOOKUP_INTERVAL] 뒤다.
  */
 internal fun CommandLifecycle.lookupNotSent(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         unit.lookups -= 1
         execution.physicalState = PhysicalState.IN_DOUBT
         return false
@@ -196,7 +196,7 @@ internal fun CommandLifecycle.lookupNotSent(unit: ExecutionUnit): Boolean {
 
 /** 조회가 기존 실행을 찾았으면 이어서 추적하고, 하류가 거부했으면 종료로, 아니면 미확정인 채 둔다. */
 internal fun CommandLifecycle.lookupFound(unit: ExecutionUnit, found: Boolean): Boolean {
-    with(mw) {
+    with(env) {
         if (found) {
             unit.state = UnitState.RUNNING
             // 풀린 것은 라운드 끝의 대조가 알린다([noteAttention]). 표시를 걷어야 재작업한 같은 단위가 다시 미확정이 될 때 알린다.
@@ -216,7 +216,7 @@ internal fun CommandLifecycle.lookupFound(unit: ExecutionUnit, found: Boolean): 
 }
 
 /** 로봇 출발·조회([settleStart]·[settleLookup])가 받은 답을 적는다 — 핸들이면 잡고 참, 거부면 단위를 실패나 운영자 보류로 적고 거짓. */
-internal fun CommandLifecycle.applyStartResponse(unit: ExecutionUnit, response: StartTaskResponse): Boolean = with(mw) {
+internal fun CommandLifecycle.applyStartResponse(unit: ExecutionUnit, response: StartTaskResponse): Boolean = with(env) {
     if (response.hasHandle()) {
         execution.handle = response.handle
         true
@@ -251,7 +251,7 @@ internal fun CommandLifecycle.applyStartResponse(unit: ExecutionUnit, response: 
  * @return 붙었는가.
  */
 internal fun CommandLifecycle.reattachFromSnapshot(unit: ExecutionUnit): Boolean {
-    with(mw) {
+    with(env) {
         if (execution.unattached[unit.unitId] != unit.attempt) return false
         val robot = execution.robotOf(unit)
         val view = views[robot]?.takeIf { it.observable } ?: return false

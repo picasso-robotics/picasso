@@ -10,7 +10,7 @@ import dev.picasso.middleware.MiddlewareCodes.CANCEL_UNSENT
 // 취소 송신과 폴링: 도는 단위의 취소를 보내고 답을 정산한다. 공개 창구(cancel)는 Middleware 에 있다.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는
 /// 하위 상태기계 하나다. 상태(취소의 네 축, 송신 기록)는 실행마다의 CommandLifecycle 이 들고, 전이는 그 객체의 확장인
-// 이 넷이 한다(§15.303). 포트와 자취는 with(mw) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
+// 이 넷이 한다(§15.303). 포트와 자취는 with(env) 로 부른다. 실행을 읽지 않는 포트 보조는 CommandPorts.kt 에 있다.
 
 /**
  * 건 취소를 하위로 보낸다 — 도는 단위의 핸들이 있으면 그 단위가 묶인 기체의 로봇에, 운반이 있으면 플릿에. 부르는 자리는
@@ -24,7 +24,7 @@ import dev.picasso.middleware.MiddlewareCodes.CANCEL_UNSENT
  * 보낼 핸들도 운반도 없으면 아무것도 하지 않고 표시를 그대로 둔다.
  */
 internal fun CommandLifecycle.sendCancel() {
-    with(mw) {
+    with(env) {
         // **보내는 중인 출발이 있으면 보내지 않는다**(§15.237). 그 결과를 받은 쪽이 보낸다 — 지금 보내면 기체에 아직 없는 태스크나 앞
         // 단위의 핸들로 나간다. 취소 요청([Execution.cancelRequested])은 그대로 남는다.
         if (inFlight != null || fleetInFlight != null) return
@@ -63,7 +63,7 @@ internal fun CommandLifecycle.sendCancel() {
 
 /** 도는 단위의 취소([sendCancel])에서 한쪽이 실패했다 — 보내는 중인 다른 쪽이 답해도 «닿았다» 로 내리지 않게 한다. */
 private fun CommandLifecycle.markOtherFailed() {
-    with(mw) {
+    with(env) {
         execution.cancelInFlight?.takeIf { it.site == CancelFlight.Site.SEND }?.otherFailed = true
         execution.fleetCancelInFlight?.otherFailed = true
     }
@@ -74,7 +74,7 @@ private fun CommandLifecycle.markOtherFailed() {
  * 을 받고 [Execution.fleetCancelInFlight] 에 둔다. 아니면 [AmrFleetPort.cancel] 을 지금 부른다. 이미 보내는 중이면 새로 보내지 않는다.
  */
 private fun CommandLifecycle.cancelFleet(handle: TransportHandle): FleetCancelIssue {
-    with(mw) {
+    with(env) {
         if (execution.fleetCancelInFlight != null) return FleetCancelIssue.Pending
         val reference = execution.active?.takeIf { it.route == Route.FLEET }?.taskId ?: handle.id
         val result = fleet.issueCancel(reference, handle) ?: try {
@@ -89,7 +89,7 @@ private fun CommandLifecycle.cancelFleet(handle: TransportHandle): FleetCancelIs
 
 /** 닿지 않았다 — 같은 까닭이면 자취에 다시 남기지 않는다. 끊김 시각([CancelDelivery.Unsent.linkSince])은 그대로 둔다. */
 private fun CommandLifecycle.cancelNotReached(failure: RuntimeException) {
-    with(mw) {
+    with(env) {
         val cause = "${failure::class.simpleName}: ${failure.message}"
         when (val delivery = cancelDelivery) {
             is CancelDelivery.Unsent -> if (delivery.cause == cause) return
@@ -102,7 +102,7 @@ private fun CommandLifecycle.cancelNotReached(failure: RuntimeException) {
 
 /** 닿았다 — 닿지 않은 채였으면 그 사실을 자취에 남기고 걷는다. */
 internal fun CommandLifecycle.cancelReached() {
-    with(mw) {
+    with(env) {
         when (cancelDelivery) {
             is CancelDelivery.Unsent -> {
                 cancelDelivery = CancelDelivery.Clear
@@ -114,7 +114,7 @@ internal fun CommandLifecycle.cancelReached() {
 }
 
 internal fun CommandLifecycle.noteRefusal(response: CancelTaskResponse) {
-    with(mw) {
+    with(env) {
         if (!response.hasState()) cancelIntent = CancelIntent.Refused(response.rejection.code.name)
     }
 }
@@ -126,7 +126,7 @@ internal fun CommandLifecycle.noteRefusal(response: CancelTaskResponse) {
  * [CancelIssue.Pending] 이다.
  */
 internal fun CommandLifecycle.cancelRobot(flight: CancelFlight): CancelIssue {
-    with(mw) {
+    with(env) {
         if (execution.cancelInFlight != null) return CancelIssue.Pending
         val result = robots.issueCancel(flight.robot, flight.handle) ?: try {
             CancelIssue.Answered(robots.cancel(flight.robot, flight.handle))
@@ -145,7 +145,7 @@ internal fun CommandLifecycle.cancelRobot(flight: CancelFlight): CancelIssue {
  * @return 아직 보내는 중인가. 참이면 이 라운드는 진행하지 않는다.
  */
 internal fun CommandLifecycle.pollCancel(): Boolean {
-    with(mw) {
+    with(env) {
         val robot = pollRobotCancel()
         val fleet = pollFleetCancel()
         return robot || fleet
@@ -153,7 +153,7 @@ internal fun CommandLifecycle.pollCancel(): Boolean {
 }
 
 private fun CommandLifecycle.pollFleetCancel(): Boolean {
-    with(mw) {
+    with(env) {
         val flight = execution.fleetCancelInFlight ?: return false
         val result = fleet.issueCancel(flight.reference, flight.handle)
             ?: FleetCancelIssue.Failed(IllegalStateException("플릿 포트가 보내는 중인 운반 ${flight.reference} 취소의 결과를 주지 않는다"))
@@ -173,7 +173,7 @@ private fun CommandLifecycle.pollFleetCancel(): Boolean {
 }
 
 private fun CommandLifecycle.pollRobotCancel(): Boolean {
-    with(mw) {
+    with(env) {
         val flight = execution.cancelInFlight ?: return false
         val result = robots.issueCancel(flight.robot, flight.handle)
             ?: CancelIssue.Failed(IllegalStateException("robot=${flight.robot} 의 포트가 보내는 중인 취소의 결과를 주지 않는다"))
@@ -186,7 +186,7 @@ private fun CommandLifecycle.pollRobotCancel(): Boolean {
 
 /** 잠금 밖에서 보낸 취소의 결과로 그 자리의 뒷일을 한다. 그 사이 단위가 다른 자리로 갔으면 결과만 버린다. */
 private fun CommandLifecycle.settleCancel(flight: CancelFlight, result: CancelIssue) {
-    with(mw) {
+    with(env) {
         val unit = flight.unitId?.let { id -> execution.units.firstOrNull { it.unitId == id } }
         when (flight.site) {
             CancelFlight.Site.SEND -> when (result) {
@@ -242,7 +242,7 @@ internal fun CommandLifecycle.abort(
     cleanup: String,
     requested: Boolean = true,
 ) {
-    with(mw) {
+    with(env) {
         // 끝난 실행에는 낼 것이 없다 — 막음과 미룬 갱신을 걷는다. 막혔던 사실은 자취의 `ISSUE_WITHHELD` 에 남아 있다.
         execution.permitBlock = null
         execution.command.deferredUpdate = null
