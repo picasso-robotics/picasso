@@ -88,7 +88,9 @@ class SourceSizeBudgetTest {
         // 접합부를 늘리는 쉬운 길이 멤버를 여는 것이라, 세지 않으면 닫는 쪽으로 가는지 아무도 모른다.
         val lines = MiddlewareSeams.sources().getValue("Middleware.kt").split("\r\n", "\n")
         val open = lines.mapNotNull { OPEN_MEMBER.find(it)?.groupValues?.get(1) }
-        assertTrue(open.isNotEmpty(), "Middleware 의 internal 멤버를 못 셌다 — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
+        // S4c(§15.313)부터 0 이 정상값이다. 정규식이 낡아 조용히 0 이 되는 것은 같은 들여쓰기의 멤버 선언이 보이는지로 막는다.
+        val members = lines.count { Regex("""^    (?:private |internal |override )?(?:val|var|fun) """).containsMatchIn(it) }
+        assertTrue(members > 20, "Middleware 의 멤버 선언을 못 셌다($members) — 선언 모양이 바뀌면 이 예산이 조용히 빈다")
         assertTrue(open.size <= OPEN_MEMBERS, "Middleware 의 internal 멤버 ${open.size} > $OPEN_MEMBERS: $open. $ADVICE")
     }
 
@@ -113,6 +115,8 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-13 의존 정비 S4c 실측: Middleware.kt 696, 합 1,670(그대로), Middleware 의 internal 멤버 0(§15.313). 창구 절차도 좁은 환경의 확장이
+        // 되어 internal 로 열 까닭이 없어졌다. 리비전을 받은 뒤의 알림은 호출 자리 셋에 한 줄씩 들였다.
         // 2026-11-13 의존 정비 S4b 실측: Middleware.kt 696, 합 1,670, Middleware 의 internal 멤버 9(§15.312). 기체 뷰·라운드 시간값·트레이스·설비 관측이
         // 좁은 환경 CommandEnv.kt 로 나가 세는 범위 밖으로 갔다(코드가 준 것이 아니다). robots·cell·fleet·issuing 은 private 로 닫았다.
         // 2026-11-13 의존 정비 S4a 실측: Middleware.kt 754, 합 1,717, Middleware 의 internal 멤버 20(§15.311). 생애·접합부가 쓰던 companion 상수의
@@ -139,7 +143,7 @@ class SourceSizeBudgetTest {
         const val PUMP_ROUND = 143
         const val EXECUTION_COLLECTIONS = 11
         const val UNIT_VARS = 36
-        const val OPEN_MEMBERS = 9
+        const val OPEN_MEMBERS = 0
 
         /** 네 칸 들여 쓴(클래스 본문의) `internal` 선언. 무리 1 은 선언 줄이다. */
         val OPEN_MEMBER = Regex("^    (internal (?:fun|val|var|(?:data |sealed |enum )?(?:class|object|interface)) .*)$")

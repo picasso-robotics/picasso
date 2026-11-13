@@ -38,6 +38,11 @@ class SeamPlacementTest {
             "fun workspaceViolation(" to "AdmissionGate.kt",
             // 장부가 함수로 받아 쓰는 관문의 조회 — 같은 이름의 fun 이 끼면 그쪽이 이긴다
             "fun liveHold(" to "AdmissionGate.kt",
+            // 수신자 없는 창구 보조(S4c, §15.313) — `Middleware` 의 같은 이름 멤버에 가려지는 사고는 확장과 같다
+            "fun staleVersionRefusal(" to "Resume.kt",
+            "fun recordRefusal(" to "Resume.kt",
+            "fun attemptOf(" to "Resume.kt",
+            "fun skippedReworkRefusal(" to "EvidenceBinding.kt",
             // 제안과 승인 장부 — 운영자 접합부
             "var proposalsMade" to "RemedyDesk.kt",
             "val remedyLog" to "RemedyDesk.kt",
@@ -84,6 +89,10 @@ class SeamPlacementTest {
             val shadowed = MiddlewareSeams.homes.values.flatten().filter { Regex("""\bfun (?:[A-Za-z]+\.)?$it\(""").containsMatchIn(core) }
             assertEquals(emptyList(), shadowed, "$file 에 옮긴 절차와 같은 이름의 멤버가 있다 — 확장이 조용히 가려진다")
         }
+        // S4c(§15.313)부터 `fun Middleware.` 확장은 하나도 없다 — 접합부는 좁은 환경 CommandEnv 의 확장이다. 되살리면 그 파일이 다시
+        // Middleware 전체에 기댄다(층 시험도 빨개지지만 까닭을 여기서 바로 댄다).
+        val revived = sources.filterValues { Regex("""^(?:internal|private) fun Middleware\.""", RegexOption.MULTILINE).containsMatchIn(it) }.keys
+        assertEquals(emptySet(), revived, "fun Middleware. 확장이 되살아났다 — 좁은 환경의 확장으로 둔다")
     }
 
     /**

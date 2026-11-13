@@ -43,7 +43,7 @@ class Middleware(
      * 둘을 함께 주면 생성이 실패한다 — 한쪽이 조용히 무시되는 길을 두지 않는다.
      */
     capabilities: List<LogicalCapability>? = null,
-    internal val now: () -> Instant = { Instant.now() },
+    private val now: () -> Instant = { Instant.now() },
     /**
      * 실 시계 — 사건 번들의 **현장 대조**·검토 시각, 탐색 대장([RemedySearchRecord])과 승인 소모 기록의 실 시각용이다.
      * [now] 와 나누는 이유는 [now] 가 시험에서 가상 시계이기 때문이다. 둘을 접으면 재현 판정과 현장 대조 중 하나를 잃는다(설계안 §4.2).
@@ -130,7 +130,7 @@ class Middleware(
         }
         missions ?: MissionCatalog.of(capabilities ?: MissionCatalog.codeCapabilities())
     }
-    internal val executions = linkedMapOf<String, Execution>()
+    private val executions = linkedMapOf<String, Execution>()
 
     /**
      * 실행 id 의 셈. **표의 크기로 세지 않는다** — [forget] 이 표에서 빼므로 크기로 세면 놓은 실행의 id 가 새 실행에 다시 붙고,
@@ -156,7 +156,7 @@ class Middleware(
     private data class ForgottenOrder(val executionId: String, val version: Int, val state: PhysicalState)
 
     /** 배정 관문(설계안 §7). 실행 표를 같은 인스턴스로 넘긴다 — 관문은 이 층이 지금 든 것을 읽는다. */
-    internal val gate = AdmissionGate(robots, cell, floors, workspace, executions)
+    private val gate = AdmissionGate(robots, cell, floors, workspace, executions)
 
     /**
      * 발행 관문(ADR 51 결정 6, ADR 52). 배정 관문([gate])과 다르다 — 배정 관문은 작업 지시를 받을 때 한 번 묻고, 이것은 새 로봇
@@ -165,17 +165,17 @@ class Middleware(
     private val issuing = IssuingGate(permits, retirements, now)
 
     /** 생애·드라이버·접합부의 좁은 환경. 기체 뷰와 이번 라운드의 현장 시간값도 여기 있다. */
-    internal val env = CommandEnv(robots, cell, fleet, now, issuing, ::notify)
+    private val env = CommandEnv(robots, cell, fleet, now, issuing, ::notify)
     private val views get() = env.views
 
     /** 트레이스 한 줄([CommandEnv] 의 같은 이름). 창구 절차가 이 이름으로 쓴다. */
-    internal fun Execution.trail(kind: String, detail: String, at: Instant = now()) = with(env) { trail(kind, detail, at) }
+    private fun Execution.trail(kind: String, detail: String, at: Instant = now()) = with(env) { trail(kind, detail, at) }
 
     /** 제안과 승인의 장부(설계안 §6.4). 승인 뒤의 접수는 [commit] 에 남고, 승인의 기록([RemedyDesk.settle])은 접수가 된 뒤에만 한다. */
-    internal val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::liveHold, retention, ::pumping)
+    private val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::liveHold, retention, ::pumping)
 
     /** 사건 번들의 장부(설계안 §4). 봉인은 [pump] 가 라운드 끝에 부른다. */
-    internal val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping)
+    private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping)
 
     /** 이 실행을 아직 구동이 돌리는가 — 보존 상한이 그 실행의 기록을 남길지 가른다([Retention]). */
     private fun pumping(executionId: String): Boolean = executions[executionId]?.physicalState?.pumps == true
@@ -268,7 +268,8 @@ class Middleware(
         // **이미 있는 실행이면 카탈로그를 안 본다.** 리비전은 그 실행이 쥔 케이퍼빌리티로 계획한다 — 여기서 카탈로그를
         // 읽으면 활성 버전이 바뀐 뒤의 리비전이 새 버전의 단위를 옛 실행에 들인다.
         val existing = executions.values.firstOrNull { it.order.jobOrderId == order.jobOrderId }
-        if (existing != null) return revise(existing, order, prefix, approvedBy)
+        // 받은 리비전이면 미확정·보류가 풀렸는지 지금 알린다([CommandEnv.revise]) — 같은 버전·거부에는 부르지 않는다.
+        if (existing != null) return env.revise(gate, desk, existing, order, prefix, approvedBy).also { if (it is Submission.Accepted) noteAttention(it.execution) }
 
         val active = mission ?: missions.active(order.workMasterId)
             ?: return Submission.Rejected("모르는 논리적 케이퍼빌리티다: ${order.workMasterId}")
@@ -385,7 +386,7 @@ class Middleware(
     fun resume(order: JobOrder, robotId: String, mission: ActiveMission, record: JudgmentRecord? = null): Submission {
         forgottenRefusal(order.jobOrderId)?.let { return it }
         val existing = executions.values.firstOrNull { it.order.jobOrderId == order.jobOrderId }
-        if (existing != null) return revise(existing, order)
+        if (existing != null) return env.revise(gate, desk, existing, order).also { if (it is Submission.Accepted) noteAttention(it.execution) }
 
         if (mission.capability.workMasterId != order.workMasterId) {
             return Submission.Rejected(
@@ -395,18 +396,18 @@ class Middleware(
         // 승인된 조치 열은 계획 앞에 선다(`commit` 과 같은 모양). 기록이 그 걸음을 들고 오지 않으면 다시 지을 길이 없다.
         val planned = record?.approval?.steps.orEmpty().map { remedyUnit(it.unitId, it.skillType, it.parameters) } +
             mission.capability.plan(order)
-        record?.let { recordRefusal(order, it, planned) }?.let { return it }
+        record?.let { recordRefusal(order, it, planned) }?.let { return Submission.Rejected(it) }
         val snapshots = linkedMapOf<String, RobotSnapshot>()
         for (robot in planned.map { it.robotBinding ?: robotId }.distinct()) {
             snapshots[robot] = robots.snapshot(robot)
                 ?: return Submission.Rejected("$RESUME_SNAPSHOT_UNREADABLE: robot=$robot, 재작업 횟수와 지난 설비 대기를 정할 근거가 없다")
         }
-        staleVersionRefusal(order, snapshots)?.let { return it }
+        staleVersionRefusal(order, snapshots)?.let { return Submission.Rejected(it) }
         evidenceRefusal(order, mission.capability)?.let { return it }
 
         val execution = create(order, robotId, mission, planned, approvedBy = null)
-        rebuildFrom(execution, snapshots)
-        val reopenedAt = record?.let { restore(execution, it) }
+        env.rebuildFrom(execution, snapshots)
+        val reopenedAt = record?.let { env.restore(execution, it, desk) }
         execution.units.filter { it.route == Route.ROBOT }.forEach { execution.inherited[it.unitId] = it.attempt }
         // 8 이 다시 연 인시던트를 지금 봉한다. 지금의 현장 시간값으로 — 라운드의 값([round])은 [pump] 의 것이라 건드리지 않는다.
         // 봉인 시각은 다시 연 줄의 시각이다. 따로 읽으면 실제 시계에서 둘이 어긋나 줄 시각 = `at` 으로 가르지 못한다.
@@ -486,7 +487,7 @@ class Middleware(
         // 놓은 작업 지시는 관문에 대기 전에 거부한다. 후보가 전부 떨어지면 «배정할 기체가 없다» 로 읽힌다.
         forgottenRefusal(order.jobOrderId)?.let { return it }
         // 이미 선 실행은 카탈로그도 안 본다 — [submit] 과 같은 이유다.
-        executions.values.firstOrNull { it.order.jobOrderId == order.jobOrderId }?.let { return revise(it, order) }
+        executions.values.firstOrNull { it.order.jobOrderId == order.jobOrderId }?.let { return env.revise(gate, desk, it, order).also { if (it is Submission.Accepted) noteAttention(it.execution) } }
         // **카탈로그를 한 번 읽고 그 쌍을 작업 수락까지 넘긴다.** 관문에 댄 계획과 실행이 쥘 계획이 같은 버전이어야
         // 한다 — 그 사이에 활성화가 끼면 관문이 본 적 없는 단위가 나간다.
         val mission = missions.active(order.workMasterId)
@@ -936,7 +937,7 @@ class Middleware(
         }
         val execution = executions[executionId] ?: return ResolveOutcome.NotHeld
         val unit = execution.units.firstOrNull { it.unitId == unitId && it.state == UnitState.OPERATOR_HOLD }
-            ?: return resolveSkipped(execution, unitId, decision, approver)
+            ?: return env.resolveSkipped(execution, unitId, decision, approver, executions.values, incidentLog)
         // 판단 기록이 싣는다(§15.221). 판단이 선 시도를 단다 — 재작업이면 아래에서 시도가 하나 오른다.
         execution.decisions[unitId] = RecordedDecision(decision, approver, now(), unit.attempt)
         when (decision) {
@@ -1180,7 +1181,7 @@ class Middleware(
 
     // ── 결과 통보 (보고서 13.3 — 명령 재시도와 통보 재시도의 분리)
 
-    internal fun notify(execution: Execution) {
+    private fun notify(execution: Execution) {
         val units = execution.units
         val response = JobResponse(
             jobResponseId = "resp-${++responseSeq}",
@@ -1230,7 +1231,7 @@ class Middleware(
      *
      * 대는 것은 [Attention] 뿐이다. 단위가 끝나 완료 목록이 늘어난 것 같은 진행은 여기서 알리지 않는다 — 그것은 정착([settleExecution])의 일이다.
      */
-    internal fun noteAttention(execution: Execution) {
+    private fun noteAttention(execution: Execution) {
         val current = Attention.of(
             execution.physicalState,
             execution.blockedBy.map { canonicalClassOf(it) },

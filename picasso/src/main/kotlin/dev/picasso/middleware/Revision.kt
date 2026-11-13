@@ -25,7 +25,9 @@ private fun ExecutionUnit.replannedAs(fresh: ExecutionUnit?): ExecutionUnit =
  * @param prefix 승인된 조치 열(§15.175). [commit] 만 채운다. 새 계획에서 다시 계획하는 첫 단위 앞에 서고, 사슬 검사도 그 앞에서
  *   굴린다 — 첫 접수가 계획 맨 앞에 세우는 것과 같은 모양이다. 이미 승인을 든 실행에는 [commit] 이 부르지 않는다.
  */
-internal fun Middleware.revise(
+internal fun CommandEnv.revise(
+    gate: AdmissionGate,
+    desk: RemedyDesk,
     execution: Execution,
     order: JobOrder,
     prefix: List<ExecutionUnit> = emptyList(),
@@ -128,11 +130,11 @@ internal fun Middleware.revise(
                         // **보내는 중인 출발이 있으면 갱신을 그 결과 뒤로 미룬다**(§15.237). 같은 기체에 명령 둘을 함께 내지 않는다.
                         // 결과가 접수면 기체에서 도는 것은 보내는 중인 리비전이고, 미룬 갱신이 다음 라운드에 이 리비전으로 나간다.
                         execution.command.deferredUpdate = execution.command.deferredUpdate ?: sending.revision
-                    } else if (env.issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
+                    } else if (issuable(execution, unit, WithheldIssue.REVISION_UPDATE)) {
                         // 앞 판의 갱신이 미뤄져 있었으면 이 갱신이 그것까지 싣는다 — 기체에서 도는 것은 그 앞 판이다.
                         val running = execution.command.deferredUpdate ?: previous
                         execution.command.deferredUpdate = null
-                        env.sendRevisionUpdate(execution, unit, running)
+                        sendRevisionUpdate(execution, unit, running)
                     } else if (unit.state == UnitState.RUNNING) {
                         // 막힌 채 판이 또 오르면 기체에서 도는 것은 여전히 처음 리비전이다 — 그것을 지킨다.
                         execution.command.deferredUpdate = execution.command.deferredUpdate ?: previous
@@ -163,8 +165,7 @@ internal fun Middleware.revise(
     ) {
         execution.physicalState = PhysicalState.RUNNING
     }
-    // 도는 단위에 보낸 갱신이 미확정을 내거나 풀었으면 지금 알린다 — 새 판과 새 단위 열이 선 뒤라 응답이 이 판의 것이다.
-    noteAttention(execution)
+    // 도는 단위에 보낸 갱신이 미확정을 내거나 풀었으면 받은 쪽(`Middleware`)이 지금 알린다 — 새 판과 새 단위 열이 선 뒤라 응답이 이 판의 것이다.
     return Submission.Accepted(execution)
 }
 

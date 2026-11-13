@@ -64,21 +64,21 @@ class LayeringTest {
     }
 
     @Test
-    fun `상태 층은 Middleware 에서 Submission 만 쓴다`() {
-        val state = LAYERS.filterValues { it == Layer.STATE }.keys
-        val qualified = sources().filterKeys { it in state }.mapValues { (_, text) -> qualifiedMiddlewareNames(text) }
+    fun `Middleware 밖의 파일은 Middleware 에서 Submission 만 쓴다`() {
+        // S4c(§15.313)부터 상태 층만이 아니라 Middleware.kt 밖 모든 출하 파일에 건다 — 전이 층의 Revision 도 Submission 을 돌려준다.
+        val qualified = sources().filterKeys { it != "Middleware.kt" }.mapValues { (_, text) -> qualifiedMiddlewareNames(text) }
         assertEquals(
             emptyMap(),
             qualified.mapValues { (_, names) -> names.filterNot { it == "Submission" } }.filterValues { it.isNotEmpty() },
-            "상태 층이 Middleware 의 Submission 밖 이름을 쓴다",
+            "Middleware.kt 밖의 파일이 Middleware 의 Submission 밖 이름을 쓴다",
         )
         val classes = compiled()
-        val bad = classes.filter { node(it.file) in state }.flatMap { c ->
+        val bad = classes.filter { it.file != "Middleware.kt" }.flatMap { c ->
             c.typeRefs.filter { it == MIDDLEWARE || (it.startsWith("$MIDDLEWARE$") && !it.startsWith("$MIDDLEWARE\$Submission")) }
                 .map { "${c.file}: $it" } +
                 c.memberRefs.filter { it.first == MIDDLEWARE || it.first == COMPANION }.map { "${c.file}: ${it.second}" }
         }
-        assertEquals(emptyList(), bad.distinct().sorted(), "상태 층이 Middleware 의 객체·멤버를 쓴다(Submission 만 허용)")
+        assertEquals(emptyList(), bad.distinct().sorted(), "Middleware.kt 밖의 파일이 Middleware 의 객체·멤버를 쓴다(Submission 만 허용)")
     }
 
     @Test
@@ -390,23 +390,16 @@ class LayeringTest {
 
         /** 층을 거스르는 간선과 그 까닭. 실제 집합과 정확히 같아야 한다. */
         val UPWARD: Map<Pair<String, String>, String> = buildMap {
-            // 공개 결과 계약 — 하위 파일이 `Middleware.Submission.Rejected` 를 짓는다(§15.307). 이 간선은 Submission 만 쓴다는 것을
-            // `상태 층은 Middleware 에서 Submission 만 쓴다` 가 따로 댄다. 풀 단계 없음.
-            listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "UnitFacts.kt")
+            // 공개 결과 계약 — 하위 파일이 `Middleware.Submission.*` 을 짓거나 돌려준다(§15.307, 리비전은 §15.313). 이 간선은 Submission 만 쓴다는
+            // 것을 `Middleware 밖의 파일은 Middleware 에서 Submission 만 쓴다` 가 따로 댄다. 풀 단계 없음 — 푸는 것은 공개 API 변경이다.
+            listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "Revision.kt", "UnitFacts.kt")
                 .forEach { put(it to "Middleware.kt", "공개 결과 계약 Submission(§15.307)") }
-            // 실행 표·게이트·장부를 쓰는 창구 절차(재개, 리비전, 건너뛴 단위의 판정)가 `Middleware` 의 확장으로 남았다(§15.312). 생애·드라이버와
-            // 다른 접합부는 좁은 환경 CommandEnv 를 받는다 — S4b 가 생애·접합부 13 파일과 Execution → CommandLifecycle 간선을 걷었다.
-            listOf("EvidenceBinding.kt", "Resume.kt", "Revision.kt").forEach { put(it to "Middleware.kt", "창구 절차의 Middleware 확장(S4c)") }
         }
 
         /**
-         * `Middleware.kt` 밖에서 부르는 `Middleware`(와 companion) 멤버의 JVM 이름(internal 멤버는 모듈 이름이 붙는다). 2026-11-13 실측 28 → S4a(§15.311) 21: 생애·접합부가 쓰던 companion 상수를 MiddlewareCodes 로, markIncident·observeHold 를 실행·단위로 옮겼다.
-         * → S4b(§15.312) 10: 생애·드라이버·접합부가 좁은 환경 CommandEnv 를 받는다. 남은 것은 창구 절차(재개·리비전·건너뛴 단위)가 쓰는 것이다.
+         * `Middleware.kt` 밖에서 부르는 `Middleware`(와 companion) 멤버의 JVM 이름. 2026-11-13 실측 28 → S4a(§15.311) 21 → S4b(§15.312) 10 →
+         * S4c(§15.313) 0: 창구 절차(재개·리비전·건너뛴 단위)도 좁은 환경의 확장이 되고 실행 표·게이트·장부는 인자로 받는다. 다시 늘면 빨강이다.
          */
-        val MIDDLEWARE_MEMBERS: Set<String> = setOf(
-            "getDesk\$picasso_picasso", "getEnv\$picasso_picasso", "getExecutions\$picasso_picasso", "getGate\$picasso_picasso",
-            "getIncidentLog\$picasso_picasso", "getNow\$picasso_picasso", "noteAttention\$picasso_picasso", "notify\$picasso_picasso",
-            "trail\$picasso_picasso", "trail\$picasso_picasso\$default",
-        )
+        val MIDDLEWARE_MEMBERS: Set<String> = emptySet()
     }
 }
