@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 internal object MiddlewareSeams {
 
     val homes: Map<String, List<String>> = linkedMapOf(
-        "Resume.kt" to listOf("staleVersionRefusal", "recordRefusal", "restore", "reopenHold", "rebuildFrom", "attemptOf"),
+        "Resume.kt" to listOf("restore", "reopenHold", "rebuildFrom"),
         "Revision.kt" to listOf("revise", "sendRevisionUpdate", "settleUpdate", "issuable"),
         "ClockSkew.kt" to listOf("readNow", "measureClock", "clockSuspicionOf", "noteClockSkew"),
         "UnitDrivers.kt" to listOf(
@@ -28,7 +28,7 @@ internal object MiddlewareSeams {
         ),
         "EvidenceBinding.kt" to listOf(
             "judgeEffectMismatch", "beginVerify", "checkEvidence", "failWithEvidenceCheck", "reworkAsNewAttempt", "skippedPair",
-            "resolveSkipped", "skippedReworkRefusal",
+            "resolveSkipped",
         ),
         "RobotSync.kt" to listOf("sync", "record", "forgetAcknowledged", "trackLink"),
         "CommandPorts.kt" to listOf(

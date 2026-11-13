@@ -227,18 +227,18 @@ private fun CommandEnv.skippedPair(execution: Execution, unit: ExecutionUnit): E
  * 작업 응답은 [noteAttention] 이 아니라 [notify] 로 직접 낸다. [noteAttention] 은 `OPERATOR_HOLD`·`IN_DOUBT` 가 풀리는 것만 대 보므로
  * `PARTIAL`·`FAILED` 에서 `RUNNING` 으로 돌아오는 것은 그 비교에 잡히지 않는다.
  */
-internal fun Middleware.resolveSkipped(execution: Execution, unitId: String, decision: OperatorDecision, approver: Approver): ResolveOutcome {
+internal fun CommandEnv.resolveSkipped(execution: Execution, unitId: String, decision: OperatorDecision, approver: Approver, executions: Collection<Execution>, incidentLog: IncidentLog): ResolveOutcome {
     val skipped = execution.units.firstOrNull { it.unitId == unitId } ?: return ResolveOutcome.NotHeld
-    val travel = env.skippedPair(execution, skipped) ?: return ResolveOutcome.NotHeld
+    val travel = skippedPair(execution, skipped) ?: return ResolveOutcome.NotHeld
     if (decision == OperatorDecision.CONFIRM_DONE) {
         return ResolveOutcome.Refused("점검을 하지 않은 단위는 확인할 것이 없다 — 재작업만 받는다: $unitId")
     }
-    skippedReworkRefusal(execution, skipped, travel)?.let { return ResolveOutcome.Refused(it) }
+    skippedReworkRefusal(execution, skipped, travel, executions)?.let { return ResolveOutcome.Refused(it) }
 
     val at = now()
     for (unit in listOf(travel, skipped)) {
         execution.decisions[unit.unitId] = RecordedDecision(decision, approver, at, unit.attempt)
-        env.reworkAsNewAttempt(unit)
+        reworkAsNewAttempt(unit)
     }
     execution.noticed.clear(Notice.Hold)
     execution.physicalState = PhysicalState.RUNNING
@@ -257,14 +257,14 @@ internal fun Middleware.resolveSkipped(execution: Execution, unitId: String, dec
  * - 두 단위의 기체를 쥔 다른 활성 실행이 없어야 한다. `PARTIAL` 은 기체를 쥔 채라 그 사이 다른 실행이 서지 않지만 `FAILED` 는
  *   기체를 내주므로 그 사이 다른 실행이 섰을 수 있다.
  */
-private fun Middleware.skippedReworkRefusal(execution: Execution, skipped: ExecutionUnit, travel: ExecutionUnit): String? {
+private fun skippedReworkRefusal(execution: Execution, skipped: ExecutionUnit, travel: ExecutionUnit, executions: Collection<Execution>): String? {
     val state = execution.physicalState
     if (state == PhysicalState.ABORTED) return "취소한 실행의 대상은 재작업하지 않는다 — 새 작업 지시로 낸다"
     if ((state != PhysicalState.PARTIAL && state != PhysicalState.FAILED) || execution.units.any { it.state in OPEN_UNIT_STATES }) {
         return "순회가 종결한 뒤 한 대상씩 재작업한다 — 아직 낼 단위나 도는 단위가 있다"
     }
     val robots = setOf(execution.robotOf(skipped), execution.robotOf(travel))
-    val other = executions.values.firstOrNull {
+    val other = executions.firstOrNull {
         it.executionId != execution.executionId && it.physicalState.occupiesRobot && it.robots.any { robot -> robot in robots }
     }
     return other?.let { "같은 기체에 다른 활성 실행이 있다 — 그 실행이 끝난 뒤 재작업한다: ${it.executionId}" }

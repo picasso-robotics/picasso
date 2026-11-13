@@ -3140,6 +3140,20 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+313. **의존 정비 S4c — 창구 절차도 좁은 환경을 받아 `Middleware` 의 확장과 연 멤버가 0 이 된다. S4 를 닫는다.**
+
+    의존 정비 S4 의 셋째 PR(S4c)이다. S4b(PR #18, §15.312) 다음이다. 동작 변경과 공개 API 표면 변경은 없다. S4b 뒤 `fun Middleware.x` 로 남았던 창구 절차(`Resume.kt` 전부, `Revision.kt` 의 `revise`, `EvidenceBinding.kt` 의 `resolveSkipped`·`skippedReworkRefusal`)를 좁혔다. 실제로 쓰던 `Middleware` 멤버는 `desk`·`gate`·`executions`·`incidentLog`·`noteAttention`·`now`·`trail`·`notify` 였다. 뒤의 셋은 이미 `CommandEnv` 에 있었다.
+
+    멤버를 안 쓰던 `staleVersionRefusal`·`recordRefusal`·`attemptOf`·`skippedReworkRefusal` 은 수신자 없는 함수로 바꿨다. 앞의 둘은 거부 사유 문자열을 돌려주고 `Middleware` 가 `Submission.Rejected` 로 싼다. `Resume.kt` 가 `Submission` 을 쓰지 않게 됐다. `rebuildFrom`·`reopenHold`·`restore` 는 `fun CommandEnv.x` 로 옮겼다. `restore` 는 승인 장부 `desk` 를, `resolveSkipped` 는 실행 표와 인시던트 장부를 인자로 받는다. `revise` 는 `fun CommandEnv.revise(gate, desk, …)` 로 바꿨다. 받은 리비전 뒤의 `noteAttention` 은 호출 자리 셋에서 `Submission.Accepted` 일 때만 부른다. 같은 버전이나 거부에는 부르지 않던 것과 같다.
+
+    ★**두 자문이 처음 갈렸다.** Codex 는 창구 절차를 새 창구 층 파일로 떼어 분류하는 안을 냈다. Fable 은 수신자를 좁히는 안을 냈다. 2라운드에서 Codex 가 Fable 안으로 바꿨다. 파일을 창구 층으로 다시 분류하면 멤버 의존이 없어지지 않는다. 새 파일이 접합부 합 상한을 넘는다. «창구 층이라 적으면 된다» 는 출구가 생긴다. 동작 보존의 함정 셋(받은 리비전에만 한 번 알림, 재개 때 한 번 읽은 시각을 트레이스와 봉인에 같이 씀, 건너뛴 단위 재작업의 검사·기록·통보 순서)을 지켰다.
+
+    출하 소스에 `fun Middleware.` 확장이 0 이 됐다. 층을 거스르는 허용 간선은 7 에서 5 로 줄었다. 모두 공개 결과 계약 `Submission`(상태 층 넷과 `revise` 가 `Submission` 을 돌려주는 `Revision.kt`)이다. 멤버 래칫은 10 에서 0 이 됐다. 뜻은 `Middleware.kt` 밖에서 부르는 `Middleware` 멤버로 그대로다. `Middleware` 의 internal 멤버도 9 에서 0 이 되어 전부 private 이 됐다. `Middleware.kt` 696 줄과 접합부 합 1,670 은 그대로 유지했다. 예산 상한을 올리지 않았다. 리비전 뒤 알림을 호출 자리에 한 줄씩 들이고 서명을 한 줄로 맞췄다.
+
+    시험을 넓혔다. 층 시험의 «Submission 만 쓴다» 를 상태 층에서 `Middleware.kt` 밖 모든 파일로 넓혔다. 접합부 배치 시험에 «`fun Middleware.` 확장이 되살아나지 않았다» 는 음성 바늘과 수신자 없는 창구 보조 넷의 자리 바늘을 더했다. internal 멤버 예산은 0 이 정상값이라 «못 셌다» 경고를 멤버 선언 수로 바꿨다. `./gradlew cleanTest build -x :harness:test -x :registry:test` 시험 1,836건 실패 0, 번들 동치 12/12 다. 층 시험 변이 아홉이 모두 빨강이다. 예산 결함 주입(696→695, 1,670→1,669, internal 멤버 하나 다시 열기)이 모두 잡혔다. mission-ops 재빌드는 842 시험(site 41, mission-host 226, ops-service 498, e2e 77) 실패 0(같은 임시 클론에서 빌드 둘이 겹쳐 mission-host 시험 작업이 한 번 `EOFException` 으로 끝났고, 따로 다시 돌려 226 실패 0) 다.
+
+    ★**S4 를 닫는다.** 합의 계획의 «private Core(실행 표·조율)» 는 하지 않았다. 생애·전이 층이 `Middleware` 의 객체와 멤버를 쓰지 않게 되어 Core 가 풀 의존이 남지 않았다. 실행 표와 조율을 Core 뒤로 보내는 것은 `Middleware.kt` 줄 수의 문제지 의존의 문제가 아니다. 남은 것은 `Submission` 이 `Middleware` 의 공개 중첩 타입이라 다섯 파일이 `Middleware.kt` 에 기댄다는 점이다. 푸는 것은 공개 API 표면 변경이다. 층 시험이 못 보는 것(타입 별칭, 인라인된 `const val` 의 컴파일 결과, `checkcast` 대상, 수신자 안의 한정 없는 호출의 소스 쪽)은 §15.310 에 적었다. 다음은 H1(호스트 부품 출하 모듈)이다.
+
 312. **의존 정비 S4b — 생애·드라이버·접합부가 `Middleware` 대신 좁은 환경 `CommandEnv` 를 받는다.**
 
     의존 정비 S4의 둘째 PR(S4b)이다. S4a(PR #17, §15.311) 다음 작업이다. 동작 변경은 없다. 상태 층에 새 `CommandEnv.kt`(`internal class CommandEnv`)를 두었다. 포트(`robots`·`cell`·`fleet`), 시계 `now`, 발행 게이트 `issuing`, 기체 뷰 표 `views`, 이번 라운드의 현장 시간값 `round`, 선택 인자 중복 표시 `droppedOptionals`, 시간창 셋(`windowOf`·`inDoubtGraceOf`·`stallWindowOf`), `Execution.trail`, `Execution.observeCell`, `stateTime`, `notify`를 담는다. `notify`는 창구의 `Middleware.notify`를 함수로 받는다. 실행 표·배정 게이트·장부(`executions`·`gate`·`desk`·`incidentLog`)와 `noteAttention`은 넣지 않았다. 넣으면 환경이 이름만 바꾼 `Middleware`가 된다. 상태 층이라 전이 층 절차를 부르지 않는다. 그래서 `noteClockSkew`는 환경 멤버가 아니라 `ClockSkew.kt`의 환경 확장으로 갔다.

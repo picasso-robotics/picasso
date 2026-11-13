@@ -1,6 +1,5 @@
 package dev.picasso.middleware
 
-import dev.picasso.middleware.Middleware.Submission
 import dev.picasso.middleware.MiddlewareCodes.RESUME_ATTEMPT
 import dev.picasso.middleware.MiddlewareCodes.RESUME_HOLD_REOPENED
 import dev.picasso.middleware.MiddlewareCodes.RESUME_PRIOR_ROBOT
@@ -22,25 +21,25 @@ import java.time.Instant
  * 들면 넘긴 것은 앞 인스턴스가 받은 마지막 버전이 아니다. 그대로 지으면 그 단위의 재전송이 `OUTDATED_REVISION` 으로 실패로
  * 적히고, 기체가 아직 그 태스크를 도는 동안 실행이 다음 단위를 낸다(§15.260). 리비전을 안 싣는 포트에서는 볼 수 없다(§15.238).
  */
-internal fun Middleware.staleVersionRefusal(order: JobOrder, snapshots: Map<String, RobotSnapshot>): Submission.Rejected? {
+internal fun staleVersionRefusal(order: JobOrder, snapshots: Map<String, RobotSnapshot>): String? {
     val prefix = "${order.jobOrderId}#"
     val ahead = snapshots.flatMap { (robot, snapshot) ->
         snapshot.revisions.filter { (taskId, revision) -> taskId.startsWith(prefix) && revision > order.version }
             .map { (taskId, revision) -> "$robot:$taskId@$revision" }
     }
     if (ahead.isEmpty()) return null
-    return Submission.Rejected("$RESUME_STALE_VERSION: 작업 지시 버전=${order.version}, 기체가 든 리비전=${ahead.joinToString()}")
+    return "$RESUME_STALE_VERSION: 작업 지시 버전=${order.version}, 기체가 든 리비전=${ahead.joinToString()}"
 }
 
 /** 판단 기록이 넘긴 작업 지시와 맞는가. 맞지 않으면 거부의 사유, 맞으면 널. */
-internal fun Middleware.recordRefusal(order: JobOrder, record: JudgmentRecord, planned: List<ExecutionUnit>): Submission.Rejected? {
+internal fun recordRefusal(order: JobOrder, record: JudgmentRecord, planned: List<ExecutionUnit>): String? {
     val why = when {
         record.jobOrderId != order.jobOrderId -> "작업 지시가 다르다: 기록=${record.jobOrderId}, 작업 지시=${order.jobOrderId}"
         record.orderVersion != order.version -> "버전이 다르다: 기록=${record.orderVersion}, 작업 지시=${order.version}"
         else -> (record.units.map { it.unitId } - planned.map { it.unitId }.toSet()).takeIf { it.isNotEmpty() }
             ?.let { "계획에 없는 단위가 있다: $it" }
     } ?: return null
-    return Submission.Rejected("$RESUME_RECORD_MISMATCH: $why")
+    return "$RESUME_RECORD_MISMATCH: $why"
 }
 
 /**
@@ -56,7 +55,7 @@ internal fun Middleware.recordRefusal(order: JobOrder, record: JudgmentRecord, p
  * 돌려주는 것은 운영자 보류를 다시 연 시각이다. 처음 다시 열 때 시계를 한 번 읽고 다시 연 보류 모두에 쓴다. 다시 연 것이
  * 없으면 널이다.
  */
-internal fun Middleware.restore(execution: Execution, record: JudgmentRecord): Instant? {
+internal fun CommandEnv.restore(execution: Execution, record: JudgmentRecord, desk: RemedyDesk): Instant? {
     var reopenedAt: Instant? = null
     // **건 취소는 걸린 채로 짓는다**(§15.253). 걸지 않으면 그 사이 취소로 끝난 하위 태스크를 요청 없는 취소로 읽는다
     // ([holdUnrequestedCancel]). 하위로 보내는 것은 첫 pump 다 — 붙지 않은 태스크는 [attachForCancel] 이 붙어 멈춘다.
@@ -138,7 +137,7 @@ internal fun Middleware.restore(execution: Execution, record: JudgmentRecord): I
  * 판단은 보통의 보류와 같다. [resolve] 가 보류를 풀고 판단 기록에 실으며, 판단은 이 인시던트에 붙는다.
  * 봉인은 [resume] 이 끝에서 한 번 한다 — 첫 [pump] 전에도 판단 화면이 이 인시던트를 읽는다.
  */
-private fun Middleware.reopenHold(execution: Execution, unit: ExecutionUnit, r: UnitRecord, verdict: UnitVerdict, at: Instant) {
+private fun CommandEnv.reopenHold(execution: Execution, unit: ExecutionUnit, r: UnitRecord, verdict: UnitVerdict, at: Instant) {
     execution.trail(
         RESUME_HOLD_REOPENED,
         "${unit.unitId}: 기록의 운영자 보류를 이 인스턴스의 인시던트로 다시 연다, robot=${execution.robotOf(unit)} " +
@@ -150,7 +149,7 @@ private fun Middleware.reopenHold(execution: Execution, unit: ExecutionUnit, r: 
 }
 
 /** [resume] 의 4·5·6. 스냅숏의 태스크 id 로 재작업 횟수, 지난 설비 대기, 앞선 로봇 단위를 정하고 자취에 남긴다. */
-internal fun Middleware.rebuildFrom(execution: Execution, snapshots: Map<String, RobotSnapshot>) {
+internal fun CommandEnv.rebuildFrom(execution: Execution, snapshots: Map<String, RobotSnapshot>) {
     val jobOrderId = execution.order.jobOrderId
     var lastHeld = -1
     execution.units.forEachIndexed { index, unit ->
@@ -184,7 +183,7 @@ internal fun Middleware.rebuildFrom(execution: Execution, snapshots: Map<String,
 }
 
 /** [taskId] 가 [base] 의 태스크면 재작업 횟수, 아니면 널. 접미사가 없으면 0 이다. */
-private fun Middleware.attemptOf(taskId: String, base: String): Int? {
+private fun attemptOf(taskId: String, base: String): Int? {
     if (taskId == base) return 0
     if (!taskId.startsWith(base)) return null
     return RETRY_SUFFIX.matchEntire(taskId.substring(base.length))?.groupValues?.get(1)?.toIntOrNull()
