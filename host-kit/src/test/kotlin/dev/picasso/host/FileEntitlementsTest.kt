@@ -1,4 +1,4 @@
-package dev.picasso.middleware.host
+package dev.picasso.host
 
 import dev.picasso.middleware.DeclaredAction
 import java.nio.file.Files

@@ -5,6 +5,8 @@ import com.google.protobuf.Value
 import com.google.protobuf.util.JsonFormat
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.harness.Harness
+import dev.picasso.host.ApprovalHost
+import dev.picasso.host.FileEntitlements
 import dev.picasso.middleware.CellMimic
 import dev.picasso.middleware.ClientRobotPort
 import dev.picasso.middleware.EquipmentRequirement

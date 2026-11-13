@@ -17,6 +17,7 @@
   <!-- edge: harness -> client -->
   <!-- edge: harness -> mimic -->
   <!-- edge: harness -> uplink -->
+  <!-- edge: host-kit -> picasso -->
   <!-- edge: mimic -> capability -->
   <!-- edge: mimic -> uplink -->
   <!-- edge: picasso -> capability -->
@@ -25,11 +26,11 @@
   <!-- hidden-edges: 20 -->
   <g font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif" fill="#e6e6e6">
     <text x="20" y="36" font-size="17" font-weight="700">모듈 의존 관계</text>
-    <text x="20" y="56" font-size="12" fill="#9a9a9a">모듈 16 개 사이의 프로덕션 의존 관계</text>
+    <text x="20" y="56" font-size="12" fill="#9a9a9a">모듈 17 개 사이의 프로덕션 의존 관계</text>
 
     <!-- role zones -->
-    <rect x="24" y="188" width="144" height="224" fill="none" stroke="#4a4a4a"/>
-    <text x="36" y="204" font-size="11" fill="#9a9a9a">코어 및 클라이언트</text>
+    <rect x="24" y="84" width="144" height="328" fill="none" stroke="#4a4a4a"/>
+    <text x="36" y="100" font-size="11" fill="#9a9a9a">코어 및 클라이언트</text>
     <rect x="184" y="84" width="304" height="192" fill="none" stroke="#4a4a4a"/>
     <text x="196" y="100" font-size="11" fill="#9a9a9a">런타임 및 통합 시험 모듈</text>
     <rect x="184" y="324" width="304" height="112" fill="none" stroke="#4a4a4a"/>
@@ -40,6 +41,9 @@
     <text x="676" y="204" font-size="11" fill="#9a9a9a">운영 및 검증 모듈</text>
 
     <!-- modules -->
+    <rect x="32" y="112" width="128" height="52" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+    <text x="42" y="135" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">host-kit</text>
+    <text x="42" y="151" font-size="11" fill="#9a9a9a">담는 쪽 부품</text>
     <rect x="192" y="112" width="128" height="52" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
     <text x="202" y="135" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">harness</text>
     <text x="202" y="151" font-size="11" fill="#9a9a9a">통합 시험 러너</text>
@@ -91,6 +95,7 @@
 
     <!-- edges: shipping dependencies -->
     <g fill="none" stroke="#e6e6e6" stroke-width="1.2">
+      <path d="M96,164 V214" marker-end="url(#data)"/>
       <path d="M96,268 V350" marker-end="url(#data)"/>
       <path d="M128,268 V292 H224 V350" marker-end="url(#data)"/>
       <path d="M256,268 V350" marker-end="url(#data)"/>
@@ -101,7 +106,7 @@
       <path d="M600,268 V350" marker-end="url(#data)"/>
       <path d="M736,268 V350" marker-end="url(#data)"/>
       <path d="M256,164 V214" marker-end="url(#data)"/>
-      <path d="M192,128 H16 V378 H30" marker-end="url(#data)"/>
+      <path d="M192,160 H172 V378 H162" marker-end="url(#data)"/>
       <path d="M192,148 H176 V392 H190" marker-end="url(#data)"/>
       <path d="M320,148 H340 V384 H350" marker-end="url(#data)"/>
       <path d="M512,132 H432 V214" marker-end="url(#data)"/>

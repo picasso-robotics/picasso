@@ -124,6 +124,7 @@ adapter-core     ← 전체 어댑터 공용 (RobotAdapter 인터페이스 표�
 adapter-host     ← 계약 gRPC/MQTT 서비스를 구동하는 어댑터 호스팅 런타임 (ADR 39)
 adapter-<기종>   ← 특정 기종 의존성을 갖는 유일한 계층 (ADR 33), adapter-core 및 contracts에 의존
 picasso          ← 미들웨어 오케스트레이션 코어 (기종 무관, ADR 38)
+host-kit         ← 미들웨어를 담는 쪽의 부품: 승인 호스트·자격 선언 파일·번들 쓰기 (picasso 공개 API 만, §15.314)
 registry         ← 메타데이터 및 카탈로그 레지스트리 (무상태 풀링 모델 지원, §3.2)
 ```
 
@@ -136,7 +137,7 @@ registry         ← 메타데이터 및 카탈로그 레지스트리 (무상태
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/components.dark.svg">
-  <img alt="저장소 모듈 16개 사이의 프로덕션 의존 관계를 나타냅니다. 계약 어휘인 contracts는 13개 모듈이, profile-model은 7개 모듈이 프로덕션 의존으로 사용합니다. 해당 계약 어휘로 향하는 20개를 제외한 나머지 의존 간선 18개는 화살표로 직접 연결합니다." src="diagrams/components.svg">
+  <img alt="저장소 모듈 17개 사이의 프로덕션 의존 관계를 나타냅니다. 계약 어휘인 contracts는 13개 모듈이, profile-model은 7개 모듈이 프로덕션 의존으로 사용합니다. 해당 계약 어휘로 향하는 20개를 제외한 나머지 의존 간선 19개는 화살표로 직접 연결합니다." src="diagrams/components.svg">
 </picture>
 
 본 다이어그램과 의존성 표는 임의 작성된 텍스트가 아니며, 각 모듈의 `build.gradle.kts` 프로덕션 의존성 선언을 `DocumentClaimsTest`가 직접 파싱하여 정합성을 검증합니다.
@@ -153,6 +154,7 @@ client                         → contracts · profile-model
 contracts                      → (없음)
 gate                           → profile-model
 harness                        → capability · client · contracts · mimic · profile-model · uplink
+host-kit                       → picasso
 mimic                          → capability · contracts · profile-model · uplink
 picasso                        → capability · client · contracts
 profile-model                  → (없음)
@@ -185,4 +187,4 @@ uplink                         → contracts
 5. [`commissioning.md`](commissioning.md) — 현장 시운전 절차 및 운영 설정 REST API 명세
 6. [공식 설계 문서](superpowers/specs/2026-09-05-picasso-design.md) — 시스템 전체 설계 정본 스펙
 
-> 마지막 대조: 2026-11-08 · sha256:2e40d17be5ed · 열림: 시나리오 §8, §15.5, ADR 32 · 시나리오 5, §1.3 B-1, §15.126
+> 마지막 대조: 2026-11-13 · sha256:0a9b041a532a · 열림: 시나리오 §8, §15.5, ADR 32 · 시나리오 5, §1.3 B-1, §15.126

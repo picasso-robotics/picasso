@@ -66,7 +66,8 @@ class DocumentClaimsTest {
     private val mainSource by lazy { mainFiles.values.joinToString("\n") }
 
     /**
-     * **`picasso` 의 시험 소스 전문.** 승인 창구는 배포 가능한 프로세스가 아니라 시험 곁에 있고(§15.176),
+     * **`picasso` 의 시험 소스 전문.** 참조 실행기는 배포 가능한 프로세스가 아니라 시험 곁에 있고(§15.176; 승인 호스트 같은 부품은
+     * §15.314 부터 `host-kit` 의 출하 소스라 [mainSource] 가 잡는다),
      * 출하 소스만 훑으면 **멀쩡한 이름이 «코드에 없다» 로 나온다** — 그때 고쳐지는 것은 검사가 아니라
      * 문서다(`mainSource` 가 같은 자리에서 한 번 물렸다).
      */

@@ -20,6 +20,8 @@ dependencies {
     implementation(libs.protobuf.java.util)
 
     testImplementation(project(":harness"))
+    // 참조 실행기(`ScenarioHost`)와 내보내기 시험이 담는 쪽의 부품을 쓴다. 출하 의존이 아니다 — picasso 는 여전히 파일도 소켓도 모른다.
+    testImplementation(project(":host-kit"))
     testImplementation(project(":mimic"))
     // 답하지 않는 하위를 시험 안에 세운다(`PortBreakerTest`). 미믹은 늘 답한다.
     testImplementation(libs.grpc.inprocess)
@@ -33,7 +35,8 @@ dependencies {
  *     ./gradlew :picasso:runApprovalHost --args="--port 8770 --seconds 1800"
  *
  * 시험 소스에서 돈다. `picasso` 는 라이브러리라 진입점을 안 들고(§6), v1 에서 실행 계층을 실제로
- * 구동하는 주체는 시나리오 구동기뿐이라 그것이 담는 쪽이다 — 파일 내보내기가 같은 자리에 있는 이유와 같다.
+ * 구동하는 주체는 시나리오 구동기뿐이라 그것이 담는 쪽이다. 승인 호스트·선언 파일·번들 쓰기는 프로덕션 모듈
+ * `host-kit` 의 부품이고(§15.314), 실행기는 시험 전용 설비 더블을 써서 시험 곁에 남는다.
  */
 tasks.register<JavaExec>("runApprovalHost") {
     group = "application"

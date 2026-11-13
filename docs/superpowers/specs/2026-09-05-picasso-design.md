@@ -185,9 +185,9 @@ picasso/
 - `mimic`: 투영 및 협상 판정 로직은 `capability`로, 메시지 발행 및 레지스트리 적재는 `uplink`로 위임 분리되었다(2026-09-10).
 - `client` 및 `adapter-<vendor>-<model>`: 하위 격리 원칙을 준수한다.
 
-**`adapter-*`는 기종마다 모듈 하나다(ADR 33).** 게이트 7번이 보는 열 (`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model`) **밖**에 두는 것이 요점이며, 기종 지식이 갈 곳이 정확히 거기라서 나머지가 기종을 모를 수 있다. 로봇 어댑터 셋(`adapter-agility-digit`·`adapter-boston-dynamics-spot`·`adapter-unitree-g1`)의 의존성이 `adapter-core`·`contracts`뿐인 이유도 동일하다: 어댑터가 `registry`를 알면 순환 회피 규칙이 위반되고, `profile-model`을 알면 구현과 선언의 원천이 결합되기 때문이다. 반면 `adapter-boston-dynamics-orbit`는 플릿 단위 연동 및 배치 런처 특성상 `adapter-core`, `adapter-host`, `contracts`, `profile-model`, `uplink`를 참조한다(ADR 37, 39).
+**`adapter-*`는 기종마다 모듈 하나다(ADR 33).** 게이트 7번이 보는 열하나 (`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit`) **밖**에 두는 것이 요점이며, 기종 지식이 갈 곳이 정확히 거기라서 나머지가 기종을 모를 수 있다. 로봇 어댑터 셋(`adapter-agility-digit`·`adapter-boston-dynamics-spot`·`adapter-unitree-g1`)의 의존성이 `adapter-core`·`contracts`뿐인 이유도 동일하다: 어댑터가 `registry`를 알면 순환 회피 규칙이 위반되고, `profile-model`을 알면 구현과 선언의 원천이 결합되기 때문이다. 반면 `adapter-boston-dynamics-orbit`는 플릿 단위 연동 및 배치 런처 특성상 `adapter-core`, `adapter-host`, `contracts`, `profile-model`, `uplink`를 참조한다(ADR 37, 39).
 
-**`adapter-core`의 태동**: ADR 33에서 예고한 바와 같이, 다수 어댑터 간의 공통 어휘 추출 요구에 따라 신설되었다. 추출된 공통 모듈은 기종 무의존성을 유지해야 하므로 게이트 7번 검사 목록에 편입되었다. 검사 7번 대상 모듈은 현재 총 10개이다 — `client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model`. 기종별 어댑터 모듈 자체는 기종 지식을 캡슐화하는 목적을 가지므로 이 목록에서 제외된다. 정본 목록은 코드(`Check07ModelBranching.MODULES`)에 선언되어 있으며 `DocumentClaimsTest`에 의해 지속 검증된다.
+**`adapter-core`의 태동**: ADR 33에서 예고한 바와 같이, 다수 어댑터 간의 공통 어휘 추출 요구에 따라 신설되었다. 추출된 공통 모듈은 기종 무의존성을 유지해야 하므로 게이트 7번 검사 목록에 편입되었다. 검사 7번 대상 모듈은 현재 총 11개이다 — `client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit`. 기종별 어댑터 모듈 자체는 기종 지식을 캡슐화하는 목적을 가지므로 이 목록에서 제외된다. 정본 목록은 코드(`Check07ModelBranching.MODULES`)에 선언되어 있으며 `DocumentClaimsTest`에 의해 지속 검증된다.
 
 **`profile-model` 신설 (ADR 29)**: 프로파일 문서 파싱 로직이 `gate`와 `mimic` 양쪽에 필요함에 따라, `mimic`이 `gate`의 buf 실행기 및 9개 검사 규칙에 불필요하게 결합되는 것을 차단하기 위해 공통 모듈로 분리하였다.
 
@@ -982,7 +982,7 @@ mimic/
 
 **검사 4 양방향 교차 검증**: 프로파일이 참조하는 스킬이 Protobuf에 실재하는지 검증할 뿐만 아니라, 반대로 계약 카탈로그에 선언된 `since_minor ≤ 선언 minor`인 필수 파라미터(`is_optional=false`)가 프로파일에 누락 없이 존재하는지를 엄격히 검증한다.
 
-**검사 7 기종 분기 차단**: 공통 계층 모듈(`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model`)의 소스 코드 내에 특정 벤더명이나 모델 식별자 문자열이 하드코딩되는 것을 원천 차단한다. 정본 목록은 코드베이스의 `Check07ModelBranching.MODULES`에 정의되어 있으며 기계적으로 검증된다.
+**검사 7 기종 분기 차단**: 공통 계층 모듈(`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit`)의 소스 코드 내에 특정 벤더명이나 모델 식별자 문자열이 하드코딩되는 것을 원천 차단한다. 정본 목록은 코드베이스의 `Check07ModelBranching.MODULES`에 정의되어 있으며 기계적으로 검증된다.
 
 **검사 9 결속 경계**: 자리 이름이 어느 기종의 무엇에 묶이는지는 어댑터 경계의 지식이다(ADR 34 · 35). 검사 7이 기종 *좌표*를 막는다면 이 검사는 기종 *결속*을 막는다. **탐색어는 결속 선언 파일이 대는 최상위 타입명에서 유도**하므로 타입이 늘면 금지도 함께 는다 — 훑는 모듈 목록은 코드가 정본이다(`Check09BindingScope.MODULES`).
 
@@ -1111,7 +1111,7 @@ mimic/
 
 기록은 `docs/adr/`에 있고 번호가 이 표의 행 번호다. **이미 내려서 코드에 박힌 것만 쓴다** — 3a·3b가 만들 것(11~21)은 그때 쓴다. 결정하지 않은 것을 미리 적어 두면 그것이 결정처럼 보인다.
 
-> 마지막 대조: 2026-11-08 · sha256:fb54b50855c6 · 열림: C-3, §15.7, §15.126, ADR 32 · 시나리오 5, §15.4, §15.5, §15.6 · §15.11 · §15.28, §15.8, §15.9, §15.10, §15.1, §15.2, §15.33, §15.87
+> 마지막 대조: 2026-11-13 · sha256:dc817db86011 · 열림: C-3, §15.7, §15.126, ADR 32 · 시나리오 5, §15.4, §15.5, §15.6 · §15.11 · §15.28, §15.8, §15.9, §15.10, §15.1, §15.2, §15.33, §15.87
 
 ## 15. 알려진 한계
 
@@ -3139,6 +3139,20 @@ mimic/
     **검사 9번이 결속을 어댑터 경계 안에 가둔다.** 탐색어는 결속 파일이 선언한 최상위 이름에서 유도하므로 타입을 더하면 금지도 저절로 는다. 훑는 모듈에 `registry` 와 `profile-model` 을 넣었다 — 검사 7의 목록에 그 둘이 없어서, 없다는 이유로 결속까지 새면 같은 구멍이 두 번째로 열린다.
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
+
+314. **의존 정비 H1 — 담는 쪽 부품 셋을 시험 소스에서 프로덕션 모듈 `host-kit` 으로 분리.**
+
+    S4c(PR #19, §15.313) 다음으로 의존 정비 H1 을 진행한다. 미들웨어를 담는 쪽에 필요한 부품 셋을 `picasso` 시험 소스에서 분리하여 새 프로덕션 모듈 `host-kit`(`dev.picasso.host`)으로 옮긴다. `picasso` 의 동작과 공개 API 표면에는 변경이 없다.
+
+    ★**담는 쪽 부품 셋만 프로덕션 모듈 `host-kit` 으로 분리하고 참조 실행기와 통합 시험은 시험 소스에 남겨 §15.176 을 좁힌다.** 자문(Codex, Fable) 모두 부품만 옮기고 실행기와 통합 시험은 시험 소스에 남기는 안을 권고했다. 모듈 이름은 기존 `adapter-host` 와 혼동되지 않도록 `host-kit` 으로 정했다.
+
+    `ApprovalHost` 의 주 생성자는 `(instanceId, port, attempt: (ApprovalAttempt) -> ApprovalOutcome)` 형태로 콜백을 받는다. 담는 쪽마다 자물쇠 구현(`synchronized`, `ReentrantLock`, 저장 트랜잭션 등)이 다르므로 승인을 미들웨어에 적용하고 구동 루프와 같은 자물쇠를 통과하는 일은 담는 쪽에 맡긴다. 시험과 참조 실행기는 `(middleware, lock, port)` 편의 생성자를 쓴다. 의존은 `api(:picasso)` 와 protobuf JSON 뿐이며 `picasso` 공개 API 만 쓴다. 내부 `Json` 은 노출하지 않고 오류 본문은 protobuf `Struct` 로 직렬화한다.
+
+    참조 실행기 `ScenarioHost` 와 통합 시험 `ApprovalHostTest` 는 `CellMimic` 과 하네스를 쓰므로 `picasso` 시험 소스에 남겼다. `./gradlew :picasso:runApprovalHost` 명령과 인자 및 배너는 유지된다. HTTP 판정과 번들 및 작업 응답 파일 형식도 동일하다. `incident-recovery` 와 `narrator` 는 변경할 내용이 없다.
+
+    `BundleWriterTest`(6개), `FileEntitlementsTest`(6개)를 옮기고 `ApprovalHostWireTest`(2개)를 추가하여 전체 시험 수는 2,454개에서 2,456개로 늘었다. 한 벌을 담는 절차가 하나뿐임을 검증하는 시험은 `host-kit` 과 `picasso` 두 모듈의 소스를 저장소 상대 경로로 검사하도록 갱신했다.
+
+    게이트 7번(기종 분기 금지) 대상에 `host-kit` 을 추가해 대상 모듈은 11개가 되었으며 전체 모듈 수는 17개로 갱신했다. 확인: `./gradlew cleanTest build -x :harness:test -x :registry:test` 시험 1,838건 실패 0(문서 대조 셋을 고친 뒤 `:gate:test` 288 실패 0), 번들 동치 12/12, `:picasso:runApprovalHost` 를 띄워 못 읽는 요청에 400 과 `{"error":…}`, 제안 없는 승인에 200 과 `NO_PROPOSAL` 을 받았다. picasso 의 출하 소스는 바뀌지 않았고 mission-ops 를 이 변경으로 컴파일했다(mission-host·site·e2e 시험 컴파일 오류 0).
 
 313. **의존 정비 S4c — 창구 절차도 좁은 환경을 받아 `Middleware` 의 확장과 연 멤버가 0 이 된다. S4 를 닫는다.**
 

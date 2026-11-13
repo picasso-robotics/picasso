@@ -1,4 +1,4 @@
-package dev.picasso.middleware.host
+package dev.picasso.host
 
 import com.google.protobuf.Struct
 import com.google.protobuf.Value

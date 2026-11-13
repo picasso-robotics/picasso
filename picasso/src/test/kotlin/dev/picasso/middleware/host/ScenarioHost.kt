@@ -2,7 +2,9 @@ package dev.picasso.middleware.host
 
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.harness.Harness
-import dev.picasso.middleware.BundleWriter
+import dev.picasso.host.ApprovalHost
+import dev.picasso.host.BundleWriter
+import dev.picasso.host.FileEntitlements
 import dev.picasso.middleware.CellMimic
 import dev.picasso.middleware.ClientRobotPort
 import dev.picasso.middleware.EquipmentRequirement
@@ -29,7 +31,8 @@ import java.time.Instant
  * ## 왜 시험 소스에 있나
  *
  * `picasso` 는 라이브러리이고 진입점을 안 든다(§6). 실행 계층을 실제로 구동하는 유일한 주체는 시나리오
- * 구동기이며 v1 에서 그것은 시험 곁에 산다 — 파일 내보내기가 같은 자리에 있는 이유와 같다. 진짜 배치가
+ * 구동기이며 v1 에서 그것은 시험 곁에 산다 — 시험 전용 설비 더블(`CellMimic`)과 하네스로 세계를 세우기 때문이다.
+ * 이 구동기가 얹는 부품(승인 호스트·선언 파일·번들 쓰기)은 프로덕션 모듈 `host-kit` 에 있다(§15.314). 진짜 배치가
  * 생기면 포트 여섯을 다 드는 호스트가 이 자리를 대신한다.
  *
  * ## 네 자리를 미리 세워 둔다

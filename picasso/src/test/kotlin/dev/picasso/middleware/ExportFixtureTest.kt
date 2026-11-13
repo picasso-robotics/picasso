@@ -4,6 +4,7 @@ import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.harness.Harness
+import dev.picasso.host.BundleWriter
 import dev.picasso.mimic.control.v1.ForceFaultRequest
 import dev.picasso.mimic.control.v1.SetConnectionRequest
 import java.nio.file.Files
