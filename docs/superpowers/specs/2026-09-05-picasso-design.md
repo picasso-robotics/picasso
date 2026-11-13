@@ -3140,6 +3140,18 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+311. **의존 정비 S4a — 생애·접합부가 `Middleware` 를 거치지 않고 쓸 상수와 단위 절차를 아래로 옮긴다.**
+
+    의존 정비 S4 의 첫 PR(S4a)이다. 층 시험(PR #16, §15.310) 다음이다. 동작 변경과 공개 이름 변경은 없다. S4 의 목표는 생애·접합부의 `Middleware` 역참조(층 시험의 허용 목록 `UPWARD` 18 가운데 14, 멤버 래칫 28)를 걷는 것이다. 자문(Codex·Fable)이 둘 다 여러 PR 로 나누라고 했다. 멤버가 `Middleware` 를 떠나는 순간 부르는 파일이 모두 새 환경을 거쳐야 하므로 그 단계는 한 번에 해야 한다. 그 앞에 수신자를 바꾸지 않는 준비를 둔다. 이 PR 이 그 준비다.
+
+    생애·접합부 9 파일이 `import …Middleware.Companion.X` 로 쓰던 상수 37 의 값을 새 바닥 파일 `MiddlewareCodes.kt`(`internal object MiddlewareCodes`)로 옮겼다. `Middleware` companion 의 같은 이름 상수는 이름·공개 범위·KDoc 을 그대로 두고 그 값을 가리킨다(`const val X = MiddlewareCodes.X`). mission-ops 가 공개 상수 이름을 쓴다. S1 의 `FailureClassNames` 와 같은 방식이다. `UNCLASSIFIED` 는 이미 `FailureClassNames` 에 있어 import 만 바꿨다. 9 파일의 import 는 `MiddlewareCodes` 를 본다. 이 9 파일에 `Middleware.Companion` import 가 0 이다. `Execution.markIncident(unit)` 와 `ExecutionUnit.observeHold(hold)` 는 `Middleware` 의 멤버 확장이었으나 `Middleware` 를 전혀 쓰지 않았다. 각각 `Execution`·`ExecutionUnit` 의 internal 멤버로 옮겼다. 부르는 곳의 모양은 같다.
+
+    ★**`settleUpdate`·`sendRevisionUpdate`·`issuable` 을 생애(`CommandLifecycle`) 확장으로 옮기는 일은 이 PR 에서 하지 않았다.** 수신자를 바꿔도 본문이 `with(mw)` 로 `Middleware` 를 쓰므로 지금 줄어드는 지표가 없다. 수신자를 일괄로 바꾸는 다음 PR 에 드는 일이다.
+
+    층 시험의 멤버 래칫은 28 에서 21 로 줄었다(`Companion`, `LOOKUP_INTERVAL`·`OPEN_UNIT_STATES`·`RETRY_SUFFIX`·`TRANSPORT_ENDED` 의 게터, `markIncident`, `observeHold` 가 빠졌다). 수신자가 아직 `Middleware` 이므로 `UPWARD` 18 은 그대로다. `Middleware.kt` 765 → 754, 접합부 합 1,728 → 1,717, `Middleware` 의 internal 멤버 22 → 20 으로 예산 상한을 실측으로 내렸다. 여러 줄이던 값이 홀더에서 한 줄이 되고, 두 절차가 `Middleware.kt` 를 떠났다. 상한 셋을 1씩 낮춘 결함 주입이 모두 잡혔다.
+
+    다음(S4b)에는 생애·드라이버·접합부의 수신자를 좁은 환경으로 바꾼다. 그 전에 `Middleware.RobotView`(생애가 `views` 로 읽는 공개 중첩 타입)를 어떻게 다룰지 정해야 한다. 최상위로 옮기고 별칭을 두면 바이너리가 바뀌어 소유자 결정이 들고, 내부 읽기 계약을 따로 두는 안도 있다. `./gradlew cleanTest build -x :harness:test -x :registry:test` 결과 시험 XML 1,836건 실패 0, 번들 동치 12/12, 층 시험 변이 여덟 다시 모두 빨강을 확인했다. mission-ops(S3 의 시험 한 줄 고침을 둔 임시 클론)를 다시 빌드했다. site 41·mission-host 226·e2e 77 실패 0, ops-service 498 은 첫 빌드에서 시험 하나가 시험용 DB 연결 실패로 떨어졌고 다시 돌려 실패 0 이었다(ops-service 는 picasso 미들웨어를 컴파일하지 않는다).
+
 310. **의존 정비 층 시험 — 미들웨어 패키지의 파일이 층을 거슬러 기대지 않는다.**
 
     의존 정비 S3(PR #15, §15.309) 뒤이자 S4 앞의 단계다. 출하 코드 변경 없이 새 시험 `LayeringTest` 5건을 추가했다(시험 수 2,449 → 2,454). 자문(Codex·Fable)으로 정했다. 파일 단위 무순환을 목표로 삼지 않고 층 단위로 지킨다. 표에 없는 출하 파일이나 표에만 있고 실제 없는 파일은 실패한다. 시험 소스는 대상이 아니다. 판독기가 빈 결과로 초록이 되지 않게 소스 파일 수, 클래스 파일 수, 간선 수, 멤버 참조를 0보다 크다고 단언한다.

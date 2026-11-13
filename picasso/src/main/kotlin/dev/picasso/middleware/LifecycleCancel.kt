@@ -3,9 +3,9 @@ package dev.picasso.middleware
 import dev.picasso.contracts.v1.CancelTaskResponse
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.HoldState
-import dev.picasso.middleware.Middleware.Companion.CANCEL_NOT_SENT
-import dev.picasso.middleware.Middleware.Companion.CANCEL_RESENT
-import dev.picasso.middleware.Middleware.Companion.CANCEL_UNSENT
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_NOT_SENT
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_RESENT
+import dev.picasso.middleware.MiddlewareCodes.CANCEL_UNSENT
 
 // 취소 송신과 폴링: 도는 단위의 취소를 보내고 답을 정산한다. 공개 창구(cancel)는 Middleware 에 있다.
 // 명령 생애 넷(LifecycleIssue, LifecycleDoubt, LifecycleCancelAttach, LifecycleCancel)은 서로를 양방향으로 부르는

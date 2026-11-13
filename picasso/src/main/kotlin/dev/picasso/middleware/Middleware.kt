@@ -976,17 +976,6 @@ class Middleware(
     /** 이미 적은 (기체, 선택 키). 같은 사실을 되풀이하면 운영자가 곧 무시한다. */
     internal val droppedOptionals = mutableSetOf<Pair<String, String>>()
 
-    /** 이 단위가 이번 라운드에 닫혔다. 봉하는 것은 [IncidentLog.sealIncidents] 다. */
-    internal fun Execution.markIncident(unit: ExecutionUnit) {
-        pendingIncidents += unit.unitId
-    }
-
-    /** 관측을 한 곳으로 — 쥔 것을 본 적이 있는지는 중단 시점의 기대를 정한다(설계안 §5). */
-    internal fun ExecutionUnit.observeHold(observed: HoldState) {
-        hold = observed
-        if (observed.kind == HoldKind.HOLD_KIND_HOLDING) everHeld = true
-    }
-
     /** 설비에 묻고 **그 사실을 자취에 남긴다** — 조회하고 버리면 번들의 근거 창에서 설비 쪽이 빈다. */
     internal fun Execution.observeCell(unit: ExecutionUnit): SlotSignal? {
         val where = unit.destination ?: return null
@@ -1434,21 +1423,21 @@ class Middleware(
 
     companion object {
         /** 검증 불일치 — 하류는 성공이라는데 설비가 다른 것을 봤다(보고서 12.3 넷째 행). */
-        const val MISMATCH = "VERIFICATION_MISMATCH"
+        const val MISMATCH = MiddlewareCodes.MISMATCH
 
         /** 출발지의 용기가 요청과 달라 인수하지 않았다(보고서 5장 상황표 둘째 행). */
-        const val SOURCE_MISMATCH = "SOURCE_CONTAINER_MISMATCH"
+        const val SOURCE_MISMATCH = MiddlewareCodes.SOURCE_MISMATCH
 
         /** 목적지가 비어 있지 않아 인계를 기다린다(같은 표 첫째 행) — 실패가 아니라 지연이다. */
-        const val WAITING_HANDOVER = "WAITING_HANDOVER"
+        const val WAITING_HANDOVER = MiddlewareCodes.WAITING_HANDOVER
 
-        const val FLEET_REJECTED = "FLEET_REJECTED"
+        const val FLEET_REJECTED = MiddlewareCodes.FLEET_REJECTED
 
         /** 계약 `FailureClass.UNCLASSIFIED` 의 이름 — 하류가 분류를 안 실었을 때의 값. 지어낸 분류가 아니다. */
         const val UNCLASSIFIED = FailureClassNames.UNCLASSIFIED
 
         /** 설비 대기가 이름 있는 신호를 못 읽었다 — 자취의 값 자리. «기대 값이 아님» 과 다르다. */
-        internal const val NO_SIGNAL = "no signal"
+        internal const val NO_SIGNAL = MiddlewareCodes.NO_SIGNAL
 
         /**
          * [resume] 이 기체 스냅숏을 못 읽어 거부할 때 사유의 앞머리. 담는 쪽은 이것으로 «나중에 다시 시도» 와 그 밖의 거부를
@@ -1460,7 +1449,7 @@ class Middleware(
          * [resume] 이 넘겨받은 작업 지시보다 높은 리비전을 기체에서 보고 거부할 때 사유의 앞머리. 다시 시도해도 같다 — 담는 쪽이
          * 앞 인스턴스가 받은 마지막 버전을 넘겨야 한다. 뒤에 기체와 태스크, 그 리비전이 붙는다.
          */
-        const val RESUME_STALE_VERSION = "넘긴 작업 지시보다 높은 리비전을 기체가 들어 리빌드하지 않는다"
+        const val RESUME_STALE_VERSION = MiddlewareCodes.RESUME_STALE_VERSION
 
         /**
          * 이 인스턴스가 [forget] 으로 놓은 작업 지시 id 가 다시 왔을 때 거부 사유의 앞머리. 담는 쪽은 이것으로 «이미 끝나 놓은 일» 과 그 밖의
@@ -1475,40 +1464,40 @@ class Middleware(
         const val DUPLICATE_UNIT_ID = RefusalReasons.DUPLICATE_UNIT_ID
 
         /** [resume] 이 로봇 단위의 재작업 횟수를 스냅숏 태스크 id 에서 맞췄다는 실행 자취의 종류. */
-        const val RESUME_ATTEMPT = "RESUME_ATTEMPT"
+        const val RESUME_ATTEMPT = MiddlewareCodes.RESUME_ATTEMPT
 
         /** [resume] 이 마지막 로봇 태스크 앞의 설비 대기를 관측 없이 끝난 것으로 뒀다는 실행 자취의 종류. */
-        const val RESUME_SIGNAL_PASSED = "RESUME_SIGNAL_PASSED"
+        const val RESUME_SIGNAL_PASSED = MiddlewareCodes.RESUME_SIGNAL_PASSED
 
         /** [resume] 이 마지막 로봇 태스크 앞의 로봇 단위를 설비 근거 재확인 없이 닫기로 했다는 실행 자취의 종류. */
-        const val RESUME_PRIOR_ROBOT = "RESUME_PRIOR_ROBOT"
+        const val RESUME_PRIOR_ROBOT = MiddlewareCodes.RESUME_PRIOR_ROBOT
 
         /** 다시 지은 실행이 붙지 않은 단위를 스냅숏의 태스크에 `StartTask` 없이 붙였다는 실행 자취의 종류(§15.219). */
-        const val RESUME_REATTACHED = "RESUME_REATTACHED"
+        const val RESUME_REATTACHED = MiddlewareCodes.RESUME_REATTACHED
 
         /**
          * [resume] 이 판단 기록을 받지 않을 때의 사유 앞머리 — 기록의 작업 지시 id·버전이 넘긴 작업 지시와 다르거나 계획에 없는 단위가
          * 있다. [RESUME_SNAPSHOT_UNREADABLE] 과 달리 다시 시도해도 같다. 담는 쪽이 넘긴 기록이 이 실행의 것이 아니다.
          */
-        const val RESUME_RECORD_MISMATCH = "판단 기록이 이 작업 지시의 것이 아니어서 리빌드하지 않는다"
+        const val RESUME_RECORD_MISMATCH = MiddlewareCodes.RESUME_RECORD_MISMATCH
 
         /** [resume] 이 판단 기록의 사실(감수한 결함, 승인 소모, 단위의 판정)을 옮겼다는 실행 자취의 종류. */
-        const val RESUME_RECORD = "RESUME_RECORD"
+        const val RESUME_RECORD = MiddlewareCodes.RESUME_RECORD
 
         /** [resume] 이 스냅숏보다 앞선 시도의 기록이라 그 단위의 시각과 판정을 옮기지 않았다는 실행 자취의 종류. */
-        const val RESUME_RECORD_SUPERSEDED = "RESUME_RECORD_SUPERSEDED"
+        const val RESUME_RECORD_SUPERSEDED = MiddlewareCodes.RESUME_RECORD_SUPERSEDED
 
         /**
          * [resume] 이 기록의 운영자 보류를 이 인스턴스의 인시던트로 다시 열었다는 실행 자취의 종류. 그 인시던트의 근거 윈도우에
          * 실려 «재기동이 다시 연 인시던트» 를 가르는 표시다. 세부에 기록의 기체·시도·요청 시각·근거 시각·보류 사유가 든다.
          */
-        const val RESUME_HOLD_REOPENED = "RESUME_HOLD_REOPENED"
+        const val RESUME_HOLD_REOPENED = MiddlewareCodes.RESUME_HOLD_REOPENED
 
         /** 붙기 전에 걸린 취소가 기체의 태스크에 `StartTask` 없이 붙었다는 실행 자취의 종류(§15.231). 취소를 보냈는지가 세부에 든다. */
-        const val CANCEL_ATTACHED = "CANCEL_ATTACHED"
+        const val CANCEL_ATTACHED = MiddlewareCodes.CANCEL_ATTACHED
 
         /** 붙기 전에 걸린 취소가 기체를 못 봐 정착하지 않고 기다린다는 실행 자취의 종류(§15.231). 같은 까닭은 한 번만 남는다. */
-        const val CANCEL_UNATTACHED_WAIT = "CANCEL_UNATTACHED_WAIT"
+        const val CANCEL_UNATTACHED_WAIT = MiddlewareCodes.CANCEL_UNATTACHED_WAIT
 
         /**
          * 유예 안에서 미확정 조회(`StartTask` 재전송) 사이에 두는 최소 간격(§15.238). 새 현장 시간값이 아니라 이 층의 상수다.
@@ -1519,42 +1508,40 @@ class Middleware(
          * 없고, 그때 첫 조회가 한 번 더 바로 나가는 것은 무해하다 — 같은 참조의 재전송은 멱등이고 간격은 부하를 줄이려는 것이지 정합성의
          * 조건이 아니다.
          */
-        internal val LOOKUP_INTERVAL: Duration = Duration.ofSeconds(2)
+        internal val LOOKUP_INTERVAL: Duration = MiddlewareCodes.LOOKUP_INTERVAL
 
         /** 포트가 하위로 보내지 않았다고 답한 첫 출발([CommandNotSent])의 단위 사정. 단위는 `PENDING` 에 남아 다시 나간다(§15.237). */
-        internal const val START_NOT_SENT = "start not sent; reissued after the gates"
+        internal const val START_NOT_SENT = MiddlewareCodes.START_NOT_SENT
 
         /** 포트가 하위로 보내지 않았다고 답한 개정 갱신([CommandNotSent])의 단위 사정. 갱신은 미뤄져 다시 나간다(§15.237). */
-        internal const val UPDATE_NOT_SENT = "revision update not sent; deferred"
+        internal const val UPDATE_NOT_SENT = MiddlewareCodes.UPDATE_NOT_SENT
 
         /** 미확정 단위가 기체의 스냅숏에 보이는 태스크에 `StartTask` 없이 붙어 풀렸다는 실행 트레이스의 종류(§15.238). */
-        const val DOUBT_ATTACHED = "DOUBT_ATTACHED"
+        const val DOUBT_ATTACHED = MiddlewareCodes.DOUBT_ATTACHED
 
         /** 미확정 단위의 태스크를 기체가 단위보다 높은 리비전으로 들어 붙지 않고 운영자 보류에 두었다는 실행 트레이스의 종류(§15.238). */
-        const val DOUBT_REVISION_AHEAD = "DOUBT_REVISION_AHEAD"
+        const val DOUBT_REVISION_AHEAD = MiddlewareCodes.DOUBT_REVISION_AHEAD
 
         /** 도는 단위의 갱신 스트림이 종료 없이 영구히 닫혀 단위를 미확정으로 옮겼다는 실행 트레이스의 종류(§15.228). */
-        const val WATCH_CLOSED = "WATCH_CLOSED"
+        const val WATCH_CLOSED = MiddlewareCodes.WATCH_CLOSED
 
         /** 취소가 걸린 채 미확정이 안 풀려 취소가 닿지 못했다는 [CANCEL_UNSENT] 의 까닭(§15.238). 한 번만 남는다. */
-        internal const val HOLD_UNSENT_CAUSE = "미확정이라 태스크 핸들이 없다"
+        internal const val HOLD_UNSENT_CAUSE = MiddlewareCodes.HOLD_UNSENT_CAUSE
 
         /** 로봇 경로의 [HOLD_UNSENT_CAUSE] — 키로 지은 핸들로 보낸 취소도 기체가 받지 않았다(§15.219). */
-        internal const val KEYED_UNSENT_CAUSE = "미확정이라 태스크 핸들이 없고 키로 보낸 취소도 기체가 받지 않았다"
+        internal const val KEYED_UNSENT_CAUSE = MiddlewareCodes.KEYED_UNSENT_CAUSE
 
         /** 연결이 끊긴 기체에 건 취소가 유예 안에 닿지 않았다는 [CANCEL_UNSENT] 의 까닭(§15.243). */
-        internal const val LINK_UNSENT_CAUSE = "연결이 끊긴 채 미확정 유예 안에 닿지 않았다"
+        internal const val LINK_UNSENT_CAUSE = MiddlewareCodes.LINK_UNSENT_CAUSE
 
         /** 다시 지은 실행이 재기동 전에 맡긴 운반을 찾을 수 없어 취소가 닿지 못했다는 [CANCEL_UNSENT] 의 까닭(§15.254). */
-        internal const val LOOKUP_UNSENT_CAUSE = "플릿에 맡긴 운반을 찾을 조회가 없다"
+        internal const val LOOKUP_UNSENT_CAUSE = MiddlewareCodes.LOOKUP_UNSENT_CAUSE
 
         /** 붙기 전에 건 취소가 유예 안에 하위의 답을 받지 못했다는 [CANCEL_UNSENT] 의 까닭(§15.255). */
-        internal const val UNATTACHED_UNSENT_CAUSE = "붙기 전에 건 취소가 미확정 유예 안에 답을 받지 못했다"
+        internal const val UNATTACHED_UNSENT_CAUSE = MiddlewareCodes.UNATTACHED_UNSENT_CAUSE
 
         /** 플릿이 더는 그 운반을 하지 않는 상태. */
-        internal val TRANSPORT_ENDED = setOf(
-            TransportState.DELIVERED, TransportState.REJECTED_AT_SOURCE, TransportState.CANCELLED, TransportState.FAILED,
-        )
+        internal val TRANSPORT_ENDED = MiddlewareCodes.TRANSPORT_ENDED
 
         /** 라운드 진행([PUMP_SOURCE])의 실패를 [Execution.noticed] 에 적는 자리 이름. 기체 동기화는 `sync:<기체>` 다. */
         private const val PUMP_SOURCE = "pump"
@@ -1572,44 +1559,42 @@ class Middleware(
         const val CLOCK_SKEW = "CLOCK_SKEW"
 
         /** 건 취소를 하위에 보내지 못했다는 실행 트레이스의 종류(§15.237). 같은 까닭은 한 번만 남고, 닿을 때까지 다시 보낸다. */
-        const val CANCEL_UNSENT = "CANCEL_UNSENT"
+        const val CANCEL_UNSENT = MiddlewareCodes.CANCEL_UNSENT
 
         /** 보내지 못했던 취소가 다시 보내져 하위에 닿았다는 실행 트레이스의 종류(§15.237). */
-        const val CANCEL_RESENT = "CANCEL_RESENT"
+        const val CANCEL_RESENT = MiddlewareCodes.CANCEL_RESENT
 
         /** 감수한 결함이 기체에서 걷혀 그 열쇠를 놓았다는 실행 트레이스의 종류(§15.248). 같은 열쇠로 다시 생기면 다시 막는다. */
-        const val ACKNOWLEDGED_FAULT_CLEARED = "ACKNOWLEDGED_FAULT_CLEARED"
+        const val ACKNOWLEDGED_FAULT_CLEARED = MiddlewareCodes.ACKNOWLEDGED_FAULT_CLEARED
 
         /**
          * 취소 응답의 [CancelReport.refusal] 에 실리는 이 층의 값 — 건 취소가 끝내 하위에 닿지 못한 채 단위가 끝났다(§15.237).
          * 하위가 거부한 사유(계약의 거부 코드)가 아니라 이 층이 말하는 것이다. 단위는 [CancelReport.stoppedAfter] 로 나간다.
          */
-        const val CANCEL_NOT_SENT = "CANCEL_NOT_SENT"
+        const val CANCEL_NOT_SENT = MiddlewareCodes.CANCEL_NOT_SENT
 
         /** 발행 관문이 새 로봇 명령을 막았다는 실행 자취의 종류(ADR 52). 같은 막음은 한 번만 남는다. */
-        const val ISSUE_WITHHELD = "ISSUE_WITHHELD"
+        const val ISSUE_WITHHELD = MiddlewareCodes.ISSUE_WITHHELD
 
         /**
          * 발행 관문이 더는 막지 않는다는 실행 자취의 종류. 무엇이 허가했는지(원천·관측 시각)를 싣는다. 결함 관문이 따로 막고 있으면
          * 명령은 아직 안 나간다 — 이 줄은 «허가가 돌아왔다» 이지 «나갔다» 가 아니다.
          */
-        const val ISSUE_RESUMED = "ISSUE_RESUMED"
+        const val ISSUE_RESUMED = MiddlewareCodes.ISSUE_RESUMED
 
         /**
          * 선행 단위([ExecutionUnit.after])가 완료되지 않아 이 단위를 내지 않았다 — 실패 분류이자 실행 트레이스의 종류(§15.234).
          * 작업 응답의 `incompleteUnits` 에 이 값으로 오른다. 태스크가 없으므로 하위 분류가 아니라 이 계층의 이름이다.
          */
-        const val PREDECESSOR_NOT_DONE = "PREDECESSOR_NOT_DONE"
+        const val PREDECESSOR_NOT_DONE = MiddlewareCodes.PREDECESSOR_NOT_DONE
 
         /** 선행이 이 상태로 종료했으면 뒤 단위를 내지 않는다. `UNVERIFIED` 도 든다 — 이동이 확인되지 않은 자리에서 살피지 않는다. */
         private val ENDED_NOT_DONE = setOf(UnitState.FAILED, UnitState.UNVERIFIED, UnitState.ABORTED)
 
         /** 아직 낼 것이 있거나 도는 중이거나 사람을 기다리는 단위 상태. 하나라도 있으면 순회는 종결한 것이 아니다. */
-        internal val OPEN_UNIT_STATES = setOf(
-            UnitState.PENDING, UnitState.RUNNING, UnitState.VERIFYING, UnitState.IN_DOUBT, UnitState.OPERATOR_HOLD,
-        )
+        internal val OPEN_UNIT_STATES = MiddlewareCodes.OPEN_UNIT_STATES
 
         /** 재작업 태스크 id 의 접미사. `startUnit` 이 재작업한 단위에 `@rN` 으로 붙인다. */
-        internal val RETRY_SUFFIX = Regex("""@r([1-9]\d*)""")
+        internal val RETRY_SUFFIX = MiddlewareCodes.RETRY_SUFFIX
     }
 }

@@ -506,6 +506,12 @@ class ExecutionUnit(
      * 이 값을 다시 채운다.
      */
     internal var after: String? = null
+
+    /** 관측을 한 곳으로 — 쥔 것을 본 적이 있는지는 중단 시점의 기대를 정한다(설계안 §5). */
+    internal fun observeHold(observed: HoldState) {
+        hold = observed
+        if (observed.kind == HoldKind.HOLD_KIND_HOLDING) everHeld = true
+    }
 }
 
 /**

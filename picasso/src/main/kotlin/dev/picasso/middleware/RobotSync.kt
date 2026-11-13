@@ -3,8 +3,8 @@ package dev.picasso.middleware
 import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.contracts.v1.Event
 import dev.picasso.contracts.v1.Fault
-import dev.picasso.middleware.Middleware.Companion.ACKNOWLEDGED_FAULT_CLEARED
 import dev.picasso.middleware.Middleware.RobotView
+import dev.picasso.middleware.MiddlewareCodes.ACKNOWLEDGED_FAULT_CLEARED
 
 // 기체 동기화(재설계 R5, 설계 일지 §15.305): 스냅숏과 재생을 읽어 기체 뷰를 세우고, 이벤트를 관계있는 실행의 자취에 남기며, 걷힌
 // 결함의 감수 열쇠를 놓는다. 상태(기체 뷰, 실행)는 Middleware 에 있다. 라운드의 순서([Middleware.pump])가 이것을 부른다.

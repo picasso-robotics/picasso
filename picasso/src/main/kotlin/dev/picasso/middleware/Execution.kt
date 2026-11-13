@@ -182,4 +182,9 @@ class Execution internal constructor(
 
     /** 판단 기록이 넘긴 검증 대기의 창 — 단위마다 (시도, 창). 그 시도의 완료를 다시 관측할 때 한 번 쓰고 지운다. */
     internal val restoredWindows: MutableMap<String, Pair<Int, VerifyWindow>> = mutableMapOf()
+
+    /** 이 단위가 이번 라운드에 닫혔다. 봉하는 것은 [IncidentLog.sealIncidents] 다. */
+    internal fun markIncident(unit: ExecutionUnit) {
+        pendingIncidents += unit.unitId
+    }
 }
