@@ -12,5 +12,3 @@ permissions:
 jobs:
   publication:
     uses: picasso-robotics/.github/.github/workflows/publication-check.yml@main
-    secrets:
-      PUBLICATION_DENYLIST: ${{ secrets.PUBLICATION_DENYLIST }}
