@@ -88,6 +88,10 @@ class Middleware(
      * **실행 식별자(`exec-N`)와 결과 통보 식별자(`resp-N`)는 프로세스 안의 셈이라 다시 뜨면 되풀이된다.** 밖의
      * 소비자가 «이 통보가 이번 시도의 것인가» 를 가르려면 이 값과 짝지어야 한다. 그래서 **결정적이지 않아야 한다** —
      * 같은 시드로 다시 띄운 인스턴스가 같은 값을 내면 앞 구동의 통보가 이번 시도의 것으로 읽힌다.
+     *
+     * ★**이 값이 인시던트 정체성 열쇠(`incidentKey`, §15.322)의 유일성을 진다.** 열쇠는 최초 봉인의 (이 값, 인시던트 id)이고 인시던트 id 는
+     * 재기동마다 `incident-1` 부터 다시 센다. 재기동마다 새 값이어야 하며 **고정하지 말 것** — 고정하면 다른 사건이 같은 열쇠를 얻어 읽는
+     * 쪽이 서로 다른 보류를 한 사건으로 접는다.
      */
     val instanceId: String = "mw-${java.util.UUID.randomUUID()}",
     /**
@@ -178,7 +182,7 @@ class Middleware(
     }
 
     /** 사건 번들의 장부(설계안 §4). 봉인은 [pump] 가 라운드 끝에 부른다. */
-    private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping)
+    private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping, instanceId) { it in executions }
 
     /** 발신자 거부 뒤 제자리 회복(§15.320). 재확인은 [pump] 가 실행마다 라운드 끝에, 미발행 판정은 [pumpRound] 가 다음 단위를 고를 때 부른다. */
     private val recovery = HoldRecovery(env, gate, desk, incidentLog, executions, ::noteAttention)
@@ -287,7 +291,7 @@ class Middleware(
         when (val admission = admits(order, robotId, planned)) {
             // 승인한 조치 열을 붙인 접수의 거절은 서 있는 제안을 바꾸지 않는다([commit]).
             is Admission.Refused -> return desk.record(
-                robotId, order, admission.rejection, admission.sourceMissing, approval = approvedBy != null,
+                robotId, order, admission.rejection, admission.occupancy, approval = approvedBy != null,
             )
             Admission.Passed -> Unit
         }
@@ -372,10 +376,11 @@ class Middleware(
      *    [RESUME_RECORD_SUPERSEDED] 로 남긴다. 그 단위의 파지 이력은 버리지 않고 앞 시도의 것으로 접는다. 기록의 작업 지시 id 나 버전이 넘긴 작업 지시와 다르거나 계획에 없는 단위가 있으면
      *    [RESUME_RECORD_MISMATCH] 로 시작하는 사유로 거부하고 실행을 만들지 않는다 — 일부만 옮기면 옮기지 못한 사실이 «없었다» 가
      *    된다. 기록 대조는 스냅숏보다 먼저 한다.
-     * 8. **운영자 보류로 옮긴 단위마다 인시던트를 다시 연다.** 인시던트는 기록에 들지 않으므로 이 인스턴스에서 새로 열고, 실행
-     *    자취의 [RESUME_HOLD_REOPENED] 가 그 인시던트의 근거 윈도우에 실려 다시 연 것임을 가른다. 그 줄의 시각과 인시던트의
-     *    `at` 은 시계를 한 번 읽은 같은 값이다(줄이 있는 것만으로는 가르지 못한다, [reopenHold]). 판단은 보통의 보류와 같이
-     *    [resolve] 로 낸다. 같은 작업 지시로 다시 부르면 리비전 경로라 다시 열지 않는다.
+     * 8. **운영자 보류로 옮긴 단위마다 인시던트를 다시 연다.** 인시던트 번들은 기록에 들지 않으므로 이 인스턴스에서 새로 연다. 그
+     *    인시던트는 [OpeningKind.REOPENED] 이고 기록의 보류 판정이 실어 온 정체성([IncidentOrigin])을 잇는다 — 판 1~4 기록이면 널(연결
+     *    불명)이다(§15.322). 실행 자취의 [RESUME_HOLD_REOPENED] 줄도 그 근거 윈도우에 실리고, 그 줄의 시각과 인시던트의 `at` 은 시계를
+     *    한 번 읽은 같은 값이다([reopenHold]). 판단은 보통의 보류와 같이 [resolve] 로 낸다. 같은 작업 지시로 다시 부르면 리비전 경로라
+     *    다시 열지 않는다.
      *
      * **기록 없이 넘어오지 않는 것**: 운영자 판단, 감수한 결함([Execution.acknowledgedFaults]), 승인 소모 기록, 근거 윈도우의 요청
      * 시각, 설비 대기의 기한 시작 시각, 앞선 로봇 단위에 이전 인스턴스가 낸 근거 확인 결과, 건 취소. 모두 이 인스턴스에서 새로
@@ -417,8 +422,8 @@ class Middleware(
         val reopenedAt = record?.let { r -> env.restore(execution, r, desk).also { desk.restoreRecovery(execution, r) } }
         execution.units.filter { it.route == Route.ROBOT }.forEach { execution.inherited[it.unitId] = it.attempt }
         // 8 이 다시 연 인시던트를 지금 봉한다. 지금의 현장 시간값으로 — 라운드의 값([round])은 [pump] 의 것이라 건드리지 않는다.
-        // 봉인 시각은 다시 연 줄의 시각이다. 따로 읽으면 실제 시계에서 둘이 어긋나 줄 시각 = `at` 으로 가르지 못한다.
-        incidentLog.sealIncidents(execution, siteTimings.current(), reopenedAt)
+        // 봉인 시각은 다시 연 줄의 시각이다. 다시 연 것과 그 정체성은 기록에서 채운다(§15.322).
+        incidentLog.sealIncidents(execution, siteTimings.current(), reopenedAt, record)
         return Submission.Accepted(execution)
     }
 
@@ -453,7 +458,7 @@ class Middleware(
                         pendingWindow
                     },
                     verdict = unit.takeIf { it.state in UnitVerdict.STATES }?.let {
-                        UnitVerdict(it.state, it.reached, it.verification, it.evidenceAt, it.failureClass, it.note, it.result, it.preconditionSubjects)
+                        UnitVerdict(it.state, it.reached, it.verification, it.evidenceAt, it.failureClass, it.note, it.result, it.preconditionSubjects, incidentLog.holdOrigin(execution.executionId, it))
                     },
                     decision = execution.decisions[unit.unitId],
                     everHeld = unit.everHeld,
@@ -530,7 +535,7 @@ class Middleware(
         // [submit] 이 관문 앞에서 거부했을 작업 지시(근거 등급 초과·단위 id 중복)도 적지 않는다 — 그 제안을 승인하면 같은 거부를 받는다.
         // 답의 모양은 그대로다. 가린 제안은 [withheldProposal] 로 본다.
         if (evidenceRefusal(order, mission.capability) == null && duplicateUnitIdRefusal(planned) == null) {
-            tried.forEach { (robotId, admission) -> desk.record(robotId, order, admission.rejection, admission.sourceMissing) }
+            tried.forEach { (robotId, admission) -> desk.record(robotId, order, admission.rejection, admission.occupancy) }
         }
         return Unassigned(refusals, missing, unobserved, trialPassed = ranked.filter { it in trialOnly && it !in tried }.distinct())
     }

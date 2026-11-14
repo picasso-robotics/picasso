@@ -139,7 +139,7 @@ class MissionVersionScenarioTest {
     }
 
     @Test
-    fun `버전 2 의 대기 기한 인시던트가 그 버전을 싣고 해시에 들며 내보내기에는 안 실린다`() {
+    fun `버전 2 의 대기 기한 인시던트가 그 버전을 싣고 해시에 들며 내보내기에도 실린다`() {
         World().use { w ->
             w.activate(MissionFixtures.PREPARE_SEQUENCED_RACK)
             w.activate(MissionFixtures.withArrivalWait(deadlineSeconds = 60))
@@ -158,9 +158,9 @@ class MissionVersionScenarioTest {
             assertTrue(incident.digest() != other.digest(), "임무 버전이 해시에 안 들어갔다")
             assertTrue(incident.digest() != incident.copy(intent = incident.intent.copy(missionVersion = null)).digest())
 
-            // 내보내기에는 안 실린다(ADR 9). 경로의 새 하위 범주는 나간다.
+            // 판 8 부터 의도의 칸으로 실린다(§15.322) — 지금 활성인 3 이 아니라 실행이 쥔 2 다. 경로의 새 하위 범주도 나간다.
             val line = LedgerExport.incidents(listOf(incident))
-            assertTrue("missionVersion" !in line, line)
+            assertTrue("\"missionVersion\":2" in line, line)
             assertTrue("\"route\":\"SIGNAL\"" in line, line)
         }
     }

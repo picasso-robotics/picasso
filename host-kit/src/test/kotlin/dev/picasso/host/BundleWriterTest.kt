@@ -45,7 +45,7 @@ class BundleWriterTest {
         //   때마다 바뀌면 **그 거름망이 통째로 죽는다** — 같은 한 벌을 다시 훑을 때마다 또 부른다.
         //   앞 판이 그랬고 30분 돌린 판에서 식별자가 `-10930` 까지 갔다.
         val dir = createTempDirectory("bundle")
-        val writer = BundleWriter(dir)
+        val writer = BundleWriter(dir, "mw-1")
 
         assertTrue(writer.snapshot(emptyList(), listOf(record(1)), NOW), "첫 한 벌을 안 썼다")
         val first = runId(manifest(dir))
@@ -65,8 +65,8 @@ class BundleWriterTest {
         val first = createTempDirectory("bundle")
         val second = createTempDirectory("bundle")
 
-        BundleWriter(first).snapshot(emptyList(), listOf(record(1)), NOW)
-        BundleWriter(second).snapshot(emptyList(), listOf(record(1)), NOW)
+        BundleWriter(first, "mw-1").snapshot(emptyList(), listOf(record(1)), NOW)
+        BundleWriter(second, "mw-1").snapshot(emptyList(), listOf(record(1)), NOW)
 
         assertTrue(runId(manifest(first)) != runId(manifest(second)), "두 벌의 구동 식별자가 같다")
     }
@@ -75,7 +75,7 @@ class BundleWriterTest {
     fun `대장이 안 늘면 다시 안 쓴다`() {
         // 안 늘었는데 다시 쓰면 읽는 쪽이 세 파일을 한 벌로 집을 때 파일마다 다른 순간을 볼 수 있다.
         val dir = createTempDirectory("bundle")
-        val writer = BundleWriter(dir)
+        val writer = BundleWriter(dir, "mw-1")
         val searches = listOf(record(1))
 
         assertTrue(writer.snapshot(emptyList(), searches, NOW), "첫 한 벌을 안 썼다")
@@ -95,7 +95,7 @@ class BundleWriterTest {
         val dir = createTempDirectory("bundle")
         val searches = listOf(record(1), record(2), record(3))
 
-        BundleWriter(dir).snapshot(emptyList(), searches, NOW)
+        BundleWriter(dir, "mw-1").snapshot(emptyList(), searches, NOW)
 
         val lines = Files.readString(dir.resolve(LedgerExport.REMEDY_SEARCHES)).trim().lines()
         assertEquals(searches.size, lines.size, "탐색 대장의 줄 수가 다르다")
@@ -152,7 +152,7 @@ class BundleWriterTest {
     fun `결과 통보는 늘 때만 다시 쓰고 대장의 안내는 그것을 세지 않는다`() {
         // ★대장 한 벌의 안내가 이 파일을 세면 판이 다른 두 형식이 한 안내에 묶여, 결과 통보가 바뀔 때 대장의 판도 오른다.
         val dir = createTempDirectory("bundle")
-        val writer = BundleWriter(dir)
+        val writer = BundleWriter(dir, "mw-1")
         val response = JobResponse(
             jobResponseId = "resp-1", jobOrderId = "PATROL-APPROVES", executionId = "exec-1", version = 1,
             physicalState = PhysicalState.RUNNING, requiredEvidence = Evidence.E0, reachedEvidence = Evidence.E0,

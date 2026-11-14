@@ -31,9 +31,9 @@ class JudgmentRecordWireTest {
     fun `모르는 판이나 판이 없는 기록은 읽지 않고 거부한다`() {
         val text = JudgmentRecordWire.encode(FULL)
         listOf(
-            text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"5\""),
-            text.replace("\"schemaVersion\":\"4\",", ""),
-            text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":4"),
+            text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"6\""),
+            text.replace("\"schemaVersion\":\"5\",", ""),
+            text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":5"),
         ).forEach { wrong ->
             assertTrue(wrong != text, "시험의 전제: 바꿀 자리를 못 찾았다")
             val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
@@ -44,7 +44,7 @@ class JudgmentRecordWireTest {
     @Test
     fun `버전 1 기록은 건 취소 칸 없이 읽고 취소가 걸리지 않은 기록이 된다`() {
         val text = JudgmentRecordWire.encode(FULL)
-        val v1 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"1\""))).replace(",\"cancelRequested\":true", "")
+        val v1 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"1\""))).replace(",\"cancelRequested\":true", "")
         assertTrue(v1 != text && "cancelRequested" !in v1 && "everHeld" !in v1, "시험의 전제: 버전 1 모양을 못 지었다")
         assertEquals(NEVER_HELD.copy(cancelRequested = false), JudgmentRecordWire.decode(v1))
 
@@ -63,7 +63,7 @@ class JudgmentRecordWireTest {
     @Test
     fun `버전 2 기록은 단위의 파지 이력 칸 없이 읽고 쥔 것을 본 적 없는 단위가 된다`() {
         val text = JudgmentRecordWire.encode(FULL)
-        val v2 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"2\"")))
+        val v2 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"2\"")))
         assertTrue(v2 != text && "everHeld" !in v2 && "heldInEarlierAttempt" !in v2, "시험의 전제: 버전 2 모양을 못 지었다")
         assertEquals(NEVER_HELD, JudgmentRecordWire.decode(v2))
 
@@ -84,15 +84,15 @@ class JudgmentRecordWireTest {
         val text = JudgmentRecordWire.encode(FULL)
         assertTrue("\"position\":{\"orderVersion\":3,\"unitId\":\"s2\",\"attempt\":1}" in text, text)
         assertTrue("\"preconditionSubjects\":[\"HOLD\"]" in text, text)
-        val v3 = withoutPlaced(text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"3\""))
+        val v3 = withoutPlaced(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"3\""))
         assertTrue(v3 != text && "position" !in v3 && "preconditionSubjects" !in v3, "시험의 전제: 버전 3 모양을 못 지었다")
         assertEquals(UNPLACED, JudgmentRecordWire.decode(v3))
 
-        // 버전 4 는 두 칸이 비면 키를 싣지 않는다 — 그 모양은 앞 버전과 같고, 읽으면 위치 없음·주어 없음이다.
+        // 버전 4 부터 두 칸이 비면 키를 싣지 않는다 — 그 모양은 앞 버전과 같고, 읽으면 위치 없음·주어 없음이다.
         val unplaced = JudgmentRecordWire.encode(UNPLACED)
         assertTrue("position" !in unplaced && "preconditionSubjects" !in unplaced, unplaced)
         assertEquals(UNPLACED, JudgmentRecordWire.decode(unplaced))
-        assertEquals(UNPLACED, JudgmentRecordWire.decode(withoutPlaced(text)))
+        assertEquals(UNPLACED, JudgmentRecordWire.decode(withoutPlaced(withoutIdentity(text))))
 
         // 버전 3 에 그 칸이 있으면 거부한다.
         mapOf(
@@ -100,6 +100,32 @@ class JudgmentRecordWireTest {
             v3.replace("\"result\":\"ref://m1\"", "\"result\":\"ref://m1\",\"preconditionSubjects\":[]") to "모르는 칸",
         ).forEach { (wrong, why) ->
             assertTrue(wrong != text && wrong != v3, "시험의 전제: 바꿀 자리를 못 찾았다")
+            val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
+            assertTrue(why in e.message!!, e.message)
+        }
+    }
+
+    @Test
+    fun `버전 4 기록은 보류 판정의 인시던트 정체성 칸 없이 읽고 정체성 없는 판정이 된다`() {
+        // §15.322 — 판 4 로 다시 연 인시던트는 연결 불명이다. 판 5 는 정체성이 없으면 두 칸을 싣지 않아(판 4 의 두 칸과 같은 규칙) 판 4 와 같은 모양이다.
+        val text = JudgmentRecordWire.encode(FULL)
+        assertTrue("\"incidentKey\":\"mw-a/incident-3\",\"firstOpenedAt\":\"2026-10-14T00:00:04Z\"" in text, text)
+        val v4 = withoutIdentity(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"4\""))
+        assertTrue(v4 != text && "incidentKey" !in v4 && "firstOpenedAt" !in v4, "시험의 전제: 버전 4 모양을 못 지었다")
+        assertEquals(UNIDENTIFIED, JudgmentRecordWire.decode(v4))
+
+        val unidentified = JudgmentRecordWire.encode(UNIDENTIFIED)
+        assertTrue("incidentKey" !in unidentified && "firstOpenedAt" !in unidentified, unidentified)
+        assertEquals(UNIDENTIFIED, JudgmentRecordWire.decode(unidentified))
+
+        // 버전 4 에 그 칸이 있거나, 버전 5 에 두 칸 가운데 하나만 있거나, 시각이 아니면 거부한다.
+        mapOf(
+            text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"4\"") to "모르는 칸",
+            text.replace(",\"firstOpenedAt\":\"2026-10-14T00:00:04Z\"", "") to "하나만",
+            text.replace("\"incidentKey\":\"mw-a/incident-3\",", "") to "하나만",
+            text.replace("\"firstOpenedAt\":\"2026-10-14T00:00:04Z\"", "\"firstOpenedAt\":\"어제\"") to "시각이 아니다",
+        ).forEach { (wrong, why) ->
+            assertTrue(wrong != text, "시험의 전제: 바꿀 자리를 못 찾았다")
             val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
             assertTrue(why in e.message!!, e.message)
         }
@@ -159,7 +185,10 @@ class JudgmentRecordWireTest {
                     taskId = "J-1#s1",
                     requestedAt = T0,
                     verifyWindow = null,
-                    verdict = UnitVerdict(UnitState.DONE, Evidence.E2, Verification.MATCHED, T0.plusSeconds(3), null, "operator \"confirmed\"\n두 줄", "ref://m1", listOf("HOLD")),
+                    verdict = UnitVerdict(
+                        UnitState.DONE, Evidence.E2, Verification.MATCHED, T0.plusSeconds(3), null, "operator \"confirmed\"\n두 줄", "ref://m1", listOf("HOLD"),
+                        IncidentOrigin("mw-a/incident-3", T0.plusSeconds(4)),
+                    ),
                     decision = null,
                     everHeld = true,
                 ),
@@ -177,18 +206,24 @@ class JudgmentRecordWireTest {
             cancelRequested = true,
         )
 
+        /** 판정의 정체성 칸이 없는 앞 버전(1~4)으로 읽으면 나와야 하는 기록 — 판정에 정체성이 없다. */
+        val UNIDENTIFIED = FULL.copy(units = FULL.units.map { u -> u.copy(verdict = u.verdict?.copy(incident = null)) })
+
         /** 위치 칸과 거부 주어 칸이 없는 앞 버전(1·2·3)으로 읽으면 나와야 하는 기록 — 접수 승인이고 판정에 주어가 없다. */
-        val UNPLACED = FULL.copy(
+        val UNPLACED = UNIDENTIFIED.copy(
             approval = FULL.approval!!.copy(position = null),
-            units = FULL.units.map { u -> u.copy(verdict = u.verdict?.copy(preconditionSubjects = emptyList())) },
+            units = UNIDENTIFIED.units.map { u -> u.copy(verdict = u.verdict?.copy(preconditionSubjects = emptyList())) },
         )
 
         /** 파지 이력 칸이 없는 앞 버전으로 읽으면 나와야 하는 기록 — 두 칸이 거짓인 것 말고는 [UNPLACED] 와 같다. */
         val NEVER_HELD = UNPLACED.copy(units = UNPLACED.units.map { it.copy(everHeld = false, heldInEarlierAttempt = false) })
 
-        /** 승인의 위치 칸과 판정의 거부 주어 칸을 지운다 — 버전 3 까지의 모양이다. */
+        /** 승인의 위치 칸과 판정의 거부 주어 칸, 판정의 정체성 칸을 지운다 — 버전 3 까지의 모양이다. */
         fun withoutPlaced(text: String): String =
-            text.replace(Regex(""","position":(null|\{[^}]*\})"""), "").replace(Regex(""","preconditionSubjects":\[[^\]]*]"""), "")
+            withoutIdentity(text).replace(Regex(""","position":(null|\{[^}]*\})"""), "").replace(Regex(""","preconditionSubjects":\[[^\]]*]"""), "")
+
+        /** 판정의 정체성 두 칸을 지운다 — 버전 4 까지의 모양이다. */
+        fun withoutIdentity(text: String): String = text.replace(Regex(""","incidentKey":"[^"]*","firstOpenedAt":"[^"]*""""), "")
 
         /** 단위의 파지 이력 칸을 지운다 — 앞 버전의 모양이다. */
         fun withoutHeld(text: String): String = text.replace(Regex(",\"everHeld\":(true|false),\"heldInEarlierAttempt\":(true|false)"), "")

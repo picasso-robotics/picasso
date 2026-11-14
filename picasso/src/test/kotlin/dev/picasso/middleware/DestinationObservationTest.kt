@@ -66,10 +66,11 @@ class DestinationObservationTest {
             val rejected = assertIs<Middleware.Submission.Rejected>(w.mw.submit(rack("SEQ-1"), ROBOT))
             assertTrue(RACK in rejected.reason && "목적지 점유" in rejected.reason, rejected.reason)
             assertTrue(OTHER in rejected.reason, "무엇이 있는지 적어야 운영자가 치울 것을 안다: ${rejected.reason}")
-            // 결품도 출발 미관측도 아니다 — 대체 자리를 계산하지 않고 조치 탐색 레지스터에도 남지 않는다(§15.183 과 같은 처리).
+            // 결품도 출발 미관측도 아니다 — 대체 자리를 계산하지 않는다. 레지스터에는 목적지 점유 줄로 선다(§15.322) — 걸음 없이.
             assertNull(rejected.alternativeLocations)
             assertNull(rejected.sourceUnobserved)
-            assertEquals(emptyList(), w.mw.remedySearches(), "목적지 점유가 조치 탐색 레지스터에 섰다")
+            assertNull(rejected.remedy, "목적지 점유가 승인할 조치로 섰다")
+            assertEquals(listOf<RemedyOutcome>(RemedyOutcome.DestinationOccupied(RACK, OTHER)), w.mw.remedySearches().map { it.outcome }, "목적지 점유가 구조로 안 남았다")
             assertEquals(emptyList(), w.mw.executions(), "차 있는 자리로 실행이 생겼다")
         }
     }
@@ -81,6 +82,8 @@ class DestinationObservationTest {
             w.cell.program(RACK, null)
             val bare = assertIs<Middleware.Submission.Rejected>(w.mw.submit(rack("SEQ-1"), ROBOT))
             assertTrue("목적지 점유" in bare.reason, bare.reason)
+            // 있다고만 했다 — 점유 신원 불명은 널이다. 빈 문자열로 접지 않는다.
+            assertEquals(RemedyOutcome.DestinationOccupied(RACK, null), w.mw.remedySearches().last().outcome)
 
             w.cell.program(RACK, MATERIAL)
             val same = assertIs<Middleware.Submission.Rejected>(w.mw.submit(rack("SEQ-1"), ROBOT))
@@ -96,7 +99,7 @@ class DestinationObservationTest {
             assertTrue(RACK in rejected.reason && "목적지 미관측" in rejected.reason, rejected.reason)
             assertFalse("목적지 점유" in rejected.reason, "말이 없었는데 차 있다고 지어냈다: ${rejected.reason}")
             assertNull(rejected.alternativeLocations)
-            assertEquals(emptyList(), w.mw.remedySearches())
+            assertEquals(listOf<RemedyOutcome>(RemedyOutcome.DestinationUnobserved(RACK)), w.mw.remedySearches().map { it.outcome }, "목적지 미관측이 구조로 안 남았다")
             assertEquals(emptyList(), w.mw.executions(), "확인 전에 실행이 생겼다")
         }
     }
@@ -136,7 +139,7 @@ class DestinationObservationTest {
     }
 
     @Test
-    fun `REQUIRED 이면 미배정의 거부 사유에 목적지 점유가 남고 결품과 출발 미관측 응답에는 없다`() {
+    fun `REQUIRED 이면 미배정의 거부 사유와 레지스터에 목적지 점유가 남고 결품과 출발 미관측 응답에는 없다`() {
         World("REQUIRED").use { w ->
             w.cell.program(RACK, OTHER)
 
@@ -144,7 +147,8 @@ class DestinationObservationTest {
             assertTrue("목적지 점유" in unassigned.refusals.getValue(ROBOT), unassigned.toString())
             assertEquals(emptyMap(), unassigned.sourceMissing, "목적지 점유가 결품으로 접혔다")
             assertEquals(emptyMap(), unassigned.sourceUnobserved, "목적지 점유가 출발 미관측으로 접혔다")
-            assertEquals(emptyList(), w.mw.remedySearches(), "물어보기만 한 것이 레지스터에 쌓였다")
+            // 후보 전부가 떨어진 미배정은 시도한 것으로 적는다(§15.164) — 목적지 점유 줄이다(§15.322).
+            assertEquals(listOf<RemedyOutcome>(RemedyOutcome.DestinationOccupied(RACK, OTHER)), w.mw.remedySearches().map { it.outcome })
         }
     }
 
@@ -158,7 +162,7 @@ class DestinationObservationTest {
             val rejected = assertIs<Middleware.Submission.Rejected>(w.mw.submit(rack("SEQ-1"), ROBOT))
             assertTrue("목적지 점유" in rejected.reason, rejected.reason)
             assertNull(rejected.alternativeLocations, "목적지가 차 있는데 대체 출발 자리를 냈다")
-            assertEquals(emptyList(), w.mw.remedySearches(), "목적지가 차 있는데 결품이 레지스터에 섰다")
+            assertEquals(listOf<RemedyOutcome>(RemedyOutcome.DestinationOccupied(RACK, OTHER)), w.mw.remedySearches().map { it.outcome }, "목적지가 차 있는데 결품이 레지스터에 섰다")
         }
     }
 

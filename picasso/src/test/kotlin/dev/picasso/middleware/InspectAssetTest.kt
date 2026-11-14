@@ -698,7 +698,7 @@ class InspectAssetTest {
     }
 
     @Test
-    fun `재작업 판단은 이동의 인시던트에 결정자와 함께 붙고 내보내는 인시던트 줄은 결정자를 싣지 않는다`() {
+    fun `재작업 판단은 이동의 인시던트에 결정자와 함께 붙고 내보내는 인시던트 줄도 결정자를 싣는다`() {
         val travel = travelId("PUMP-01")
         World(port = failing(taskOf(travel))).use { w ->
             val exec = w.partialWithSkippedFirst()
@@ -716,8 +716,9 @@ class InspectAssetTest {
             assertEquals(IncidentDecision.REWORK to OPERATOR, resolution.decision to resolution.decidedBy)
             val line = LedgerExport.incidents(w.mw.incidents())
             assertTrue("\"resolution\":{\"decision\":\"REWORK\"" in line, line)
-            assertTrue("decidedBy" !in line && OPERATOR.id !in line, line)
-            assertEquals("7", LedgerExport.SCHEMA_VERSION)
+            // 판 8(§15.322) — 판단자가 승인자와 같은 모양으로 실린다.
+            assertTrue("\"decidedBy\":{\"id\":\"${OPERATOR.id}\",\"kind\":\"PERSON\"}" in line, line)
+            assertEquals("8", LedgerExport.SCHEMA_VERSION)
         }
     }
 
