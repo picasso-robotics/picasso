@@ -115,6 +115,8 @@ class SourceSizeBudgetTest {
     private companion object {
         // 2026-11-12 2차 분할 뒤 실측: Middleware.kt 1,036, 접합부 최대 241(UnitDrivers.kt), 합 2,650,
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
+        // 2026-11-15 툼스톤 넘침 선언(§15.324) 실측: Middleware.kt 689, 합 1,627. 놓은 작업 지시 표시의 표·자료형·이빅션 반복·접수 거부를 제 클래스
+        // ForgottenOrders.kt(49, 그 밖의 파일 예산)로 옮겨 찬 표 거부·놓는 입구·상태 읽기의 위임 줄 자리를 냈다. 상한은 그대로 둔다.
         // 2026-11-13 의존 정비 S4c 실측: Middleware.kt 696, 합 1,670(그대로), Middleware 의 internal 멤버 0(§15.313). 창구 절차도 좁은 환경의 확장이
         // 되어 internal 로 열 까닭이 없어졌다. 리비전을 받은 뒤의 알림은 호출 자리 셋에 한 줄씩 들였다.
         // 2026-11-13 의존 정비 S4b 실측: Middleware.kt 696, 합 1,670, Middleware 의 internal 멤버 9(§15.312). 기체 뷰·라운드 시간값·트레이스·설비 관측이

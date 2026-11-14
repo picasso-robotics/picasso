@@ -362,6 +362,8 @@ class LayeringTest {
             "UnitFacts.kt" to Layer.STATE,
             "CommandEnv.kt" to Layer.STATE,
             "CommandLifecycle.kt" to Layer.STATE,
+            // 놓은 작업 지시 표시(§15.324) — 표·넘침 선언·셈을 제 클래스로 든다.
+            "ForgottenOrders.kt" to Layer.STATE,
             // 전이 — 명령 생애와 접합부. 안의 순환은 허용한다.
             "LifecycleCancel.kt" to Layer.TRANSITION,
             "LifecycleCancelAttach.kt" to Layer.TRANSITION,
@@ -396,7 +398,7 @@ class LayeringTest {
         val UPWARD: Map<Pair<String, String>, String> = buildMap {
             // 공개 결과 계약 — 하위 파일이 `Middleware.Submission.*` 을 짓거나 돌려준다(§15.307, 리비전은 §15.313). 이 간선은 Submission 만 쓴다는
             // 것을 `Middleware 밖의 파일은 Middleware 에서 Submission 만 쓴다` 가 따로 댄다. 풀 단계 없음 — 푸는 것은 공개 API 변경이다.
-            listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "Revision.kt", "UnitFacts.kt", "HoldRecovery.kt", "Rework.kt")
+            listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "Revision.kt", "UnitFacts.kt", "HoldRecovery.kt", "Rework.kt", "ForgottenOrders.kt")
                 .forEach { put(it to "Middleware.kt", "공개 결과 계약 Submission(§15.307)") }
         }
 

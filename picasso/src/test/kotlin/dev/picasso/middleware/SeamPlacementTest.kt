@@ -45,6 +45,9 @@ class SeamPlacementTest {
             // 재작업 묶음(§15.323) — 건너뛴 쌍의 술어와 받는 조건이 EvidenceBinding.kt 에서 제 클래스로 옮겼다
             "fun skipped(" to "Rework.kt",
             "fun bundleOf(" to "Rework.kt",
+            // 놓은 작업 지시 표시(§15.324) — 표와 찬 표 거부가 Middleware.kt 에서 제 클래스로 옮겼다
+            "class ForgottenOrders(" to "ForgottenOrders.kt",
+            "fun fullRefusal(" to "ForgottenOrders.kt",
             // 제안과 승인 장부 — 운영자 접합부
             "var proposalsMade" to "RemedyDesk.kt",
             "val remedyLog" to "RemedyDesk.kt",
