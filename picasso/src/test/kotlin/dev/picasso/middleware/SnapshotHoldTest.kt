@@ -31,7 +31,7 @@ class SnapshotHoldTest {
     }
 
     private class World(port: (RobotPort) -> RobotPort = { it }) : AutoCloseable {
-        val harness = Harness(mapOf(ROBOT to PRECOND))
+        val harness = Harness(mapOf(ROBOT to PRECOND, SPARE to PRECOND))
         val cell = CellMimic(now = { harness.clock.now() })
         /** 발신자가 실제로 내는 스냅숏 — 시험의 전제를 이것으로 확인한다. */
         val raw = ClientRobotPort(harness.client())
@@ -172,6 +172,84 @@ class SnapshotHoldTest {
         }
     }
 
+    /** 선언을 읽다가 못 읽게 되는 포트. 못 읽으면 관문이 사슬 검사를 건너뛴다(`AdmissionGate.chainOf` 의 첫 줄). */
+    private class Blinding(private val delegate: RobotPort) : RobotPort by delegate {
+        val blind = mutableSetOf<String>()
+        override fun capabilities(robotId: String) = if (robotId in blind) null else delegate.capabilities(robotId)
+    }
+
+    @Test
+    fun `거절만 받아 가는 후보는 떨어지면 다른 후보처럼 제안이 서고 실행은 서지 않는다`() {
+        World().use { w ->
+            w.close(w.heldOnHold())
+            val before = w.mw.executions().size
+            val out = assertIs<Unassigned>(w.mw.assign(patrol(), listOf(ROBOT), trialOnly = setOf(ROBOT)))
+            assertTrue("기체 스냅숏의 파지" in assertNotNull(out.refusals[ROBOT]), out.toString())
+            assertEquals(emptyList(), out.trialPassed)
+            assertIs<Remedy.Found>(assertNotNull(w.mw.proposal(ROBOT, "PATROL-1")))
+            assertEquals(before, w.mw.executions().size)
+            // 제안은 보통의 제안이다 — 값 없는 문이 그대로 승인한다.
+            assertIs<ApprovalOutcome.Approved>(w.mw.attemptApproval(attempt()))
+        }
+    }
+
+    @Test
+    fun `거절만 받아 가는 후보가 관문을 통과하면 채택하지 않고 다음 후보로 간다`() {
+        World().use { w ->
+            w.close(w.heldOnHold())
+            // 빈손 기체를 시도 전용으로 넘긴다 — 관문은 통과로 답하지만 채택하지 않는다. 실행도 제안도 대장 줄도 없다.
+            val searched = w.mw.remedySearches().size
+            val empty = assertIs<Unassigned>(w.mw.adopt(patrol(), listOf(SPARE), trialOnly = setOf(SPARE)))
+            assertEquals(listOf(SPARE), empty.trialPassed)
+            assertEquals(emptyMap(), empty.refusals)
+            assertTrue(w.mw.executions().none { it.order.jobOrderId == "PATROL-1" })
+            assertEquals(searched, w.mw.remedySearches().size, "통과한 시도에 대장 줄이 섰다")
+
+            // 통과한 시도 전용 후보 뒤의 후보가 떨어지면 아무도 채택되지 않았으므로 떨어진 후보는 보통처럼 적힌다.
+            val mixed = assertIs<Unassigned>(w.mw.adopt(patrol("PATROL-2"), listOf(SPARE, ROBOT), trialOnly = setOf(SPARE)))
+            assertEquals(listOf(SPARE), mixed.trialPassed)
+            assertEquals(setOf(ROBOT), mixed.refusals.keys)
+            assertIs<Remedy.Found>(assertNotNull(w.mw.proposal(ROBOT, "PATROL-2")))
+            assertNull(w.mw.proposal(SPARE, "PATROL-2"))
+        }
+    }
+
+    @Test
+    fun `선언을 못 읽어 사슬 검사를 건너뛴 시도 전용 후보에도 실행이 서지 않는다`() {
+        var blinding: Blinding? = null
+        World(port = { Blinding(it).also { b -> blinding = b } }).use { w ->
+            w.close(w.heldOnHold())
+            assertNotNull(blinding).blind += ROBOT
+            // 미리 묻고 다시 내는 사이에 선언 읽기가 끊긴 장면 — 관문은 통과로 답한다. 시도 전용이라 실행은 서지 않는다.
+            assertEquals(Admission.Passed, w.mw.admits(patrol(), ROBOT, InspectAsset().plan(patrol())))
+            val out = assertIs<Unassigned>(w.mw.assign(patrol(), listOf(ROBOT), trialOnly = setOf(ROBOT)))
+            assertEquals(listOf(ROBOT), out.trialPassed)
+            assertTrue(w.mw.executions().none { it.order.jobOrderId == "PATROL-1" })
+            assertNull(w.mw.proposal(ROBOT, "PATROL-1"))
+
+            // 시도 전용 후보가 통과해도 뒤의 보통 후보는 채택된다 — 시도는 순위를 막지 않는다.
+            val taken = assertIs<Middleware.Submission.Accepted>(w.mw.adopt(patrol("PATROL-3"), listOf(ROBOT, SPARE), trialOnly = setOf(ROBOT)))
+            assertEquals(SPARE, taken.execution.robotId)
+        }
+    }
+
+    @Test
+    fun `시도 전용 후보에 같은 작업 지시의 실행이 있으면 개정하지 않고 거절한다`() {
+        World().use { w ->
+            // 잔여 파지의 원천이 그 실행이다. 같은 작업 지시를 버전을 올려 시도로 넘기면 개정이 정착한 실행을 되살릴 수 있다.
+            val held = w.heldOnHold()
+            val state = held.physicalState
+            val count = w.mw.executions().size
+            val version = held.order.version
+            val bumped = held.order.copy(version = held.order.version + 1)
+            val refused = assertIs<Middleware.Submission.Rejected>(w.mw.assign(bumped, listOf(ROBOT), trialOnly = setOf(ROBOT)))
+            assertTrue("시도 전용" in refused.reason && held.executionId in refused.reason, refused.reason)
+            assertEquals(state, held.physicalState)
+            assertEquals(version, held.order.version, "개정이 실행의 작업 지시를 바꿨다")
+            assertEquals(count, w.mw.executions().size)
+        }
+    }
+
     private val place = mapOf(PrepareSequencedRack.P_OBJECT to "ENGINE-COVER-A", PrepareSequencedRack.P_DESTINATION to DROP_SLOT)
 
     private fun attempt() = ApprovalAttempt(AGENT, ROBOT, "PATROL-1", listOf(PrepareSequencedRack.SKILL))
@@ -188,6 +266,7 @@ class SnapshotHoldTest {
 
     private companion object {
         const val ROBOT = "hum-02"
+        const val SPARE = "hum-04"
         const val DROP_SLOT = "DROP-01"
         val OPERATOR = Approver("op-1", ApproverKind.PERSON)
         val AGENT = Approver("recovery-1", ApproverKind.AGENT)

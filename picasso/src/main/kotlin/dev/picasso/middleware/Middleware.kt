@@ -482,12 +482,18 @@ class Middleware(
      * **이미 실행이 선 작업 지시는 관문에 대지 않는다.** [submit] 과 같이 리비전 경로로 간다 — 같은 버전이면 [Submission.Idempotent],
      * 낮으면 거부, 높으면 그 실행의 개정이다. 순위 목록은 읽지 않으며 개정된 실행은 지금 기체에 남는다. 관문에 먼저 대면 그 실행이 제 자리와
      * 제 구역에 걸려 «배정할 기체가 없다» 로 읽힌다.
+     *
+     * **[trialOnly] 는 거절만 받아 가는 후보다**(§15.317). 관문에 대고 떨어지면 다른 후보처럼 적히지만, 통과해도 채택하지 않고 다음 후보로
+     * 간다 — 통과한 것은 [Unassigned.trialPassed] 로 낸다. 담는 쪽이 제 정책(예: 물품 책임, ADR 51)으로 막아 둔 기체에서
+     * 조치 제안만 얻으려고 넘길 때 쓴다. 판정과 기록이 한 호출 안에 있어, 미리 묻고 다시 내는 사이에 기체가 바뀌어 실행이 서는 틈이 없다.
+     * 이미 실행이 선 작업 지시는 아래처럼 리비전으로 가되, 그 실행의 기체가 이 집합에 있으면 개정하지 않고 거절한다 — 정착한 실행을 되살리는
+     * 개정도 실행이 서는 길이다. 시도를 받는 쪽의 분기 순서에 이 안전을 맡기지 않는다.
      */
-    fun adopt(order: JobOrder, ranked: List<String>): Submission {
+    fun adopt(order: JobOrder, ranked: List<String>, trialOnly: Set<String> = emptySet()): Submission {
         // 놓은 작업 지시는 관문에 대기 전에 거부한다. 후보가 전부 떨어지면 «배정할 기체가 없다» 로 읽힌다.
         forgottenRefusal(order.jobOrderId)?.let { return it }
         // 이미 선 실행은 카탈로그도 안 본다 — [submit] 과 같은 이유다.
-        executions.values.firstOrNull { it.order.jobOrderId == order.jobOrderId }?.let { return env.revise(gate, desk, it, order).also { if (it is Submission.Accepted) noteAttention(it.execution) } }
+        executions.values.firstOrNull { it.order.jobOrderId == order.jobOrderId }?.let { return if (it.robotId in trialOnly) Submission.Rejected("시도 전용 후보 ${it.robotId} 에 이 작업 지시의 실행 ${it.executionId} 가 있다 — 개정은 시도로 하지 않는다") else env.revise(gate, desk, it, order).also { r -> if (r is Submission.Accepted) noteAttention(r.execution) } }
         // **카탈로그를 한 번 읽고 그 쌍을 작업 수락까지 넘긴다.** 관문에 댄 계획과 실행이 쥘 계획이 같은 버전이어야
         // 한다 — 그 사이에 활성화가 끼면 관문이 본 적 없는 단위가 나간다.
         val mission = missions.active(order.workMasterId)
@@ -497,9 +503,9 @@ class Middleware(
         val missing = linkedMapOf<String, RemedyOutcome.SourceMissing>()
         val unobserved = linkedMapOf<String, SourceUnobserved>()
         val tried = linkedMapOf<String, Admission.Refused>()
-        for (robotId in ranked) {
+        for (robotId in ranked.distinct()) {
             when (val admission = admits(order, robotId, planned)) {
-                Admission.Passed -> return submit(order, robotId, prefix = emptyList(), mission = mission)
+                Admission.Passed -> if (robotId !in trialOnly) return submit(order, robotId, prefix = emptyList(), mission = mission)
                 is Admission.Refused -> {
                     refusals[robotId] = admission.rejection.reason
                     admission.sourceMissing?.let { missing[robotId] = it }
@@ -516,17 +522,17 @@ class Middleware(
         if (evidenceRefusal(order, mission.capability) == null && duplicateUnitIdRefusal(planned) == null) {
             tried.forEach { (robotId, admission) -> desk.record(robotId, order, admission.rejection, admission.sourceMissing) }
         }
-        return Unassigned(refusals, missing, unobserved)
+        return Unassigned(refusals, missing, unobserved, trialPassed = ranked.filter { it in trialOnly && it !in tried }.distinct())
     }
 
     /**
      * 비용으로 순위를 매기고 채택한다 — 배정기가 붙기 전의 기본 정책.
      *
      * 항은 이 층이 실제로 아는 것뿐이다([AssignmentCost]). 가중치를 바꾸면 순위가 바뀌고 **관문의 답은
-     * 그대로다** — 정책이 판정을 흔들지 않는다는 것이 이 배선의 요점이다.
+     * 그대로다** — 정책이 판정을 흔들지 않는다는 것이 이 배선의 요점이다. [trialOnly] 는 [adopt] 의 것이다.
      */
-    fun assign(order: JobOrder, candidates: List<String>): Submission =
-        adopt(order, cost.rank(candidates, live = ::liveExecutionCount, holding = ::isHolding))
+    fun assign(order: JobOrder, candidates: List<String>, trialOnly: Set<String> = emptySet()): Submission =
+        adopt(order, cost.rank(candidates, live = ::liveExecutionCount, holding = ::isHolding), trialOnly)
 
     /**
      * 이 기체에서 지금 도는 실행 수. 비용의 항이고 관문의 입력은 아니다.
