@@ -11,6 +11,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -457,6 +458,30 @@ class EntitlementTest {
             assertEquals(ApprovalRefusal.REMEDY_NOT_APPLIED, person.approvalRefusal, "두 문이 놓은 작업 지시를 다른 종류로 냈다")
             assertNotNull(w.mw.proposal(ROBOT, "PATROL-1"), "조치가 안 나갔는데 제안을 소모했다")
             assertTrue(w.mw.executions().none { it.order.jobOrderId == "PATROL-1" }, "놓은 주문이 승인으로 다시 섰다")
+        }
+    }
+
+    @Test
+    fun `놓은 표시를 지운 뒤 남은 제안의 승인은 조치 열을 단 새 실행으로 선다 — 담는 쪽 계약이 막을 몫`() {
+        // ★이 층이 지금 내는 동작을 고정한다(§15.324). 표시를 지우면 이 층은 그 작업 지시를 처음 보는 것으로 받으므로, 다른 기체에서
+        //   끝난 주문의 서 있는 제안도 승인으로 새 실행이 된다. 그 승인을 막는 것은 releaseForgotten 의 계약대로 담는 쪽의 기록이다.
+        World(Declared(mapOf(AGENT.id to full())), pair = true).use { w ->
+            w.standingProposal()
+            val other = assertIs<Middleware.Submission.Accepted>(w.mw.submit(patrol(), OTHER)).execution
+            w.ended(other)
+            w.mw.pending().forEach { w.mw.ack(it.jobResponseId) }
+            assertEquals(ForgetOutcome.Forgotten, w.mw.forget(other.executionId))
+            assertEquals(ApprovalRefusal.REMEDY_NOT_APPLIED, refusal(w.mw.attemptApproval(attempt())))
+            assertNotNull(w.mw.proposal(ROBOT, "PATROL-1"), "거절이 제안을 소모했다")
+
+            assertTrue(w.mw.releaseForgotten("PATROL-1"))
+            val approved = assertIs<ApprovalOutcome.Approved>(w.mw.attemptApproval(attempt()))
+            assertNotEquals(other.executionId, approved.executionId, "놓은 실행의 id 를 다시 썼다")
+            val again = assertNotNull(w.mw.execution(approved.executionId))
+            assertEquals(ROBOT, again.robotId)
+            assertEquals("PATROL-1", again.order.jobOrderId)
+            assertNotNull(again.approval, "새 실행이 승인을 싣지 않았다")
+            assertNull(w.mw.proposal(ROBOT, "PATROL-1"), "승인으로 선 뒤에도 제안이 남았다")
         }
     }
 

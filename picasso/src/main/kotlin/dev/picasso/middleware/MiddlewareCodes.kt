@@ -14,6 +14,7 @@ internal object MiddlewareCodes {
     const val FLEET_REJECTED = "FLEET_REJECTED"
     const val NO_SIGNAL = "no signal"
     const val RESUME_STALE_VERSION = "넘긴 작업 지시보다 높은 리비전을 기체가 들어 리빌드하지 않는다"
+    const val FORGOTTEN_JOB_ORDER = "이미 끝나 이빅션한 작업 지시라 다시 받지 않는다"
     const val RESUME_ATTEMPT = "RESUME_ATTEMPT"
     const val RESUME_SIGNAL_PASSED = "RESUME_SIGNAL_PASSED"
     const val RESUME_PRIOR_ROBOT = "RESUME_PRIOR_ROBOT"

@@ -7,6 +7,7 @@ import java.nio.file.Path
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -237,8 +238,8 @@ class ForgetTest {
     }
 
     @Test
-    fun `이빅션한 작업 지시 표시가 상한을 넘으면 오래된 것부터 내린다`() {
-        World(retention = Retention(forgottenOrders = 1)).use { w ->
+    fun `넘침을 EVICT 로 선언하면 놓은 작업 지시 표시가 상한을 넘을 때 오래된 것부터 내린다`() {
+        World(retention = Retention(forgottenOrders = 1, forgottenOverflow = ForgottenOverflow.EVICT)).use { w ->
             listOf("PATROL-1", "PATROL-2").forEach { id ->
                 val exec = w.settled(patrol(id))
                 w.ackAll()
@@ -246,10 +247,77 @@ class ForgetTest {
             }
 
             assertEquals(1, w.mw.retentionEvictions().forgottenOrders)
-            // 내린 표시의 id 는 이 층이 더는 막지 못한다 — 그 막음은 담는 쪽의 기록 몫이다.
+            assertEquals(ForgottenOrdersState(1, 1, ForgottenOverflow.EVICT, 0, 0), w.mw.forgottenOrders())
+            // 내린 표시의 id 는 이 층이 더는 막지 못한다 — 선언이 그 막음을 담는 쪽의 기록에 넘겼다(§15.324).
             assertIs<Middleware.Submission.Accepted>(w.mw.submit(patrol("PATROL-1"), ROBOT))
             val kept = assertIs<Middleware.Submission.Rejected>(w.mw.submit(patrol("PATROL-2"), ROBOT))
             assertTrue(kept.reason.startsWith(Middleware.FORGOTTEN_JOB_ORDER), kept.reason)
+        }
+    }
+
+    // ── 넘침 선언과 놓는 입구(§15.324) — 선언하지 않으면 표시를 내리지 않는다
+
+    @Test
+    fun `놓은 작업 지시 표시가 상한에 차면 기본은 실행과 통보를 그대로 두고 놓기를 거부한다`() {
+        // ★표시 없이 실행만 빼면 같은 id 가 조용히 새 실행으로 선다. 거부는 실행·아웃박스를 건드리기 전이어야 한다.
+        World(retention = Retention(forgottenOrders = 1)).use { w ->
+            val first = w.settled(patrol("PATROL-1"))
+            w.ackAll()
+            assertEquals(ForgetOutcome.Forgotten, w.mw.forget(first.executionId), "상한 1 의 첫 놓기를 거부했다")
+            val second = w.settled(patrol("PATROL-2"))
+            w.ackAll()
+            val responses = w.mw.responses().filter { it.executionId == second.executionId }
+            assertTrue(responses.isNotEmpty(), "둘째 실행의 통보가 없다 — 그대로 남는지를 물을 수 없다")
+
+            val refused = assertIs<ForgetOutcome.Refused>(w.mw.forget(second.executionId))
+            assertTrue("상한에 찼다" in refused.reason && "releaseForgotten" in refused.reason, refused.reason)
+            assertNotNull(w.mw.execution(second.executionId), "거부해 놓고 실행을 뺐다")
+            assertEquals(responses, w.mw.responses().filter { it.executionId == second.executionId }, "거부해 놓고 통보를 뺐다")
+            assertEquals(0, w.mw.retentionEvictions().forgottenOrders, "선언하지 않았는데 표시를 내렸다")
+            assertEquals(ForgottenOrdersState(1, 1, ForgottenOverflow.REFUSE, 1, 0), w.mw.forgottenOrders())
+            val again = assertIs<Middleware.Submission.Rejected>(w.mw.submit(patrol("PATROL-1"), ROBOT))
+            assertTrue(again.reason.startsWith(Middleware.FORGOTTEN_JOB_ORDER), again.reason)
+
+            // 담는 쪽이 끝난 작업 지시를 제 기록에 적고 표시를 비운다. 둘째 부름과 표에 아직 있는 실행은 거짓이다.
+            assertTrue(w.mw.releaseForgotten("PATROL-1"))
+            assertFalse(w.mw.releaseForgotten("PATROL-1"), "이미 지운 표시를 다시 지웠다고 냈다")
+            assertFalse(w.mw.releaseForgotten("PATROL-2"), "실행이 표에 있는 작업 지시의 표시를 지웠다고 냈다")
+            assertEquals(ForgetOutcome.Forgotten, w.mw.forget(second.executionId))
+            assertEquals(ForgottenOrdersState(1, 1, ForgottenOverflow.REFUSE, 1, 1), w.mw.forgottenOrders())
+
+            // 지운 id 는 처음 보는 것으로 받는다 — 막는 것은 이제 담는 쪽의 기록이다. 실행 id 는 다시 쓰지 않는다.
+            val fresh = assertIs<Middleware.Submission.Accepted>(w.mw.submit(patrol("PATROL-1"), ROBOT)).execution
+            assertNotEquals(first.executionId, fresh.executionId)
+            assertNotEquals(second.executionId, fresh.executionId)
+        }
+    }
+
+    @Test
+    fun `놓은 작업 지시 표시가 차 있으면 라운드 끝 정리가 그 라운드에서 멈추고 실행 표는 상한을 넘은 채 남는다`() {
+        World(retention = Retention(executions = 1, forgottenOrders = 1)).use { w ->
+            val first = w.settled(patrol("PATROL-1"))
+            w.ackAll()
+            assertEquals(ForgetOutcome.Forgotten, w.mw.forget(first.executionId))
+            val second = w.settled(patrol("PATROL-2"))
+            w.ackAll()
+            val third = w.settled(patrol("PATROL-3"))
+            w.ackAll()
+
+            // 놓을 수 있는 실행이 둘인데 한 라운드에 거부가 하나만 는다 — 첫 거부에서 정리를 멈췄다.
+            val before = w.mw.forgottenOrders().refusedForgets
+            assertTrue(before > 0, "표가 찼는데 정리가 놓기를 시도하지 않았다")
+            w.mw.pump()
+            assertEquals(before + 1, w.mw.forgottenOrders().refusedForgets, "찬 표를 보고도 이 라운드에 놓기를 더 불렀다")
+            assertEquals(setOf(second.executionId, third.executionId), w.mw.executions().map { it.executionId }.toSet())
+            assertEquals(0, w.mw.retentionEvictions().executions)
+            assertEquals(0, w.mw.retentionEvictions().forgottenOrders)
+
+            // 표시를 비우면 다음 라운드의 정리가 다시 놓는다.
+            assertTrue(w.mw.releaseForgotten("PATROL-1"))
+            w.mw.pump()
+            assertNull(w.mw.execution(second.executionId), "표시를 비웠는데 정리가 오래된 실행을 놓지 않았다")
+            assertNotNull(w.mw.execution(third.executionId))
+            assertEquals(1, w.mw.retentionEvictions().executions)
         }
     }
 }
