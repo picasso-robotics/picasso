@@ -344,8 +344,10 @@ class TaskHost(
     fun hold(): HoldState = currentHold()
 
     private fun currentHold(): HoldState =
-        // 도는 쥐는 태스크가 든 채면 그것이 먼저다 — 그 뒤에 접수된 다른 쥐는 태스크의 ACCEPTED 기록(빈손)이 덮지 못하게.
-        tasks.values.firstOrNull { !it.machine.state.isTerminal && it.hold.kind == HoldKind.HOLD_KIND_HOLDING }?.hold
+        // **지금 손을 쓰는** 쥐는 태스크(도는 중·멈춤·취소 중)가 든 채면 그것이 먼저다. 실패해 다시 시도를 기다리는 태스크(RETRIABLE·
+        // NEEDS_INTERVENTION)는 비종착이어도 손을 쓰지 않는다 — 그 뒤 다른 pick_place 가 그 물건을 놓고 끝났으면 빈손이다(§15.318).
+        // 앞 판은 비종착 전부를 먼저 봐, 실패한 옛 태스크의 HOLDING 이 뒤의 조치 종착을 영원히 가렸다(리뷰 C1 과 같은 꼴, 비종착 쪽).
+        tasks.values.firstOrNull { it.machine.state in GRIPPING && it.hold.kind == HoldKind.HOLD_KIND_HOLDING }?.hold
             ?: handsHold
 
     private fun validate(
@@ -624,7 +626,8 @@ class TaskHost(
     fun record(task: TaskRuntime): TaskUpdate {
         task.hold = holdOf(task)
         // 손은 한 쌍이다 — 쥐는 스킬의 기록만이 로봇의 파지를 바꾼다. 참조만 하는 태스크가 끝났다고 든 것이 놓이지 않는다.
-        if (ObjectReferences.grasps(task.skillType)) handsHold = task.hold
+        // 접수(ACCEPTED)는 손을 움직이지 않는다 — 그 기록의 빈손이 앞서 든 손을 덮으면 든 채인데 빈손으로 읽힌다.
+        if (ObjectReferences.grasps(task.skillType) && task.machine.state != TaskState.ACCEPTED) handsHold = task.hold
         return task.log.record(
             state = task.machine.state,
             revision = task.machine.revision,
@@ -771,6 +774,9 @@ class TaskHost(
         const val PAYLOAD_LOST = "PAYLOAD_LOST"
 
         val EMPTY_HANDS: HoldState = HoldState.newBuilder().setKind(HoldKind.HOLD_KIND_EMPTY).build()
+
+        /** 손을 지금 쓰는 상태. [currentHold] 가 [handsHold] 보다 먼저 본다. */
+        val GRIPPING = setOf(TaskState.RUNNING, TaskState.PAUSED, TaskState.CANCELLING)
     }
 
     private fun durationOf(skillType: String): Double {
