@@ -237,10 +237,12 @@ class DocumentClaimsTest {
         // 다른 쪽은 37). 센 자리만 안 낡는다 — 그러니 갈래별 수까지 여기서 센다.
         assertEquals(open, claimed("""등록된 미결 항목은 \*\*(\S+?)개\*\*"""), "미결 합을 README 가 두 값으로 적는다")
         assertEquals(rows.count { it.first == LimitsLedger.INTERNAL }, claimed("""내부 (\S+?)개"""), "내부 미결 수가 대장과 다르다")
-        // 수요 없음은 의도적 제외 안의 한 표다. 표시가 마지막 칸에 있는 행을 센다 — 표시를 지운 행은 비목표로 셈되어 수가 어긋난다.
+        // ★수요 없음 표는 폐지했다(§15.321) — 소비자의 요청 유무는 제외의 근거가 아니다. 그 표시가 행의 마지막 칸에
+        //   다시 서면 «소비자가 요구할 때» 가 제외 사유로 되돌아오고, README 가 그 수를 다시 적으면 없는 표를 센다.
         val noDemand = LimitsLedger.cells(Repo.read("docs/limits.md"))
-            .count { (branch, _, reason) -> branch == LimitsLedger.SCOPED_OUT && LimitsLedger.NO_DEMAND in reason }
-        assertEquals(noDemand, claimed("""수요 없음 (\S+?)개"""), "수요 없음 수가 레지스터와 다르다")
+            .filter { (_, _, last) -> LimitsLedger.NO_DEMAND in last }.map { it.second }
+        assertEquals(emptyList(), noDemand, "폐지한 수요 없음 표시가 대장에 있다 — 내부·외부로 옮기거나 제외 사유를 적어라")
+        assertTrue(Regex("""수요 없음 \S+개""").find(readme) == null, "README 가 폐지한 수요 없음 수를 적는다")
         assertEquals(rows.count { it.first == LimitsLedger.EXTERNAL }, claimed("""외부 (\S+?)개"""), "외부 미결 수가 대장과 다르다")
         assertEquals(rows.count { it.first == LimitsLedger.SCOPED_OUT }, claimed("""의도적 제외 (\S+?)개"""), "의도적 제외 수가 대장과 다르다")
     }
@@ -274,12 +276,13 @@ class DocumentClaimsTest {
 
     @Test
     fun `폐지한 소비자 대기 하위 범주에 행이 없다`() {
-        // ★2026-11-04 소유자가 밖의 소비자는 생기지 않는다고 했다(§15.265). 소비자를 기다리는 행은 의도적 제외의
-        //   수요 없음 표에 다시 여는 조건과 함께 둔다. 이 절에 행이 다시 서면 «언젠가 올 소비자» 가 미결로 셈된다.
+        // ★2026-11-04 소유자가 밖의 소비자는 생기지 않는다고 했다(§15.265). 2026-11-14 에는 소비자의 요청 유무가 제외·보류
+        //   근거가 아니라고 했다(§15.321) — 행은 해소의 주어대로 내부·외부에 두거나 사유를 적어 제외한다. 이 절에 행이
+        //   다시 서면 «언젠가 올 소비자» 가 미결로 셈된다.
         val ledger = LimitsLedger.cells(Repo.read("docs/limits.md"))
         assertTrue(ledger.size > 50, "레지스터를 못 읽었다: ${ledger.size}")
         val parked = ledger.filter { it.first == LimitsLedger.CONSUMER }.map { it.second }
-        assertEquals(emptyList(), parked, "폐지한 소비자 대기에 행이 있다 — 지어서 닫거나 수요 없음 표로 옮겨라")
+        assertEquals(emptyList(), parked, "폐지한 소비자 대기에 행이 있다 — 해소의 주어대로 내부·외부로 옮기거나 제외 사유를 적어라")
     }
 
     @Test
