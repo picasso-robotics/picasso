@@ -619,8 +619,9 @@ class InspectAssetTest {
     }
 
     @Test
-    fun `건너뛴 단위 모양이 아니면 NotHeld 다 — 이동 단위, 시도 뒤에 실패한 점검, 끝난 단위, 없는 단위`() {
+    fun `재작업 묶음의 모양이 아니면 NotHeld 다 — 끝난 단위, 없는 단위, 없는 실행 — 그리고 후보는 묶음마다 하나다`() {
         // 둘째 대상의 이동이 실패하고(건너뛴 점검 PANEL-3), 첫 대상의 점검이 시도 뒤에 실패한다(PUMP-01).
+        // ★§15.323 의 의도된 변경 — 앞 판은 건너뛴 점검의 선행 이동 id 와 시도 뒤에 실패한 점검을 NotHeld 로 답했다. 이제 둘 다 묶음의 단위다.
         World(port = failing(taskOf(travelId("PANEL-3")), taskOf("PUMP-01"))).use { w ->
             val exec = w.runToEnd()
             assertEquals(PhysicalState.PARTIAL, exec.physicalState)
@@ -629,9 +630,8 @@ class InspectAssetTest {
             val tasksBefore = w.tasks().map { it.taskId }
 
             listOf(
-                travelId("PANEL-3") to "건너뛴 점검의 선행 이동",
-                "PUMP-01" to "시도 뒤에 실패한 점검",
-                "COMP-2" to "끝난 단위",
+                "COMP-2" to "끝난 점검",
+                travelId("COMP-2") to "끝난 이동 — 그것을 기다린 시도된 실패가 없다",
                 "NO-SUCH" to "없는 단위",
             ).forEach { (id, why) ->
                 assertEquals(ResolveOutcome.NotHeld, w.mw.resolve(exec.executionId, id, OperatorDecision.REWORK, OPERATOR), why)
@@ -642,6 +642,153 @@ class InspectAssetTest {
             assertEquals(0, exec.units.sumOf { it.attempt })
             assertEquals(tasksBefore, w.tasks().map { it.taskId })
             assertTrue(w.mw.incidents().all { it.resolution == null })
+
+            // 후보는 묶음마다 하나다 — 시도 뒤에 실패한 점검(이동과 함께)과 건너뛴 대상(실패한 이동과 함께). 메모리 조건만 본다.
+            assertEquals(
+                listOf(
+                    ReworkCandidate(exec.executionId, "PUMP-01", 0, listOf(travelId("PUMP-01"), "PUMP-01"), ReworkKind.ATTEMPTED_INSPECTION, "PUMP-01"),
+                    ReworkCandidate(exec.executionId, "PANEL-3", 0, listOf(travelId("PANEL-3"), "PANEL-3"), ReworkKind.SKIPPED, travelId("PANEL-3")),
+                ),
+                w.mw.reworkCandidates(),
+            )
+        }
+    }
+
+    @Test
+    fun `시도 뒤에 실패한 점검을 재작업하면 끝난 이동과 함께 r1 로 나가고 이동 id 로 요청해도 같은 묶음이다`() {
+        // §15.323 — 점검이 제 시도에서 실패했다. 순회가 이어져 기체는 그 자리에 없으므로 이동(DONE)도 함께 되돌린다.
+        listOf("PUMP-01", travelId("PUMP-01")).forEach { asked ->
+            World(port = failing(taskOf("PUMP-01"))).use { w ->
+                val exec = w.runToEnd()
+                assertEquals(PhysicalState.PARTIAL, exec.physicalState, asked)
+                assertEquals(UnitState.DONE, exec.unit(travelId("PUMP-01")).state, "이동은 끝났어야 한다")
+                val opened = w.mw.incidents().single()
+                assertEquals("PUMP-01" to false, opened.unitId to opened.unresolved, "시도된 실패의 인시던트는 보류가 아니다")
+                val before = w.mw.responses().size
+
+                assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, asked, OperatorDecision.REWORK, OPERATOR), asked)
+                assertEquals(PhysicalState.RUNNING, exec.physicalState)
+                assertEquals(1, w.mw.responses().size - before, "작업 응답 하나")
+                assertEquals(listOf(1, 1), exec.attemptsOf(travelId("PUMP-01"), "PUMP-01"), asked)
+
+                // 판단은 묶음의 단위마다 서고(DONE 이던 이동에도 — 새 값 조합), 근거와 사건 정체성은 시도된 실패 대상에만 있다.
+                val record = assertNotNull(w.mw.judgmentRecord(exec.executionId))
+                val decided = record.units.associate { it.unitId to it.decision }
+                val target = assertNotNull(decided["PUMP-01"])
+                assertEquals(ReworkBasis(ROBOT, readAt = target.reworkBasis!!.readAt), target.reworkBasis, "점검 대상은 표지만 싣는다 — 손·자리를 묻지 않는다")
+                assertEquals(opened.origin, target.incident)
+                val travel = assertNotNull(decided[travelId("PUMP-01")], "DONE 이던 이동에 판단이 없다")
+                assertEquals(OperatorDecision.REWORK to null, travel.decision to travel.reworkBasis)
+                assertNull(travel.incident)
+                // 판단은 제 인시던트에 붙는다 — 시도 실패 인시던트의 `unresolved: false` 와 `REWORK`.
+                val resolution = assertNotNull(w.mw.incidents().single().resolution)
+                assertEquals(IncidentDecision.REWORK to target.reworkBasis, resolution.decision to resolution.reworkBasis)
+
+                w.drive { exec.settled() }
+                assertEquals(PhysicalState.PHYSICALLY_DONE, exec.physicalState, asked)
+                assertEquals(listOf("${taskOf(travelId("PUMP-01"))}@r1", "${taskOf("PUMP-01")}@r1"), w.tasks().map { it.taskId }.filter { it.endsWith("@r1") })
+            }
+        }
+    }
+
+    @Test
+    fun `시도된 이동 실패를 그 이동 id 로 되돌리면 건너뛴 점검이 함께 돌아온다`() {
+        val travel = travelId("PUMP-01")
+        World(port = failing(taskOf(travel))).use { w ->
+            val exec = w.partialWithSkippedFirst()
+            assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, travel, OperatorDecision.REWORK, OPERATOR))
+            assertEquals(listOf(1, 1), exec.attemptsOf(travel, "PUMP-01"))
+            assertEquals(listOf(UnitState.PENDING, UnitState.PENDING), listOf(travel, "PUMP-01").map { exec.unit(it).state })
+            // 건너뛴 대상의 묶음이다 — 요청한 id 와 무관하게 뿌리(이동)의 판단에 정체성과 표지 근거가 서고, 건너뛴 점검의 판단에는 없다(§15.323 고침 7).
+            val decided = w.mw.judgmentRecord(exec.executionId)!!.units.associate { it.unitId to it.decision }
+            val opened = w.mw.incidents().single { it.unitId == travel }
+            val root = assertNotNull(decided[travel])
+            assertEquals(ReworkBasis(ROBOT, readAt = root.reworkBasis!!.readAt) to opened.origin, root.reworkBasis to root.incident)
+            assertEquals(null to null, decided["PUMP-01"]!!.reworkBasis to decided["PUMP-01"]!!.incident)
+            // 판단 기록과 인시던트가 같은 말을 한다.
+            assertEquals(IncidentDecision.REWORK to root.reworkBasis, opened.resolution?.decision to opened.resolution?.reworkBasis)
+            w.drive { exec.settled() }
+            assertEquals(PhysicalState.PHYSICALLY_DONE, exec.physicalState)
+        }
+    }
+
+    @Test
+    fun `시도 뒤에 실패한 점검의 재작업을 발행 전에 리빌드해도 r1 로 낸다`() {
+        val port = failing(taskOf("PUMP-01"))
+        World(port = port).use { w ->
+            val exec = w.runToEnd()
+            assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, "PUMP-01", OperatorDecision.REWORK, OPERATOR))
+            val record = JudgmentRecordWire.decode(JudgmentRecordWire.encode(w.mw.judgmentRecord(exec.executionId)!!))
+            assertNotNull(record.units.single { it.unitId == "PUMP-01" }.decision?.reworkBasis, "판 6 왕복이 근거를 잃었다")
+
+            val again = Middleware(port(ClientRobotPort(w.harness.client())), now = { w.harness.clock.now() })
+            val rebuilt = assertIs<Middleware.Submission.Accepted>(again.resume(order(), ROBOT, ActiveMission(InspectAsset(), null), record)).execution
+            assertEquals(listOf(1, 1), rebuilt.attemptsOf(travelId("PUMP-01"), "PUMP-01"))
+            var rounds = 0
+            while (!rebuilt.settled() && rounds++ < 120) {
+                again.pump()
+                if (rebuilt.settled()) break
+                w.harness.advance(Duration.ofSeconds(10))
+                Thread.sleep(30)
+            }
+            assertEquals(PhysicalState.PHYSICALLY_DONE, rebuilt.physicalState)
+            assertEquals(listOf("${taskOf(travelId("PUMP-01"))}@r1", "${taskOf("PUMP-01")}@r1"), w.tasks().map { it.taskId }.filter { it.endsWith("@r1") })
+        }
+    }
+
+    @Test
+    fun `묶음이 계획에서 이어져 있지 않거나 기다린 후손이 이미 나갔으면 받지 않는다 — 아무것도 안 바뀐다`() {
+        // 계획 [이동1, 점검1, 이동2, 점검2, 이동3, 점검3] 에 시험이 선행을 덧붙인다. 점검1 이 시도 뒤 실패한다.
+        listOf(
+            "COMP-2" to "이어져 있지 않다",
+            travelId("PANEL-3") to "이미 나갔다",
+        ).forEach { (waiting, why) ->
+            World(port = failing(taskOf("PUMP-01"))).use { w ->
+                val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(order(), ROBOT)).execution
+                // 점검3 이 점검1 을 기다리면 건너뛰어져 묶음이 [이동1, 점검1, 점검3] 으로 끊긴다. 이동2 가 이동1 을 기다리면 이번 시도에 이미 나간다.
+                exec.unit(waiting).after = if (waiting == "COMP-2") "PUMP-01" else travelId("PUMP-01")
+                w.drive { exec.settled() }
+                val tasksBefore = w.tasks().map { it.taskId }
+                val responsesBefore = w.mw.responses().size
+
+                val refused = assertIs<ResolveOutcome.Refused>(w.mw.resolve(exec.executionId, "PUMP-01", OperatorDecision.REWORK, OPERATOR), why)
+                assertTrue(why in refused.reason, refused.reason)
+                assertEquals(0, exec.units.sumOf { it.attempt })
+                assertEquals(tasksBefore, w.tasks().map { it.taskId })
+                assertEquals(responsesBefore, w.mw.responses().size)
+                assertTrue(w.mw.judgmentRecord(exec.executionId)!!.units.all { it.decision == null })
+                assertTrue(w.mw.incidents().all { it.resolution == null })
+                assertTrue(exec.eventTrail.any { it.kind == MiddlewareCodes.REWORK_REFUSED }, "거부가 자취에 안 남았다")
+                assertEquals(emptyList(), w.mw.reworkCandidates(), "받지 않는 묶음이 후보에 올랐다")
+            }
+        }
+    }
+
+    @Test
+    fun `remedy 로 시작하는 일반 대상의 건너뛴 쌍도 재작업을 받는다 — 조치 단위는 이름이 아니라 승인 기록으로 가른다`() {
+        val target = "remedy-1-pick_place"
+        val order = order().copy(
+            equipmentRequirements = listOf(
+                EquipmentRequirement(target, EquipmentUse.INSPECTION_TARGET, mapOf(EquipmentUse.PROP_LOCATION to "PUMP-ROOM", EquipmentUse.PROP_ITEM to "thermal")),
+            ),
+        )
+        World(port = failing(taskOf(travelId(target)))).use { w ->
+            val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(order, ROBOT)).execution
+            w.drive { exec.settled() }
+            assertEquals(SKIPPED, exec.unit(target).failureClass)
+            assertEquals(listOf(target), w.mw.reworkCandidates().map { it.unitId }, "일반 대상이 조치 단위로 오인돼 후보에서 빠졌다")
+            assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, target, OperatorDecision.REWORK, OPERATOR))
+        }
+    }
+
+    @Test
+    fun `시도 뒤에 실패한 점검에 확인은 거부한다 — 설비 근거가 없는 실패는 확인으로 완료하지 않는다`() {
+        World(port = failing(taskOf("PUMP-01"))).use { w ->
+            val exec = w.runToEnd()
+            val refused = assertIs<ResolveOutcome.Refused>(w.mw.resolve(exec.executionId, "PUMP-01", OperatorDecision.CONFIRM_DONE, OPERATOR))
+            assertTrue("재작업만 받는다" in refused.reason, refused.reason)
+            assertEquals(UnitState.FAILED, exec.unit("PUMP-01").state)
+            assertNull(w.mw.incidents().single().resolution)
         }
     }
 
@@ -718,7 +865,9 @@ class InspectAssetTest {
             assertTrue("\"resolution\":{\"decision\":\"REWORK\"" in line, line)
             // 판 8(§15.322) — 판단자가 승인자와 같은 모양으로 실린다.
             assertTrue("\"decidedBy\":{\"id\":\"${OPERATOR.id}\",\"kind\":\"PERSON\"}" in line, line)
-            assertEquals("8", LedgerExport.SCHEMA_VERSION)
+            // 판 9(§15.323) — 판단은 묶음의 뿌리(시도된 이동 실패)의 것이라 표지 근거 `{robotId, readAt}` 를 싣는다. 손·자리는 묻지 않았다(«관측 없음»).
+            assertTrue("\"reworkBasis\":{\"robotId\":\"$ROBOT\",\"hold\":null,\"source\":null,\"destination\":null," in line, line)
+            assertEquals("9", LedgerExport.SCHEMA_VERSION)
         }
     }
 

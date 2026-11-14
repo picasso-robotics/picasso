@@ -56,6 +56,19 @@ internal object MiddlewareCodes {
      * 하위 분류가 아니라 이 계층의 이름이다. 둘째 인시던트를 열지 않는다 — 거부 때 선 인시던트가 그 사건이다.
      */
     const val REMEDY_NOT_DONE = "REMEDY_NOT_DONE"
+
+    /** 보류가 아닌 단위의 재작업을 받지 않았다는 실행 자취의 종류(§15.323). 세부에 사유와, 읽었으면 손 종류·자리 신호·읽은 시각이 든다. */
+    const val REWORK_REFUSED = "REWORK_REFUSED"
+
+    /** 재작업을 받았는데 판단이 붙을 인시던트가 묶음에 없었다는 실행 자취의 종류(§15.323). */
+    const val REWORK_NOTED = "REWORK_NOTED"
+
+    /**
+     * 재작업 시도를 처음 내기 직전에 다시 읽은 손·자리가 물리 관문을 못 지나(또는 읽기를 기다린 창을 넘겨) 그 시도를 내지 않고 태스크 없이 `FAILED`
+     * 로 닫았다 — 실패 분류이자 실행 자취의 종류(§15.323). 자취에는 «읽힐 때까지 기다린다» 줄도 이 종류로 한 번 선다. 태스크가 없으므로 이 계층의
+     * 이름이다. 실패 인시던트를 연다. 재작업 묶음의 뿌리라 사람이 다시 `REWORK` 를 내면 물리 관문을 다시 지나 시도가 오른다. 확인은 받지 않는다.
+     */
+    const val REWORK_RECHECK = "REWORK_RECHECK"
     val OPEN_UNIT_STATES = setOf(UnitState.PENDING, UnitState.RUNNING, UnitState.VERIFYING, UnitState.IN_DOUBT, UnitState.OPERATOR_HOLD)
     val RETRY_SUFFIX = Regex("""@r([1-9]\d*)""")
 }

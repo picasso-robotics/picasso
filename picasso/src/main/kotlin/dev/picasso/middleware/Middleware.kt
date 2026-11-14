@@ -187,6 +187,9 @@ class Middleware(
     /** 발신자 거부 뒤 제자리 회복(§15.320). 재확인은 [pump] 가 실행마다 라운드 끝에, 미발행 판정은 [pumpRound] 가 다음 단위를 고를 때 부른다. */
     private val recovery = HoldRecovery(env, gate, desk, incidentLog, executions, ::noteAttention)
 
+    /** 보류가 아닌 단위의 재작업 묶음(§15.323). 판단은 [resolve] 가, 후보는 [reworkCandidates] 가, 첫 발행 직전 재검사는 [pumpRound] 가 부른다. */
+    private val rework = ReworkDesk(env, gate, incidentLog, executions)
+
     /** 이 실행을 아직 구동이 돌리는가 — 보존 상한이 그 실행의 기록을 남길지 가른다([Retention]). */
     private fun pumping(executionId: String): Boolean = executions[executionId]?.physicalState?.pumps == true
 
@@ -418,8 +421,8 @@ class Middleware(
 
         val execution = create(order, robotId, mission, planned, approvedBy = null)
         env.rebuildFrom(execution, snapshots)
-        // 회복의 몫(소모 대상·거부 주어)은 옮긴 직후 바로잡는다 — 다시 연 인시던트의 봉인과 첫 pump 보다 앞이다(§15.320).
-        val reopenedAt = record?.let { r -> env.restore(execution, r, desk).also { desk.restoreRecovery(execution, r) } }
+        // 회복의 몫(소모 대상·거부 주어)은 옮긴 직후 바로잡는다 — 다시 연 인시던트의 봉인과 첫 pump 보다 앞이다(§15.320). 재작업의 몫(재작업 시도는 앞선 단위가 아님·앞 시도의 태스크 표시)도 같은 자리다(§15.323).
+        val reopenedAt = record?.let { r -> env.restore(execution, r, desk).also { desk.restoreRecovery(execution, r); rework.restored(execution, r) } }
         execution.units.filter { it.route == Route.ROBOT }.forEach { execution.inherited[it.unitId] = it.attempt }
         // 8 이 다시 연 인시던트를 지금 봉한다. 지금의 현장 시간값으로 — 라운드의 값([round])은 [pump] 의 것이라 건드리지 않는다.
         // 봉인 시각은 다시 연 줄의 시각이다. 다시 연 것과 그 정체성은 기록에서 채운다(§15.322).
@@ -438,7 +441,8 @@ class Middleware(
      */
     fun judgmentRecord(executionId: String): JudgmentRecord? {
         val execution = executions[executionId] ?: return null
-        return JudgmentRecord(
+        // «앞 시도에 태스크가 나갔음» 은 재작업 묶음이 든다(§15.323) — 단위의 가변 칸은 구조 예산이 막는다.
+        return rework.withIssued(execution, JudgmentRecord(
             jobOrderId = execution.order.jobOrderId,
             orderVersion = execution.order.version,
             acknowledgedFaults = execution.acknowledgedFaults.toList(),
@@ -466,7 +470,7 @@ class Middleware(
                 )
             },
             cancelRequested = execution.cancelRequested,
-        )
+        ))
     }
 
     /**
@@ -843,9 +847,9 @@ class Middleware(
             pumpRound(execution)
             return
         }
-        // 기체의 선언을 아직 읽는 중이면 이 라운드에는 내지 않는다(§15.237). 허가가 막을 때처럼 단위는 `PENDING` 그대로 기다린다.
+        // 기체의 선언을 아직 읽는 중이면 이 라운드에는 내지 않는다(§15.237). 허가가 막을 때처럼 단위는 `PENDING` 그대로 기다린다. 재작업 시도의 첫 발행은 바로 앞에서 손·자리를 다시 읽는다(§15.323).
         if (next.route == Route.ROBOT && optionalsPending(execution, next)) return
-        execution.command.startUnit(next)
+        if (!rework.halts(execution, next)) execution.command.startUnit(next)
     }
 
     /** 선택 파라미터를 바라는데 [unit] 기체의 선언을 아직 읽는 중인가([RobotPort.capabilitiesPending]). */
@@ -939,11 +943,12 @@ class Middleware(
      *
      * 판단으로 실행의 보류가 걷히면 작업 응답 하나를 낸다(다른 단위가 아직 보류이면 실행은 보류 그대로이고 내지 않는다).
      *
-     * **건너뛴 대상도 재작업을 받는다**(§15.234 의 소유자 결정). 단위가 보류가 아니라 선행 이동이 시도 뒤 실패해 내지 않은
-     * 점검이면([skippedPair]) 그 점검과 이동을 한 쌍으로 새 시도로 되돌린다([resolveSkipped]). 받는 조건은 다섯이다.
-     * 승인자가 사람, 실행이 메모리에 있음, 건너뛴 단위의 모양, 실행이 `PARTIAL`·`FAILED` 로 종결했고 더 낼 단위가 없음, 그 기체에
-     * 다른 활성 실행이 없음. 앞의 둘은 위에서, 모양이 아니면 [ResolveOutcome.NotHeld], 나머지 둘이 서지 않으면
-     * [ResolveOutcome.Refused] 다. 확인은 받지 않는다 — 하지 않은 점검은 확인할 것이 없다.
+     * **보류가 아닌 단위도 재작업을 받는다**(§15.234 의 소유자 결정, §15.323 의 일반화). 단위가 보류가 아니면 [ReworkDesk] 가 받는다 — 시도된 실패와
+     * 그것을 기다려 건너뛰어진 단위, 파지 효과 없는 선행을 한 묶음으로 새 시도로 되돌린다(ADR 53 의 건너뛴 쌍은 그 특수형이다). 받는 조건은 ADR 53 의
+     * 다섯 — 승인자가 사람, 실행이 메모리에 있음, 묶음의 모양, 실행이 `PARTIAL`·`FAILED` 로 종결했고 열린 단위가 없음, 그 기체에 다른 활성 실행이 없음 —
+     * 에 발행 관문과, 시도된 `pick_place` 계열이면 물리 관문(손·목적지·출발·예약·구역)이 더해진다. 앞의 둘은 위에서, 모양이 아니면
+     * [ResolveOutcome.NotHeld], 나머지가 서지 않으면 [ResolveOutcome.Refused] 다. 확인은 받지 않는다 — 하지 않은 점검은 확인할 것이 없고, 설비 근거가
+     * 없는 실패를 확인으로 완료하지 않는다. 첫 발행 직전 재검사를 못 지나 태스크 없이 실패로 닫힌 시도(`REWORK_RECHECK`)도 그쪽이 묶음의 뿌리로 받는다.
      */
     fun resolve(executionId: String, unitId: String, decision: OperatorDecision, approver: Approver): ResolveOutcome {
         if (approver.kind == ApproverKind.AGENT) {
@@ -951,7 +956,7 @@ class Middleware(
         }
         val execution = executions[executionId] ?: return ResolveOutcome.NotHeld
         val unit = execution.units.firstOrNull { it.unitId == unitId && it.state == UnitState.OPERATOR_HOLD }
-            ?: return env.resolveSkipped(execution, unitId, decision, approver, executions.values, incidentLog)
+            ?: return rework.resolve(execution, unitId, decision, approver)
         // 판단 기록이 싣는다(§15.221). 판단이 선 시도를 단다 — 재작업이면 아래에서 시도가 하나 오른다.
         execution.decisions[unitId] = RecordedDecision(decision, approver, now(), unit.attempt)
         val slots = execution.stepSlots(unit)
@@ -962,7 +967,7 @@ class Middleware(
                 unit.state = UnitState.DONE
                 unit.note = "operator confirmed" + (if (unit.verification == Verification.MATCHED) "" else " without equipment evidence") + ": ${unit.note}"
             }
-            OperatorDecision.REWORK -> env.reworkAsNewAttempt(unit)
+            OperatorDecision.REWORK -> rework.renew(execution, unit)
         }
         // 다른 단위가 아직 보류이면 실행은 보류 그대로이고 그 단위를 이미 알린 것으로 둔다. 아니면 보류가 걷힌다.
         val stillHeld = execution.units.firstOrNull { it.state == UnitState.OPERATOR_HOLD }
@@ -977,6 +982,12 @@ class Middleware(
         incidentLog.noteResolution(executionId, unitId, IncidentDecision.of(decision), approver, slots)
         return ResolveOutcome.Resolved
     }
+
+    /**
+     * **재작업 후보**(§15.323) — 보류가 아닌 단위 가운데 지금 재작업을 받을 모양인 묶음, 묶음 하나에 하나. 메모리 조건만 본다(모양, 종결, 같은 기체의
+     * 다른 활성 실행, 묶음 규칙). 포트를 읽지 않으므로 발행 관문·물리 관문의 답은 [resolve] 의 `Refused` 사유로만 온다. 보존 만료는 담는 쪽이 덧붙인다.
+     */
+    fun reworkCandidates(): List<ReworkCandidate> = rework.candidates()
 
     // ── 제안과 승인(설계안 §6.4)
 

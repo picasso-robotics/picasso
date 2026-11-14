@@ -4,8 +4,6 @@ import dev.picasso.capability.HoldEffects
 import dev.picasso.capability.HoldMismatch
 import dev.picasso.contracts.v1.Fault
 import dev.picasso.middleware.MiddlewareCodes.MISMATCH
-import dev.picasso.middleware.MiddlewareCodes.OPEN_UNIT_STATES
-import dev.picasso.middleware.MiddlewareCodes.PREDECESSOR_NOT_DONE
 import java.time.Instant
 
 // 근거 결합(보고서 12장)과 운영자 판단의 보조. 공개 창구(resolve)는 Middleware 에 있다. 상태는 Middleware 에 있다.
@@ -165,10 +163,13 @@ internal fun CommandEnv.failWithEvidenceCheck(
 }
 
 /**
- * 단위를 새 시도로 되돌린다. 다음 [startUnit] 이 `@rN` 태스크 id 로 낸다. [resolve] 의 재작업이 보류 단위와 건너뛴 대상 두 경로에서
- * 같은 되돌림을 쓴다 — 경로마다 풀어 쓰면 한쪽만 고치는 날 시도 번호와 태스크 id 가 어긋난다.
+ * 단위를 새 시도로 되돌린다. 다음 [startUnit] 이 `@rN` 태스크 id 로 낸다. [resolve] 의 재작업이 보류 단위와 보류가 아닌 단위의 묶음([ReworkDesk],
+ * §15.323) 두 경로에서, 회복 승인([HoldRecovery])이 셋째 자리에서 같은 되돌림을 쓴다 — 경로마다 풀어 쓰면 한쪽만 고치는 날 시도 번호와 태스크 id 가
+ * 어긋난다.
  */
-internal fun CommandEnv.reworkAsNewAttempt(unit: ExecutionUnit) {
+internal fun CommandEnv.reworkAsNewAttempt(execution: Execution, unit: ExecutionUnit) {
+    // 새 시도는 «앞선 로봇 단위» 일 수 없다(§15.323) — 재기동이 뒤 단위의 태스크를 보고 앞선 것으로 둔 단위라도 새 시도의 성공은 설비 근거를 다시 묻는다.
+    execution.resumedPrior -= unit.unitId
     unit.attempt += 1
     unit.state = UnitState.PENDING
     unit.taskId = ""
@@ -196,76 +197,4 @@ internal fun CommandEnv.reworkAsNewAttempt(unit: ExecutionUnit) {
     unit.progressStalled = false
     unit.preconditionSubjects = emptyList()
     unit.result = null
-}
-
-/**
- * [unit] 이 건너뛴 점검 모양이면 그 선행 이동을, 아니면 널을 돌려준다.
- *
- * 모양은 다섯이다. 단위가 `FAILED` 이고 분류가 [PREDECESSOR_NOT_DONE] 이며 태스크를 쓴 적이 없고(내지 않았다), 선행([ExecutionUnit.after])이
- * 이 실행에 있으며 `FAILED` 이고 태스크를 썼다(시도된 실패). 선행이 `UNVERIFIED`·`ABORTED` 이거나 점검 자신이 시도 뒤에 실패한
- * 단위는 이 경로의 범위 밖이다.
- */
-private fun CommandEnv.skippedPair(execution: Execution, unit: ExecutionUnit): ExecutionUnit? {
-    if (unit.state != UnitState.FAILED || unit.failureClass != PREDECESSOR_NOT_DONE || unit.taskId.isNotEmpty()) return null
-    val predecessor = execution.units.firstOrNull { it.unitId == unit.after } ?: return null
-    if (predecessor.state != UnitState.FAILED || predecessor.taskId.isEmpty()) return null
-    return predecessor
-}
-
-/**
- * [resolve] 의 건너뛴 대상 경로. 보류 단위가 아닌 [unitId] 가 건너뛴 점검이면 그 점검과 선행 이동을 한 쌍으로 재작업한다.
- *
- * - 건너뛴 점검 모양이 아니면 [ResolveOutcome.NotHeld] 다(이동 단위 id, 시도 뒤에 실패한 점검, 끝난 단위, 없는 단위).
- * - [OperatorDecision.CONFIRM_DONE] 은 [ResolveOutcome.Refused] 다. 확인은 «하위는 실패라는데 설비에는 있다» 를 사람이 닫는 자리이고
- *   하지 않은 점검에는 확인할 것이 없다.
- * - 받을 수 없는 때는 [skippedReworkRefusal] 의 사유로 [ResolveOutcome.Refused] 다. 아무것도 안 바뀐다.
- *
- * 받으면 두 단위에 같은 판단을 적고(시도는 오르기 전 값) 같은 되돌림을 쓴 뒤 실행을 `RUNNING` 으로 두고 작업 응답 하나를 낸다.
- * 인시던트에는 **선행 이동의 것**에 판단을 붙인다 — 건너뛴 점검은 인시던트를 열지 않았다. 새 인시던트는 열지 않고, 되돌린 이동이 다시
- * 실패하면 보통 경로로 연다.
- *
- * 작업 응답은 [noteAttention] 이 아니라 [notify] 로 직접 낸다. [noteAttention] 은 `OPERATOR_HOLD`·`IN_DOUBT` 가 풀리는 것만 대 보므로
- * `PARTIAL`·`FAILED` 에서 `RUNNING` 으로 돌아오는 것은 그 비교에 잡히지 않는다.
- */
-internal fun CommandEnv.resolveSkipped(execution: Execution, unitId: String, decision: OperatorDecision, approver: Approver, executions: Collection<Execution>, incidentLog: IncidentLog): ResolveOutcome {
-    val skipped = execution.units.firstOrNull { it.unitId == unitId } ?: return ResolveOutcome.NotHeld
-    val travel = skippedPair(execution, skipped) ?: return ResolveOutcome.NotHeld
-    if (decision == OperatorDecision.CONFIRM_DONE) {
-        return ResolveOutcome.Refused("점검을 하지 않은 단위는 확인할 것이 없다 — 재작업만 받는다: $unitId")
-    }
-    skippedReworkRefusal(execution, skipped, travel, executions)?.let { return ResolveOutcome.Refused(it) }
-
-    val at = now()
-    for (unit in listOf(travel, skipped)) {
-        execution.decisions[unit.unitId] = RecordedDecision(decision, approver, at, unit.attempt)
-        reworkAsNewAttempt(unit)
-    }
-    execution.noticed.clear(Notice.Hold)
-    execution.physicalState = PhysicalState.RUNNING
-    notify(execution)
-    incidentLog.noteResolution(execution.executionId, travel.unitId, IncidentDecision.of(decision), approver)
-    return ResolveOutcome.Resolved
-}
-
-/**
- * 건너뛴 대상의 재작업을 **지금 받지 않는 사유**. 받을 수 있으면 널이다.
- *
- * - 취소한 실행은 받지 않는다. 사람이나 상위가 멈추기로 한 결정이다.
- * - 순회가 종결한 뒤에만 받는다. 실행이 `PARTIAL`·`FAILED` 이고 낼 단위·도는 단위·미확정·보류가 없어야 한다. 도는 중에 앞 대상을
- *   되돌리면 다음 단위가 앞 대상의 이동 뒤에 나가 다른 대상의 점검이 앞 대상의 자리에서 나간다. [ExecutionUnit.after] 는 선행이
- *   `DONE` 인지만 보고 기체가 지금 그 자리에 있는지는 보지 않는다.
- * - 두 단위의 기체를 쥔 다른 활성 실행이 없어야 한다. `PARTIAL` 은 기체를 쥔 채라 그 사이 다른 실행이 서지 않지만 `FAILED` 는
- *   기체를 내주므로 그 사이 다른 실행이 섰을 수 있다.
- */
-private fun skippedReworkRefusal(execution: Execution, skipped: ExecutionUnit, travel: ExecutionUnit, executions: Collection<Execution>): String? {
-    val state = execution.physicalState
-    if (state == PhysicalState.ABORTED) return "취소한 실행의 대상은 재작업하지 않는다 — 새 작업 지시로 낸다"
-    if ((state != PhysicalState.PARTIAL && state != PhysicalState.FAILED) || execution.units.any { it.state in OPEN_UNIT_STATES }) {
-        return "순회가 종결한 뒤 한 대상씩 재작업한다 — 아직 낼 단위나 도는 단위가 있다"
-    }
-    val robots = setOf(execution.robotOf(skipped), execution.robotOf(travel))
-    val other = executions.firstOrNull {
-        it.executionId != execution.executionId && it.physicalState.occupiesRobot && it.robots.any { robot -> robot in robots }
-    }
-    return other?.let { "같은 기체에 다른 활성 실행이 있다 — 그 실행이 끝난 뒤 재작업한다: ${it.executionId}" }
 }

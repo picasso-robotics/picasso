@@ -142,7 +142,7 @@ internal class HoldRecovery(
     private fun apply(execution: Execution, unit: ExecutionUnit, go: Judgment.Go, target: ProposalTarget.Hold) {
         go.prefix.forEach { it.revision = execution.order.version }
         execution.mutableUnits.addAll(execution.mutableUnits.indexOf(unit), go.prefix)
-        env.reworkAsNewAttempt(unit)
+        env.reworkAsNewAttempt(execution, unit)
         unit.note = "approved remedy ${go.prefix.joinToString { it.unitId }} inserted before attempt ${unit.attempt} — reissued after it"
         val stillHeld = execution.units.firstOrNull { it.state == UnitState.OPERATOR_HOLD }
         execution.noticed.set(Notice.Hold, stillHeld?.unitId)

@@ -56,8 +56,14 @@ object LedgerExport {
      * `stallWindow`)이 붙었고, 탐색 줄의 `outcome` 에 **갈래가 셋 늘었다**(`SOURCE_UNOBSERVED`·`DESTINATION_OCCUPIED`·`DESTINATION_UNOBSERVED`).
      * 안내(`manifest.json`)에는 인스턴스(`instanceId`)가 붙었다 — 한 벌은 한 인스턴스의 것이다. 새 연결 칸은 전부 해시에서 빠지고 임무·설정의
      * 해시 규칙은 그대로라 **같은 시드의 요약은 판 7 과 같다.**
+     *
+     * `9` 에서 인시던트 줄 `resolution` 에 재작업 근거 한 칸(`resolution.reworkBasis`)이 붙었다(§15.323). 시도된 실패를 재작업으로 받을 때 읽은
+     * 손·자리이고 묶음 뿌리·물리 관문을 지난 단위의 인시던트에 붙은 재작업 판단에만 값이 있다(건너뛴 쌍의 이동 인시던트에는 `{robotId, readAt}` 표지 —
+     * «관측 없음»). 이 인코더의 원칙대로 **널도 키를 싣는다** — 판단마다, 그리고 근거 안의 손·자리 칸마다. 값 조합도 는다 — 시도된 실패 인시던트
+     * (`unresolved: false`)에 `REWORK` 판단이 서고, 첫 발행 직전 재검사를 못 지난 시도는 태스크 없는 실패 인시던트(`REWORK_RECHECK`)를 열며, 판단
+     * 기록에서는 `DONE` 이던 이동에 `REWORK` 판단이 선다. 판단 칸이라 해시에서 빠지고 **같은 시드의 요약은 판 8 과 같다.**
      */
-    const val SCHEMA_VERSION: String = "8"
+    const val SCHEMA_VERSION: String = "9"
 
     const val INCIDENTS: String = "incidents.jsonl"
     const val REMEDY_SEARCHES: String = "remedy-searches.jsonl"
@@ -308,6 +314,23 @@ object LedgerExport {
         .str("at", r.at.toString())
         .str("wallClockAt", r.wallClockAt.toString())
         .raw("decidedBy", approver(r.decidedBy))
+        .raw("reworkBasis", r.reworkBasis?.let { reworkBasis(it) } ?: "null")
+        .done()
+
+    /** 재작업 근거(판 9, §15.323). 판단 기록과 달리 **빈 칸도 널로 싣는다** — 이 인코더의 원칙이다(«물었으나 침묵» 은 `occupied: null`). */
+    private fun reworkBasis(b: ReworkBasis): String = Obj()
+        .str("robotId", b.robotId)
+        .raw("hold", b.hold?.let { Obj().str("kind", it.kind.name).str("objectRef", it.objectRef).done() } ?: "null")
+        .raw("source", b.source?.let { slot(it) } ?: "null")
+        .raw("destination", b.destination?.let { slot(it) } ?: "null")
+        .str("readAt", b.readAt.toString())
+        .done()
+
+    private fun slot(s: ReworkSlot): String = Obj()
+        .str("slotId", s.slotId)
+        .raw("occupied", s.occupied?.toString() ?: "null")
+        .str("identity", s.identity)
+        .str("observedAt", s.observedAt?.toString())
         .done()
 
     private fun review(r: IncidentReview): String = Obj()
