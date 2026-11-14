@@ -714,7 +714,10 @@ class JudgmentRecordTest {
             assertIs<Middleware.Submission.Accepted>(mw.resume(order, ROBOT, ActiveMission(capability, null), record)).execution
     }
 
-    /** 승인 경로는 에뮬레이터 위에서 세운다 — 든 채인 기체와 그 거절이 있어야 제안이 선다(`RemedyApprovalTest` 와 같은 모양). */
+    /**
+     * 승인 경로는 에뮬레이터 위에서 세운다 — 든 채인 기체와 그 거절이 있어야 제안이 선다(`RemedyApprovalTest` 와 같은 모양). 랙은 든 채
+     * 실패해 사람이 취소로 닫는다([leaveHolding]) — 든 채 **도는** 랙 뒤에 내면 그 손에 든 것이 랙의 일이라 제안이 서지 않는다(§15.319).
+     */
     private class Approvals : AutoCloseable {
         val harness = Harness(mapOf(ROBOT to PRECOND))
         val cell = CellMimic(now = { harness.clock.now() })
@@ -734,14 +737,22 @@ class JudgmentRecordTest {
                     EquipmentRequirement("SEQ-IN-02.BIN-A", "source", mapOf("material" to "ENGINE-COVER-A")),
                 ),
             )
+            cell.program("RACK-204.S01", "ENGINE-COVER-A")
             val exec = assertIs<Middleware.Submission.Accepted>(old.submit(rack, ROBOT)).execution
-            repeat(80) {
+            old.leaveHolding(exec, harness) { drive(it) }
+            return assertIs(old.submit(patrol(), ROBOT))
+        }
+
+        private fun drive(until: () -> Boolean) {
+            repeat(120) {
                 old.pump()
-                if (exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING) return assertIs(old.submit(patrol(), ROBOT))
+                if (until()) return
                 harness.advance(Duration.ofSeconds(1))
                 Thread.sleep(40)
+                old.pump()
+                if (until()) return
             }
-            error("기체가 든 채가 되지 않았다")
+            error("조건에 못 미쳤다")
         }
 
         override fun close() = harness.close()

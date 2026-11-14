@@ -63,7 +63,7 @@ internal fun CommandEnv.revise(
     // 그 실행 자신의 도는 단위는 남은 단위 앞의 고리다 — 그 단위가 끝난 뒤의 파지에서 출발한다(§15.315).
     gate.chainRefusal(execution.robotId, prefix + toPlan, revising = execution)?.let {
         return desk.record(
-            execution.robotId, order, it, carriesApproval = execution.approval != null, approval = approvedBy != null,
+            execution.robotId, order, it, carriesApproval = execution.approval != null, approval = approvedBy != null, revising = execution.executionId,
         )
     }
 

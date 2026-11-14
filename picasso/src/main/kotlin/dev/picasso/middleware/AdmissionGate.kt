@@ -136,7 +136,14 @@ internal class AdmissionGate(
      * **도는 단위가 없으면 기체 스냅숏의 손에서 출발한다**(§15.316, 계약 0.11.0). 새 접수에만 쓰고 개정에는 쓰지 않는다. 스냅숏의 손은 발신자가
      * 주기적으로 다시 읽은 값이라 C2 가 버린 «다시 볼 길 없는 종착 파지» 가 아니다. 든 채·빈손으로 답했을 때만 쓰고, 관측 불가·말하지 않음·못 물음이면 지금처럼
      * 출발점이 없다(발신자가 판정). 그 기체를 **다른 실행이 쥐고 있으면**([PhysicalState.occupiesRobot]) 거절은 하되 조치 제안은 세우지 않고
-     * (쥔 실행은 [snapshotHolder] 가 조치 장부에 알린다), 조치 걸음을 실은 계획(승인 접수)은 위반이 없어도 받지 않는다 — 그 손에 든 것이 그 실행의 일일 수 있다.
+     * (쥔 실행은 [holder] 가 조치 장부에 알린다) — 그 손에 든 것이 그 실행의 일일 수 있다.
+     *
+     * **도는 단위의 관측도 같은 규칙이다**(§15.319). 새 접수에서 도는 단위의 관측은 정의상 전부 남의 것이다 — 같은 작업 지시는 개정으로 간다.
+     * 그 실행이 도는 동안 조치 열을 보내면 그 실행의 물건을 처분한다. 개정이면 그 실행 자신은 빼고 센다 — 자기 실행의 정상 개정은 막지 않는다.
+     *
+     * **조치 걸음을 실은 계획(승인 접수)은 다른 실행이 그 기체를 쥐면 손과 상관없이 받지 않는다**(§15.319). 든 채든 빈손이든 손을 모르든
+     * (관측 불가·말하지 않음·선언을 못 읽음) 같다. 제안을 세우는 쪽([RemedyDesk.record])과 값을 채우는 쪽([fillHold])이 이미 손과 무관하게
+     * 점유로 막으므로 접수도 같은 규칙이어야 한다 — 손이 든 채일 때만 막으면 빈손이나 모름으로 바뀐 사이에 승인이 새어 남의 기체에 조치가 나간다.
      */
     fun chainRefusal(robotId: String, planned: List<ExecutionUnit>, revising: Execution? = null): Submission.Rejected? {
         // **사슬은 기체마다다.** 손은 기체에 달렸으므로 단위가 묶인 기체의 파지로 그 기체의 단위들을 굴린다. 묶지 않은 단위는
@@ -156,9 +163,16 @@ internal class AdmissionGate(
         revising: Execution?,
         replanned: Set<String>,
     ): Submission.Rejected? {
+        val carriesRemedy = planned.any { it.unitId.startsWith("remedy-") }
+        // 남이 쥔 기체에 조치 열을 보내지 않는다 — 손을 보기 전에, 선언·관측이 없어 사슬을 건너뛰는 자리보다 앞에서 본다(§15.319). 승인 접수는
+        // 조치 열을 앞에 붙여 다시 이 검사를 지나므로, 제안이 선 뒤 점유가 생겨도 여기서 막힌다. 개정이면 그 실행 자신은 뺀다.
+        if (carriesRemedy) {
+            occupant(robotId, revising?.executionId)?.let { holder ->
+                return Submission.Rejected("그 기체를 다른 실행 ${holder.executionId} 가 쥐고 있어 조치 열을 보내지 않는다 (보내지 않았다)")
+            }
+        }
         val declared = robots.capabilities(robotId)?.skillsList ?: return null
         val byType = declared.associateBy { it.skillType }
-        val carriesRemedy = planned.any { it.unitId.startsWith("remedy-") }
         val live = startHold(robotId, revising, replanned)
         val observed = live?.let { Start(it.first, if (it.second) Basis.ROLLED else Basis.LIVE) }
             ?: revising?.let { return null }
@@ -168,13 +182,6 @@ internal class AdmissionGate(
             ?: return null
         val start = observed.hold
         var hold = start
-        // 남이 쥔 기체의 든 것으로 조치 열을 보내지 않는다. 승인 접수는 조치 열을 앞에 붙여 다시 이 검사를 지나므로, 제안이 선 뒤 점유가 생겨도 여기서 막힌다.
-        val holder = if (observed.basis == Basis.SNAPSHOT && start.kind == HoldKind.HOLD_KIND_HOLDING) occupant(robotId) else null
-        if (holder != null && carriesRemedy) {
-            return Submission.Rejected(
-                "그 기체를 다른 실행 ${holder.executionId} 가 쥐고 있어 조치 열을 보내지 않는다 (기체 스냅숏의 파지, 보내지 않았다)",
-            )
-        }
         for (unit in planned) {
             if (unit.route != Route.ROBOT) continue
             val target = byType[unit.skillType]
@@ -374,21 +381,25 @@ internal class AdmissionGate(
             ?.takeIf { it.kind == HoldKind.HOLD_KIND_HOLDING || it.kind == HoldKind.HOLD_KIND_EMPTY }
 
     /**
-     * 도는 단위 관측이 없을 때 이 기체를 쥔 다른 실행 id. [RemedyDesk] 가 스냅숏 근거의 거절에 제안을 세울지 가른다 — 도는 단위 관측이 없는데
-     * 조치가 찾아졌다면 출발점은 스냅숏이다(개정은 도는 단위가 없으면 사슬을 안 본다).
+     * [except] 말고 이 기체를 쥔 실행 id. [RemedyDesk] 가 거절에 제안을 세울지 가른다 — 근거가 스냅숏이든 도는 단위의 관측이든 같다(§15.316·§15.319).
+     * [except] 는 개정이면 그 실행 자신이다. 새 접수면 널이다 — 새 접수가 본 도는 단위는 전부 남의 것이다.
      */
-    fun snapshotHolder(robotId: String): String? = if (liveHold(robotId) == null) occupant(robotId)?.executionId else null
+    fun holder(robotId: String, except: String?): String? = occupant(robotId, except)?.executionId
 
-    /** 이 기체를 쥔 실행(정착하지 않았거나 부분 완료로 다시 돌 수 있는 것). 단위가 묶인 기체도 센다. */
-    private fun occupant(robotId: String): Execution? =
-        executions.values.firstOrNull { it.physicalState.occupiesRobot && robotId in it.robots }
+    /** [except] 말고 이 기체를 쥔 실행(정착하지 않았거나 부분 완료로 다시 돌 수 있는 것). 단위가 묶인 기체도 센다. */
+    private fun occupant(robotId: String, except: String?): Execution? =
+        executions.values.firstOrNull { it.executionId != except && it.physicalState.occupiesRobot && robotId in it.robots }
 
     /**
      * 승인 값을 채울 손(§15.316) — 도는 단위의 관측([liveHold])이 먼저이고, 없으면 신선한 기체 스냅숏의 손이다. 그 기체를 다른 실행이 쥐고 있으면
-     * 스냅숏을 쓰지 않는다: 제안을 세운 규칙([chainRefusal])과 같은 규칙이어야 선 조건과 채우는 조건이 갈리지 않는다.
+     * 어느 쪽도 쓰지 않는다(§15.319): 제안을 세운 규칙([chainRefusal])과 같은 규칙이어야 선 조건과 채우는 조건이 갈리지 않는다. 승인이 그 작업
+     * 지시의 실행을 개정하면([Middleware.commit]) 그 실행 자신은 «다른 실행» 이 아니다.
      */
-    fun fillHold(robotId: String): HoldState? =
-        liveHold(robotId) ?: snapshotHold(robotId)?.takeIf { occupant(robotId) == null }
+    fun fillHold(robotId: String, jobOrderId: String): HoldState? {
+        val self = executions.values.firstOrNull { it.order.jobOrderId == jobOrderId }?.executionId
+        if (occupant(robotId, self) != null) return null
+        return liveHold(robotId) ?: snapshotHold(robotId)
+    }
 
     /**
      * 이 기체에서 **지금 도는** 단위들의 파지 관측. 든 것이 하나라도 있으면 든 채(손은 한 쌍이다), 아니면 빈손 관측이

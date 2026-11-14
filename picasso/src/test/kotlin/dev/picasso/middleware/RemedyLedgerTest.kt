@@ -53,7 +53,10 @@ class RemedyLedgerTest {
             error("조건에 못 미쳤다")
         }
 
-        /** 든 채로 도는 기체를 만든다 — 빈손을 요구하는 주문이 여기서만 거절된다. */
+        /**
+         * 든 채로 남은 기체를 만든다 — 빈손을 요구하는 주문이 여기서만 거절된다. 랙은 든 채 실패해 사람이 취소로 닫는다([leaveHolding]):
+         * 든 채 **도는** 랙 뒤에 내면 그 손에 든 것이 랙의 일이라 제안이 서지 않는다(§15.319).
+         */
         fun holding(): Middleware.Execution {
             val order = JobOrder(
                 jobOrderId = "SEQ-${++racks}",
@@ -69,8 +72,7 @@ class RemedyLedgerTest {
             order.equipmentRequirements.filter { it.equipmentUse == "destination" }
                 .forEach { cell.program(it.id, it.properties["material"]) }
             val exec = assertIs<Middleware.Submission.Accepted>(mw.submit(order, ROBOT)).execution
-            drive { exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
-            return exec
+            return mw.leaveHolding(exec, harness) { drive(until = it) }
         }
 
         fun settle(exec: Middleware.Submission.Accepted) = settle(exec.execution)

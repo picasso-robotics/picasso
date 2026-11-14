@@ -19,8 +19,8 @@ import kotlin.test.assertTrue
  * 실제로 서 있는지를 여러 각도에서 묻는 것이다. 승인은 사람의 책임 있는 행위이므로 조치가 요구하는 값도
  * 사람이 준다 — 지어내면 승인은 무엇을 승인하는지 모르는 채 누르는 단추가 된다.
  *
- * **제안은 계획 시점 거절에 붙는다.** 관측과 선언이 둘 다 있는 자리가 거기뿐이기 때문이다 — 스냅샷은
- * 파지를 싣지 않으므로 도는 단위가 없으면 이 층에 관측이 없다.
+ * **제안은 계획 시점 거절에 붙는다.** 관측과 선언이 둘 다 있는 자리가 거기뿐이기 때문이다. 여기서 관측은 기체 스냅숏의
+ * 손이다(§15.316) — 든 채 도는 다른 실행의 관측이면 그 손에 든 것이 그 실행의 일이라 제안이 서지 않는다(§15.319).
  */
 class RemedyApprovalTest {
 
@@ -67,19 +67,17 @@ class RemedyApprovalTest {
     )
 
     /**
-     * 든 채로 도는 기체를 만들고, 빈손을 요구하는 주문을 넣어 거절을 받는다.
+     * 든 채로 남은 기체를 만들고, 빈손을 요구하는 주문을 넣어 거절을 받는다.
      *
-     * [settleFirst] 가 참이면 앞 주문이 끝날 수 있도록 셀에 증거를 둔다 — 기체는 배타적이라 앞 실행이
-     * 안 끝나면 승인한 조치도 못 나간다. 거절을 받는 시점은 어느 쪽이든 앞 주문이 **든 채로 도는** 때다.
+     * 앞 주문은 든 채 실패해 사람이 취소로 닫는다([leaveHolding]) — 기체를 쥔 실행 없이 손만 든 채다. 든 채 **도는** 앞 주문 뒤에
+     * 내면 그 손에 든 것이 앞 주문의 일이라 제안이 서지 않는다(§15.319).
      */
-    private fun World.rejectedWhileHolding(settleFirst: Boolean = false): Middleware.Submission.Rejected {
+    private fun World.rejectedWhileHolding(): Middleware.Submission.Rejected {
         val order = rack()
-        if (settleFirst) {
-            order.equipmentRequirements.filter { it.equipmentUse == "destination" }
-                .forEach { cell.program(it.id, it.properties["material"]) }
-        }
+        order.equipmentRequirements.filter { it.equipmentUse == "destination" }
+            .forEach { cell.program(it.id, it.properties["material"]) }
         val exec = assertIs<Middleware.Submission.Accepted>(mw.submit(order, ROBOT)).execution
-        drive { exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
+        mw.leaveHolding(exec, harness) { drive(until = it) }
         return assertIs<Middleware.Submission.Rejected>(mw.submit(patrol(), ROBOT))
     }
 
@@ -152,7 +150,7 @@ class RemedyApprovalTest {
         // 설계안 §10.2 셋째 — 실행 가능하지 않은 대안은 대안이 아니다. 제안을 에뮬레이터에서 돌려
         // 막혔던 단위가 실제로 나가는지 본다.
         World(PRECOND).use { w ->
-            val found = assertIs<Remedy.Found>(assertNotNull(w.rejectedWhileHolding(settleFirst = true).remedy))
+            val found = assertIs<Remedy.Found>(assertNotNull(w.rejectedWhileHolding().remedy))
             val place = mapOf(
                 PrepareSequencedRack.P_OBJECT to "ENGINE-COVER-A",
                 PrepareSequencedRack.P_DESTINATION to "RACK-204.S01",

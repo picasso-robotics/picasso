@@ -106,7 +106,7 @@ class RetentionTest {
     }
 
     private fun desk(retention: Retention, live: (String) -> Boolean = { false }) =
-        RemedyDesk(Silent(), Entitlements.None, 0, { T0 }, { T0 }, { null }, retention, live)
+        RemedyDesk(Silent(), Entitlements.None, 0, { T0 }, { T0 }, { _, _ -> null }, retention, live)
 
     private val found = Remedy.Found(listOf(RemedyStep("grip", emptyList(), HoldKind.HOLD_KIND_HOLDING, HoldKind.HOLD_KIND_EMPTY)))
 
