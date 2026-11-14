@@ -4,6 +4,7 @@ import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.contracts.v1.Fault
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.capability.Remedy
+import dev.picasso.capability.RemedyStep
 import dev.picasso.middleware.RemedyDesk.Judgment
 import dev.picasso.contracts.v1.HoldState
 import dev.picasso.contracts.v1.TaskState
@@ -172,10 +173,15 @@ class Middleware(
     private fun Execution.trail(kind: String, detail: String, at: Instant = now()) = with(env) { trail(kind, detail, at) }
 
     /** 제안과 승인의 장부(설계안 §6.4). 승인 뒤의 접수는 [commit] 에 남고, 승인의 기록([RemedyDesk.settle])은 접수가 된 뒤에만 한다. */
-    private val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::fillHold, retention, ::pumping, gate::holder)
+    private val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::fillHold, retention, ::pumping, gate::holder, { j, t -> holdStands(executions.values, j, t) }) { o ->
+        plannedUnitIds(executions.values, o, this.missions.active(o.workMasterId))
+    }
 
     /** 사건 번들의 장부(설계안 §4). 봉인은 [pump] 가 라운드 끝에 부른다. */
     private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping)
+
+    /** 발신자 거부 뒤 제자리 회복(§15.320). 재확인은 [pump] 가 실행마다 라운드 끝에, 미발행 판정은 [pumpRound] 가 다음 단위를 고를 때 부른다. */
+    private val recovery = HoldRecovery(env, gate, desk, incidentLog, executions, ::noteAttention)
 
     /** 이 실행을 아직 구동이 돌리는가 — 보존 상한이 그 실행의 기록을 남길지 가른다([Retention]). */
     private fun pumping(executionId: String): Boolean = executions[executionId]?.physicalState?.pumps == true
@@ -358,7 +364,7 @@ class Middleware(
      *
      * **판단 기록([record])을 넘기면** 4·5·6 뒤에 그 사실을 그대로 옮긴다(7). 넘기지 않으면 아래의 것이 넘어오지 않는다.
      *
-     * 7. **판단 기록을 옮긴다.** 감수한 결함, 승인 소모(조치 열의 걸음은 계획 앞에 다시 서고 승인 장부에 소모로 다시 선다),
+     * 7. **판단 기록을 옮긴다.** 감수한 결함, 승인 소모(조치 열의 걸음은 계획 앞 — 회복 승인이면 위치 칸의 단위 바로 앞(§15.320) — 에 다시 서고 승인 장부에 소모로 다시 선다),
      *    단위마다의 시도 번호, 요청 시각(근거 윈도우와 미확정 유예의 기준, 설비 대기의 기한 시작), 검증 대기의 창, 이미 내린
      *    판정, 운영자 판단, 건 취소, 파지 이력이다. **다시 판정하지 않는다** — 판정이 있는 단위는 다시 돌리지 않고, 앞선 로봇 단위라도 기록의 근거
      *    등급을 그대로 쓴다. 시각은 그 시도를 다시 낼 때 쓰므로 기한은 재기동 시각이 아니라 처음 시작한 시각부터 이어 간다.
@@ -393,9 +399,9 @@ class Middleware(
                 "넘겨받은 임무 정의의 WorkMaster 가 작업 지시와 다르다: 정의=${mission.capability.workMasterId}, 작업 지시=${order.workMasterId}",
             )
         }
-        // 승인된 조치 열은 계획 앞에 선다(`commit` 과 같은 모양). 기록이 그 걸음을 들고 오지 않으면 다시 지을 길이 없다.
-        val planned = record?.approval?.steps.orEmpty().map { remedyUnit(it.unitId, it.skillType, it.parameters) } +
-            mission.capability.plan(order)
+        // 승인된 조치 열은 계획 앞에 선다(`commit` 과 같은 모양). 회복 승인이면 위치 칸의 단위 바로 앞이다(§15.320). 기록이 그 걸음을 들고 오지 않으면
+        // 다시 지을 길이 없다.
+        val planned = plannedWith(record?.approval, mission.capability.plan(order))
         record?.let { recordRefusal(order, it, planned) }?.let { return Submission.Rejected(it) }
         val snapshots = linkedMapOf<String, RobotSnapshot>()
         for (robot in planned.map { it.robotBinding ?: robotId }.distinct()) {
@@ -407,7 +413,8 @@ class Middleware(
 
         val execution = create(order, robotId, mission, planned, approvedBy = null)
         env.rebuildFrom(execution, snapshots)
-        val reopenedAt = record?.let { env.restore(execution, it, desk) }
+        // 회복의 몫(소모 대상·거부 주어)은 옮긴 직후 바로잡는다 — 다시 연 인시던트의 봉인과 첫 pump 보다 앞이다(§15.320).
+        val reopenedAt = record?.let { r -> env.restore(execution, r, desk).also { desk.restoreRecovery(execution, r) } }
         execution.units.filter { it.route == Route.ROBOT }.forEach { execution.inherited[it.unitId] = it.attempt }
         // 8 이 다시 연 인시던트를 지금 봉한다. 지금의 현장 시간값으로 — 라운드의 값([round])은 [pump] 의 것이라 건드리지 않는다.
         // 봉인 시각은 다시 연 줄의 시각이다. 따로 읽으면 실제 시계에서 둘이 어긋나 줄 시각 = `at` 으로 가르지 못한다.
@@ -420,6 +427,9 @@ class Middleware(
      *
      * 언제 받아 둘지는 담는 쪽이 정한다. 판정과 판단은 [pump]·[resolve]·[release]·승인 안에서 서므로 그 뒤마다 받아 두면 빠지는 것이
      * 없다. 다시 지은 뒤 아직 내지 않은 시도의 시각도 싣는다 — 다시 지은 직후 다시 죽어도 기한의 시작을 잃지 않는다.
+     *
+     * ★**저장 계약**(§15.320): 담는 쪽은 **승인 적용 뒤 다음 [pump] 전에** 이 기록을 저장한다. 승인([approveRemedy]·[attemptApproval]·
+     * [approveRecovery])이 조치 열을 세운 뒤 저장 전에 죽으면 다시 지은 실행이 그 승인을 모른다. 그 틈을 막는 장치는 아직 없다(한계 대장).
      */
     fun judgmentRecord(executionId: String): JudgmentRecord? {
         val execution = executions[executionId] ?: return null
@@ -443,7 +453,7 @@ class Middleware(
                         pendingWindow
                     },
                     verdict = unit.takeIf { it.state in UnitVerdict.STATES }?.let {
-                        UnitVerdict(it.state, it.reached, it.verification, it.evidenceAt, it.failureClass, it.note, it.result)
+                        UnitVerdict(it.state, it.reached, it.verification, it.evidenceAt, it.failureClass, it.note, it.result, it.preconditionSubjects)
                     },
                     decision = execution.decisions[unit.unitId],
                     everHeld = unit.everHeld,
@@ -679,6 +689,8 @@ class Middleware(
         try {
             // 보내는 중인 취소가 있으면 그 결과부터 받는다. 아직이면 이 라운드는 진행하지 않는다.
             if (!execution.command.pollCancel()) pumpRound(execution)
+            // 발신자 거부로 선 보류를 신선한 손으로 다시 본다(§15.320) — 보류가 선 것을 아는 자리가 라운드 끝의 여기다. 던지면 이 실행의 일이다.
+            recovery.review(execution)
             execution.noticed.clear(Notice.PumpFailure(PUMP_SOURCE))
         } catch (e: RuntimeException) {
             execution.notePumpFailure(PUMP_SOURCE, "라운드 진행", e)
@@ -775,11 +787,11 @@ class Middleware(
             return
         }
 
-        val next = execution.units.firstOrNull { it.state == UnitState.PENDING }
-        if (next == null) {
-            settleExecution(execution)
-            return
-        }
+        val next = execution.units.firstOrNull { it.state == UnitState.PENDING } ?: return settleExecution(execution)
+
+        // **회복 조치가 `DONE` 아닌 채 끝났으면 원래 단위를 내지 않는다**(§15.320). 운영자 보류로 세우고 여기서 끝낸다 — 다음 라운드는 위의 보류
+        // 분기에서 멈추므로 뒤의 독립 단위도 안 나간다.
+        if (recovery.halts(execution, next)) return
 
         // **다시 지은 실행의 재부착은 새 발행이 아니다**(§15.219). 기체가 이미 하는 태스크에 붙는 것이라 아래 결함·허가 게이트를 묻지
         // 않는다 — 막으면 기체가 그 일을 하는 동안 이 인스턴스는 따라가지 않는다.
@@ -905,17 +917,8 @@ class Middleware(
     }
 
     private fun settleExecution(execution: Execution) {
-        val states = execution.units.map { it.state }
         val before = execution.physicalState
-        execution.physicalState = when {
-            states.any { it == UnitState.OPERATOR_HOLD } -> PhysicalState.OPERATOR_HOLD
-            states.all { it == UnitState.DONE } -> PhysicalState.PHYSICALLY_DONE
-            states.all { it == UnitState.FAILED } -> PhysicalState.FAILED
-            states.any { it == UnitState.FAILED } -> PhysicalState.PARTIAL
-            states.any { it == UnitState.UNVERIFIED } -> PhysicalState.UNVERIFIED
-            states.any { it == UnitState.ABORTED } -> PhysicalState.ABORTED
-            else -> PhysicalState.PHYSICALLY_DONE
-        }
+        execution.physicalState = settledStateOf(execution.units)
         if (before != execution.physicalState || execution.upstreamAck == UpstreamAck.NOT_SENT) notify(execution)
     }
 
@@ -946,6 +949,7 @@ class Middleware(
             ?: return env.resolveSkipped(execution, unitId, decision, approver, executions.values, incidentLog)
         // 판단 기록이 싣는다(§15.221). 판단이 선 시도를 단다 — 재작업이면 아래에서 시도가 하나 오른다.
         execution.decisions[unitId] = RecordedDecision(decision, approver, now(), unit.attempt)
+        val slots = execution.stepSlots(unit)
         when (decision) {
             OperatorDecision.CONFIRM_DONE -> {
                 // 설비 근거가 있었으면 E2 다. 없이 사람이 확인한 것은 근거 등급을 올리지 않는다 — 그 사실이 note 에 남는다.
@@ -965,7 +969,7 @@ class Middleware(
         // ★**사람의 걸음을 사건에 남긴다.** 안 남기면 사건과 그 뒤의 탐색 사이가 비어 보이고, 읽는
         //   쪽은 그 사이를 «자동으로 회복했다» 로 메운다(§15.188). 아직 판단이 안 실린 **가장 최근의**
         //   사건에 붙인다 — 같은 단위가 두 번 깨지면 걸음도 둘이고 각각 제 사건에 속한다.
-        incidentLog.noteResolution(executionId, unitId, decision, approver)
+        incidentLog.noteResolution(executionId, unitId, IncidentDecision.of(decision), approver, slots)
         return ResolveOutcome.Resolved
     }
 
@@ -981,6 +985,12 @@ class Middleware(
 
     /** 이 (기체, 주문)에 서 있는 제안. 없거나 가려져 있으면 널 — [RemedyDesk.proposal]. */
     fun proposal(robotId: String, jobOrderId: String): Remedy.Found? = desk.proposal(robotId, jobOrderId)
+
+    /**
+     * 이 (기체, 주문)에 서 있는 제안의 대상(§15.320) — 접수 거절이면 [ProposalTarget.Order], 발신자 거부로 선 보류면 [ProposalTarget.Hold]. 없거나
+     * 가려져 있으면 널이다. 보류 대상이면 [approveRecovery] 로만 승인한다.
+     */
+    fun proposalTarget(robotId: String, jobOrderId: String): ProposalTarget? = desk.proposalTarget(robotId, jobOrderId)
 
     /** 가려 둔 제안이 있는가 — [RemedyDesk.withheldProposal]. */
     fun withheldProposal(robotId: String, jobOrderId: String): Boolean = desk.withheldProposal(robotId, jobOrderId)
@@ -1094,6 +1104,26 @@ class Middleware(
     }
 
     /**
+     * **사람의 회복 입구**(§15.320) — 발신자가 `PRECONDITION_UNMET`(파지 주어)으로 거부해 운영자 보류에 선 단위의 회복 제안을 사람이 승인한다.
+     *
+     * 사람만 들어온다. 에이전트는 [ApprovalRefusal.HUMAN_APPROVAL_REQUIRED] 이고, 값 없는 문([attemptApproval])도 회복 제안에는 그 값을 받는다.
+     * «재작업은 사람» (ADR 47)의 예외가 아니다 — 사람의 승인이다. 부르는 쪽은 **대상**([target], [proposalTarget] 이 답한 것)과 **본 조치 열**
+     * ([saw], [proposal] 이 답한 걸음 그대로 — 유형·값·순서)을 반드시 들고 와야 하고, 서 있는 제안과 다르면 거절이다([ApprovalRefusal.PROPOSAL_CHANGED]).
+     * 대상이 더는 같은 판·같은 시도의 보류가 아니면(사람이 재작업·확인·취소했거나 개정) 제안을 내리고 [ApprovalRefusal.REMEDY_NOT_APPLIED] 다.
+     * 같은 대상의 소모된 제안을 다시 누르면 [ApprovalRefusal.CONSUMED] 다.
+     *
+     * 서면 **같은 실행**에 조치 열을 그 단위 바로 앞에 끼우고 그 단위를 새 시도의 대기로 되돌린다 — 새 실행이 서지 않고 [revise] 를 쓰지 않는다. 적용 직전에
+     * 기체의 손으로 사슬을 다시 굴려 걸리면 [ApprovalRefusal.REFUSED_BY_GATE] 이고 제안은 그대로다. 조치가 `DONE` 아닌 채 끝나면 원래 단위는 나가지 않고
+     * 운영자 보류에 선다. 실행당 승인은 하나다(접수와 회복 합계). 적용 뒤 다음 [pump] 전에 판단 기록을 저장하는 것은 담는 쪽의 몫이다([judgmentRecord]).
+     *
+     * @param parameters 걸음마다 하나씩, 걸음 순서대로 — [approveRemedy] 와 같다.
+     * @return 서면 [Submission.Accepted] (그 실행), 아니면 [Submission.Rejected.approvalRefusal] 가 종류를 싣는다.
+     */
+    fun approveRecovery(
+        robotId: String, jobOrderId: String, target: ProposalTarget.Hold, saw: List<RemedyStep>, parameters: List<Map<String, String>>, approver: Approver,
+    ): Submission = recovery.approve(robotId, jobOrderId, target, saw, parameters, approver)
+
+    /**
      * 판정이 선 뒤 실제로 내린다.
      *
      * **관문이 거절하면 제안을 안 지운다.** 자리 경쟁으로 못 들어간 것은 자격의 문제가 아니고, 그 순간
@@ -1173,6 +1203,9 @@ class Middleware(
      *
      * **참은 «받았다» 이지 «닿았다» 가 아니다.** 하위로 보내다가 포트가 던져도 이 호출은 던지지 않고 참을 돌려준다 — 건 취소는
      * 실행에 남고, 닿을 때까지 [pump] 가 다시 보낸다([sendCancel]).
+     *
+     * 이것은 **상류의 취소**다 — 누가 걸었는지를 받지 않으므로 사건의 판단 칸에 걸음을 싣지 않는다. 사람이 운영자 보류를 닫는 취소는
+     * [cancelByOperator] 로 낸다(§15.320).
      */
     fun cancel(executionId: String): Boolean {
         val execution = executions[executionId] ?: return false
@@ -1181,6 +1214,22 @@ class Middleware(
         execution.command.sendCancel()
         execution.physicalState = PhysicalState.CANCELING
         return true
+    }
+
+    /**
+     * **운영자 취소**(§15.320) — 사람이 그 실행을 취소로 닫는다. 거는 것은 [cancel] 과 같고, 사람의 걸음을 그 실행의 미해결 단위(운영자 보류·미확정)의
+     * 사건 판단 칸에 [IncidentDecision.OPERATOR_CANCEL] 로 싣는다. **누가 닫았는지 없이는 안 된다** — 에이전트이거나 사람 식별자가 비었으면 [ResolveOutcome.Refused] 다(ADR 47).
+     * [cancel] 은 상류의 취소로 그대로 두고 판단 칸에 싣지 않는다 — 승인자 없는 걸음을 싣으면 그 칸이 무기명 판단 경로가 된다.
+     *
+     * @return 걸었으면 [ResolveOutcome.Resolved], 모르는 실행이거나 구동이 더는 돌리지 않으면 [ResolveOutcome.NotHeld].
+     */
+    fun cancelByOperator(executionId: String, operator: Approver): ResolveOutcome {
+        if (operator.kind == ApproverKind.AGENT || operator.id.isBlank()) return ResolveOutcome.Refused("운영자 취소는 이름 있는 사람만 낸다 — 닫는 것은 사람의 것이다: «${operator.id}»(${operator.kind})")
+        val execution = executions[executionId]
+        val unresolved = execution?.units.orEmpty().filter { it.state == UnitState.OPERATOR_HOLD || it.state == UnitState.IN_DOUBT }
+        if (execution == null || !cancel(executionId)) return ResolveOutcome.NotHeld
+        unresolved.forEach { incidentLog.noteResolution(executionId, it.unitId, IncidentDecision.OPERATOR_CANCEL, operator, execution.stepSlots(it)) }
+        return ResolveOutcome.Resolved
     }
 
     fun lastCancel(executionId: String): CancelReport? = executions[executionId]?.lastCancel
@@ -1217,15 +1266,6 @@ class Middleware(
         outbox += response
         execution.noticed.set(Notice.Attention, Attention.of(response.physicalState, response.blockedBy, response.inDoubtUnits))
         execution.upstreamAck = UpstreamAck.SENT_UNACKED
-    }
-
-    /** 상위가 «사람이 볼 것이 있는가» 로 읽는 칸 — 보류·미확정인 실행 상태, 막는 결함의 분류, 미확정 단위. */
-    private data class Attention(val state: PhysicalState?, val blockedBy: List<String>, val inDoubt: List<String>) {
-        companion object {
-            fun of(state: PhysicalState, blockedBy: List<String>, inDoubt: List<String>) = Attention(
-                state.takeIf { it == PhysicalState.IN_DOUBT || it == PhysicalState.OPERATOR_HOLD }, blockedBy, inDoubt,
-            )
-        }
     }
 
     /**

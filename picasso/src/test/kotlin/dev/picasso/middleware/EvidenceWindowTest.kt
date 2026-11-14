@@ -236,7 +236,7 @@ class EvidenceWindowTest {
             val exec = w.held()
             assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, SLOT, OperatorDecision.CONFIRM_DONE, OPERATOR))
             val resolution = assertNotNull(w.mw.incidents().single().resolution)
-            assertEquals(OperatorDecision.CONFIRM_DONE, resolution.decision)
+            assertEquals(IncidentDecision.CONFIRM_DONE, resolution.decision)
             assertEquals(OPERATOR, resolution.decidedBy)
         }
     }
@@ -249,20 +249,20 @@ class EvidenceWindowTest {
             assertEquals(ResolveOutcome.NotHeld, w.mw.resolve("exec-없음", SLOT, OperatorDecision.CONFIRM_DONE, OPERATOR))
             assertEquals(ResolveOutcome.Resolved, w.mw.resolve(exec.executionId, SLOT, OperatorDecision.CONFIRM_DONE, OPERATOR))
             assertEquals(ResolveOutcome.NotHeld, w.mw.resolve(exec.executionId, SLOT, OperatorDecision.REWORK, OPERATOR), "이미 풀린 단위를 다시 판단했다")
-            assertEquals(OperatorDecision.CONFIRM_DONE, assertNotNull(w.mw.incidents().single().resolution).decision)
+            assertEquals(IncidentDecision.CONFIRM_DONE, assertNotNull(w.mw.incidents().single().resolution).decision)
         }
     }
 
     @Test
     fun `판단자는 내보내는 사건 줄에 실리지 않는다`() {
-        // 읽는 쪽이 아직 없다(ADR 9). 실리면 판이 오르고 인계본이 다시 산출된다 — 판 6 그대로여야 한다.
+        // 읽는 쪽이 아직 없다(ADR 9). 판단자를 실으면 판이 오르고 인계본이 다시 산출된다 — 판은 걸음 값이 는 7(§15.320)이고 판단자 칸은 없다.
         World().use { w ->
             val exec = w.held()
             w.mw.resolve(exec.executionId, SLOT, OperatorDecision.REWORK, OPERATOR)
             val line = LedgerExport.incidents(w.mw.incidents())
             assertTrue("\"resolution\":{\"decision\":\"REWORK\"" in line, line)
             assertTrue("decidedBy" !in line && OPERATOR.id !in line, line)
-            assertEquals("6", LedgerExport.SCHEMA_VERSION)
+            assertEquals("7", LedgerExport.SCHEMA_VERSION)
         }
     }
 

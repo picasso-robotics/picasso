@@ -47,8 +47,11 @@ object LedgerExport {
      * 버전을 올린다 — `route` 로 분기하는 읽는 쪽은 모르는 값을 만난다. 의도의 임무 버전(`Intent.missionVersion`)은
      * 싣지 않는다 — 읽는 쪽이 아직 없다(ADR 9). 다만 그 값이 해시에 들므로 **요약(`digest`)은 모든 줄에서 바뀐다** —
      * 코드 케이퍼빌리티로 돈 줄(임무 버전 널)도 해시의 모양이 바뀌었기 때문이다.
+     *
+     * `7` 에서 인시던트 줄 `resolution.decision` 에 **값이 둘 늘었다**(`OPERATOR_CANCEL`·`REMEDY_APPLIED`, §15.320). 칸은 안 늘었다.
+     * `6` 과 같은 이유로 판을 올린다 — `decision` 으로 분기하는 읽는 쪽은 모르는 값을 만난다. 해시에서 빠지는 칸이라 요약은 그대로다.
      */
-    const val SCHEMA_VERSION: String = "6"
+    const val SCHEMA_VERSION: String = "7"
 
     const val INCIDENTS: String = "incidents.jsonl"
     const val REMEDY_SEARCHES: String = "remedy-searches.jsonl"

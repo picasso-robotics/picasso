@@ -156,7 +156,7 @@ class ApprovalWireTest {
     fun `소모 거절이 누가 언제 무엇을 보냈는지 싣는다`() {
         val fields = parse(encode(refused(ApprovalRefusal.CONSUMED)))
         // ★판은 글자로 댄다 — 상수끼리 대면 판을 안 올려도 초록이다.
-        assertEquals("4", fields.getValue("schemaVersion").stringValue)
+        assertEquals("5", fields.getValue("schemaVersion").stringValue)
         assertEquals("CONSUMED", fields.getValue("refusal").stringValue)
 
         val consumed = fields.getValue("consumed").structValue.fieldsMap
@@ -170,6 +170,23 @@ class ApprovalWireTest {
         val parameters = step.getValue("parameters").structValue.fieldsMap
         assertEquals("ENGINE-COVER-A", parameters.getValue("object_id").stringValue)
         assertEquals("DROP-01", parameters.getValue("destination").stringValue)
+        // 접수 승인의 소모는 대상 칸을 빼지 않고 null 로 싣는다(§15.320).
+        assertTrue(consumed.getValue("target").hasNullValue(), "접수 승인 소모의 target 이 null 이 아니다")
+    }
+
+    @Test
+    fun `회복 승인의 소모는 보류 대상을 싣고 회복 제안의 거부 값이 바깥 형식에 실린다`() {
+        // ★회복 입구는 같은 대상의 소모만 `CONSUMED` 로 받는다 — 밖의 문이 받은 소모가 어느 보류의 것인지 읽을 칸이다(§15.320).
+        val hold = ProposalTarget.Hold(orderVersion = 3, unitId = "PUMP-01.travel", attempt = 0)
+        val fields = parse(encode(ApprovalOutcome.Refused(ApprovalRefusal.CONSUMED, "사유", CONSUMED_SAMPLE.copy(target = hold))))
+        val target = fields.getValue("consumed").structValue.fieldsMap.getValue("target").structValue.fieldsMap
+        assertEquals(setOf("orderVersion", "unitId", "attempt"), target.keys)
+        assertEquals(3.0, target.getValue("orderVersion").numberValue)
+        assertEquals("PUMP-01.travel", target.getValue("unitId").stringValue)
+        assertEquals(0.0, target.getValue("attempt").numberValue)
+        val human = parse(encode(ApprovalOutcome.Refused(ApprovalRefusal.HUMAN_APPROVAL_REQUIRED, "사람만")))
+        assertEquals("HUMAN_APPROVAL_REQUIRED", human.getValue("refusal").stringValue)
+        assertEquals("5", human.getValue("schemaVersion").stringValue)
     }
 
     @Test
@@ -192,7 +209,7 @@ class ApprovalWireTest {
         // ★실행 식별자는 인스턴스 안의 셈이라 다시 뜨면 되풀이된다. 승인 답에만 빠지면 읽는 쪽은 결과 통보의
         //   `exec-2` 가 이번 승인의 것인지 앞 구동의 것인지 못 가른다. 거절에도 싣는다 — 다시 떴다는 신호다.
         val approved = parse(encode(ApprovalOutcome.Approved("exec-3", emptyList())))
-        assertEquals("4", approved.getValue("schemaVersion").stringValue)
+        assertEquals("5", approved.getValue("schemaVersion").stringValue)
         assertEquals(INSTANCE, approved.getValue("instanceId").stringValue)
         ApprovalRefusal.entries.forEach { refusal ->
             assertEquals(INSTANCE, parse(encode(refused(refusal))).getValue("instanceId").stringValue, "$refusal")

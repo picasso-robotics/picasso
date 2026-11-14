@@ -192,11 +192,15 @@ internal class IncidentLog(
     }
 
     /**
-     * 운영자의 판단을 **아직 판단이 안 실린 가장 최근의** 사건에 붙인다. 부르는 쪽은 [Middleware.resolve] 다.
+     * 운영자의 판단을 **아직 판단이 안 실린 가장 최근의** 사건에 붙인다. 부르는 쪽은 [Middleware.resolve] 와 사람의 걸음 둘 — 운영자 취소
+     * ([Middleware.cancelByOperator])와 회복 승인([Middleware.approveRecovery]) — 이다(§15.320). 승인자 없는 걸음은 여기 오지 않는다.
      */
-    fun noteResolution(executionId: String, unitId: String, decision: OperatorDecision, decidedBy: Approver) {
+    fun noteResolution(executionId: String, unitId: String, decision: IncidentDecision, decidedBy: Approver, fallback: Set<String> = emptySet()) {
+        // [fallback] — 그 단위의 빈칸이 없을 때 걸음이 붙을 단위들(회복 조치가 실패해 미발행 보류에 선 단위의 조치 단위, §15.320). 비면 지금처럼 버린다.
         val opened = bundles.indexOfLast {
             it.executionId == executionId && it.unitId == unitId && it.resolution == null
+        }.takeIf { it >= 0 } ?: bundles.indexOfLast {
+            it.executionId == executionId && it.unitId in fallback && it.resolution == null
         }
         if (opened >= 0) {
             bundles[opened] = bundles[opened]

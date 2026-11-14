@@ -261,7 +261,7 @@ data class IncidentBundle(
      */
     val review: IncidentReview? = null,
     /**
-     * 사람이 이 사건의 단위에 낸 판단(`OperatorDecision`). 내기 전에는 널이다.
+     * 사람이 이 사건의 단위에 낸 판단(`OperatorDecision`)이나 사람의 걸음(운영자 취소·회복 승인, [IncidentDecision]). 내기 전에는 널이다.
      *
      * ★**이 걸음이 없으면 번들이 빠짐으로 거짓말을 한다.** `run-4` 는 사건 뒤에 탐색이 서는 한 벌인데,
      * 그 사이에 사람이 재작업을 낸 것이 어디에도 안 실려 읽는 쪽이 «자동으로 회복했다» 로 읽는다.
@@ -364,18 +364,37 @@ enum class ReviewVerdict { AGREED, DISPUTED }
  * 실 시계는 현장 대조의 기준이다. 하나만 실으면 읽는 쪽이 둘 중 하나를 못 한다.
  */
 data class IncidentResolution(
-    val decision: OperatorDecision,
+    val decision: IncidentDecision,
     /** 가상 시계. 재현의 기준이다. */
     val at: Instant,
     /** 실 시계. 현장 대조의 기준이다. */
     val wallClockAt: Instant,
     /**
-     * 누가 판단했는가(ADR 47). 사람만 판단하므로 종류는 언제나 `PERSON` 이다.
+     * 누가 판단했는가(ADR 47). 사람만 판단하므로 종류는 언제나 `PERSON` 이다 — 운영자 취소와 회복 승인도 사람의 입구로만 온다(§15.320).
      *
      * **내보내지 않는다** — 읽는 쪽이 아직 없다(ADR 9, 한계 대장 §15.202). 프로세스 안의 사건 조회로만 보인다.
      */
     val decidedBy: Approver,
 )
+
+/**
+ * 사람이 사건의 단위에 낸 걸음의 **종류**(§15.188, §15.320). 운영자 판단 둘([OperatorDecision])에 사람의 걸음 둘이 더해졌다.
+ *
+ * - [OPERATOR_CANCEL] — 사람이 운영자 취소 입구([Middleware.cancelByOperator])로 그 실행을 닫았다. 상류의 취소([Middleware.cancel])는
+ *   누가 했는지가 없어 싣지 않는다 — 승인자 없는 걸음을 싣으면 그 칸이 무기명 판단 경로가 된다.
+ * - [REMEDY_APPLIED] — 사람이 회복 제안을 승인해 조치 열이 그 단위 앞에 끼었다([Middleware.approveRecovery]). **«회복 완료» 가 아니다** —
+ *   조치가 끝났는지, 원래 단위의 새 시도가 나갔는지는 두 단위의 상태로 읽는다. 사람의 재작업([REWORK])으로도 적지 않는다.
+ *
+ * 운영자 판단과 다른 타입인 것은 [Middleware.resolve] 가 둘째 둘을 받지 않기 때문이다 — 한 타입이면 «취소» 를 판단 입구로 낼 길이 생긴다.
+ */
+enum class IncidentDecision {
+    CONFIRM_DONE, REWORK, OPERATOR_CANCEL, REMEDY_APPLIED;
+
+    companion object {
+        /** 운영자 판단을 같은 이름의 걸음으로. */
+        fun of(decision: OperatorDecision): IncidentDecision = valueOf(decision.name)
+    }
+}
 
 data class IncidentReview(
     val verdict: ReviewVerdict,

@@ -5,6 +5,7 @@ import dev.picasso.capability.PreconditionCheck
 import dev.picasso.capability.RemedySearch
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.HoldState
+import dev.picasso.contracts.v1.SkillDeclaration
 import dev.picasso.middleware.Middleware.Submission
 
 /**
@@ -180,7 +181,20 @@ internal class AdmissionGate(
             ?: (if (carriesRemedy || planned.any { (byType[it.skillType]?.preconditionsCount ?: 0) > 0 }) snapshotHold(robotId) else null)
                 ?.let { Start(it, Basis.SNAPSHOT) }
             ?: return null
-        val start = observed.hold
+        val basis = when (observed.basis) {
+            Basis.ROLLED -> "지금 도는 단위가 끝난 뒤의 파지"
+            Basis.SNAPSHOT -> "기체 스냅숏의 파지"
+            Basis.LIVE -> "지금 도는 단위의 관측"
+        }
+        return roll(planned, declared, observed.hold, basis)
+    }
+
+    /**
+     * [start] 에서 [planned] 의 로봇 단위를 효과로 굴려 첫 위반의 거절을 낸다(조치 탐색 포함). 어긋나지 않으면 널. 첫 단위의 위반이면 사유의
+     * 근거는 [basis] 이고, 굴린 뒤의 위반이면 «지금 도는 단위의 관측» 이다(앞 판의 문구 그대로).
+     */
+    private fun roll(planned: List<ExecutionUnit>, declared: List<SkillDeclaration>, start: HoldState, basis: String): Submission.Rejected? {
+        val byType = declared.associateBy { it.skillType }
         var hold = start
         for (unit in planned) {
             if (unit.route != Route.ROBOT) continue
@@ -189,14 +203,8 @@ internal class AdmissionGate(
                 ?.let { PreconditionCheck.check(it, hold, PreconditionCheck.Unknown.DEFER) }
                 .orEmpty()
             if (violations.isNotEmpty()) {
-                val basis = when {
-                    hold !== start -> "지금 도는 단위의 관측"
-                    observed.basis == Basis.ROLLED -> "지금 도는 단위가 끝난 뒤의 파지"
-                    observed.basis == Basis.SNAPSHOT -> "기체 스냅숏의 파지"
-                    else -> "지금 도는 단위의 관측"
-                }
                 val reason = "단위 ${unit.unitId}(${unit.skillType}) 의 사전 조건이 어긋난다 — " +
-                    PreconditionCheck.rejectionDetail(violations) + " ($basis, 보내지 않았다)"
+                    PreconditionCheck.rejectionDetail(violations) + " (${if (hold !== start) "지금 도는 단위의 관측" else basis}, 보내지 않았다)"
                 // **대안은 여기서만 계산할 수 있다.** 관측(도는 단위 또는 기체 스냅숏)과 선언이 둘 다 있는 자리가 여기뿐이다.
                 // **계산은 여기서, 기록은 밖에서.** 탐색 자체는 부작용이 없으므로 관문 안에 둘 수 있다.
                 val remedy = target?.let { RemedySearch.search(it, declared, hold) }
@@ -205,6 +213,30 @@ internal class AdmissionGate(
             hold = HoldEffects.after(unit.skillType, hold)
         }
         return null
+    }
+
+    /** 회복 재확인의 답(§15.320). 모름과 위반 없음을 접지 않는다 — 앞은 보류인 동안 다시 보고, 뒤는 자취만 남긴다. */
+    sealed interface Recheck {
+        /** 손이나 선언을 모른다(관측 불가·말하지 않음·못 읽음). */
+        data object Unknown : Recheck
+
+        /** 그 손에서 굴려도 어긋나지 않는다. */
+        data object Clear : Recheck
+
+        /** 어긋난다 — 접수 관문의 거절과 같은 모양이다(조치 탐색의 답을 싣는다). */
+        data class Violated(val rejection: Submission.Rejected) : Recheck
+    }
+
+    /**
+     * **발신자 거부 뒤 회복의 사슬**(§15.320) — 이미 선 실행의 [units] 를 [start] 에서 굴린다. 손을 고르지 않는다: 보류를 다시 볼 때는 신선한
+     * 기체 스냅숏의 손([snapshotHold])을, 승인을 적용하기 직전에는 [fillHold] 의 손을 부르는 쪽이 넘긴다. 손이 널이거나 선언을 못 읽으면 [Recheck.Unknown]
+     * 이다 — 모르는 손을 빈손으로 지어내지 않는다. 점유(자기 말고 기체를 쥔 실행)는 보지 않는다 — 제안을 세울지는 [RemedyDesk.record] 가, 적용할지는
+     * 부르는 쪽이 [holder] 로 따로 본다.
+     */
+    fun recheck(robotId: String, units: List<ExecutionUnit>, start: HoldState?, basis: String): Recheck {
+        val declared = runCatching { robots.capabilities(robotId) }.getOrNull()?.skillsList ?: return Recheck.Unknown
+        val hold = start ?: return Recheck.Unknown
+        return roll(units, declared, hold, basis)?.let { Recheck.Violated(it) } ?: Recheck.Clear
     }
 
     /**
@@ -375,7 +407,7 @@ internal class AdmissionGate(
      * 모르는 손을 빈손으로 지어내지 않는다([PreconditionCheck] 는 관측 불가도 위반으로 세므로 여기서 거른다). 신선함은 포트가 진다 —
      * 미리 읽는 포트는 신선한 창 밖이면 스냅숏을 주지 않는다.
      */
-    private fun snapshotHold(robotId: String): HoldState? =
+    fun snapshotHold(robotId: String): HoldState? =
         // 읽기가 던지면 못 본 것이다 — 접수 판단을 예외로 무너뜨리지 않는다(발신자가 판정한다).
         runCatching { robots.snapshot(robotId) }.getOrNull()?.hold
             ?.takeIf { it.kind == HoldKind.HOLD_KIND_HOLDING || it.kind == HoldKind.HOLD_KIND_EMPTY }

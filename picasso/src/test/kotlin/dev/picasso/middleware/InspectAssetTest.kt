@@ -713,11 +713,11 @@ class InspectAssetTest {
             assertEquals(travel, bundle.unitId)
             assertFalse(bundle.unresolved)
             val resolution = assertNotNull(bundle.resolution)
-            assertEquals(OperatorDecision.REWORK to OPERATOR, resolution.decision to resolution.decidedBy)
+            assertEquals(IncidentDecision.REWORK to OPERATOR, resolution.decision to resolution.decidedBy)
             val line = LedgerExport.incidents(w.mw.incidents())
             assertTrue("\"resolution\":{\"decision\":\"REWORK\"" in line, line)
             assertTrue("decidedBy" !in line && OPERATOR.id !in line, line)
-            assertEquals("6", LedgerExport.SCHEMA_VERSION)
+            assertEquals("7", LedgerExport.SCHEMA_VERSION)
         }
     }
 

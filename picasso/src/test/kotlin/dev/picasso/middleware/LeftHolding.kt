@@ -9,7 +9,11 @@ import dev.picasso.mimic.control.v1.ForceFaultRequest
 // 앞 판의 시험은 «든 채 도는 랙 A 뒤에 순회 B 를 낸다» 로 제안을 세웠다. 그 제안은 A 가 든 물건을 B 의 조치가 처분하는 길이라
 // §15.319 가 막았다 — 남이 쥔 기체에는 근거가 도는 단위의 관측이든 기체 스냅숏이든 제안을 세우지 않는다. 그래서 장면을 다시 짓는다.
 // 든 채 실패한 A 가 운영자 보류에 서고(사건이 열린다), 사람이 그 실행을 취소로 닫는다. 실행은 정착해 기체를 놓고, 손은 발신자에
-// 든 채로 남는다. 이 뒤에 낸 B 는 기체 스냅숏의 손으로 거절되고 제안이 선다(§15.316).
+// 든 채로 남는다. 이 뒤에 낸 B 는 기체 스냅숏의 손으로 거절되고 제안이 선다(§15.316). 닫는 것은 사람의 운영자 취소 입구라
+// 그 걸음이 A 의 사건 판단 칸에 `OPERATOR_CANCEL` 로 실린다(§15.320).
+
+/** 장면에서 보류 실행을 닫는 사람. */
+internal val CLOSING_OPERATOR = Approver("op-close", ApproverKind.PERSON)
 
 /**
  * 든 채 실패해 운영자 보류에 선 랙. 도는 단위가 없고 기체는 든 채이며, 보류 실행이 아직 기체를 쥔다.
@@ -35,12 +39,12 @@ internal fun Middleware.holdOnFailure(
 }
 
 /**
- * 보류 실행을 사람이 **취소로 닫는다** — 실행이 든 채 정착해(`ABORTED`) 기체를 놓는다. 발신자의 손은 바꾸지 않는다.
+ * 보류 실행을 사람이 **취소로 닫는다**([Middleware.cancelByOperator]) — 실행이 든 채 정착해(`ABORTED`) 기체를 놓는다. 발신자의 손은 바꾸지 않는다.
  *
  * «완료 확인» 으로 닫지 않는다. 그것은 하지 않은 일을 했다고 적는 것이다.
  */
 internal fun Middleware.closeByCancel(exec: Middleware.Execution, drive: (until: () -> Boolean) -> Unit): Middleware.Execution {
-    check(cancel(exec.executionId)) { "보류 실행 ${exec.executionId} 의 취소가 안 받아졌다" }
+    check(cancelByOperator(exec.executionId, CLOSING_OPERATOR) == ResolveOutcome.Resolved) { "보류 실행 ${exec.executionId} 의 취소가 안 받아졌다" }
     drive { exec.physicalState.isSettled }
     check(!exec.physicalState.occupiesRobot) { "닫은 실행이 아직 기체를 쥔다: ${exec.physicalState}" }
     return exec
