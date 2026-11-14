@@ -264,7 +264,9 @@ class EvidenceWindowTest {
             assertTrue("\"resolution\":{\"decision\":\"REWORK\"" in line, line)
             assertTrue("\"decidedBy\":{\"id\":\"${OPERATOR.id}\",\"kind\":\"PERSON\"}" in line, line)
             assertEquals(before, w.mw.incidents().single().digest(), "판단이 요약을 바꿨다")
-            assertEquals("8", LedgerExport.SCHEMA_VERSION)
+            // 보류의 재작업이라 재작업 근거는 널이다(판 9, §15.323) — 근거는 시도된 실패를 받을 때만 선다.
+            assertTrue("\"reworkBasis\":null" in line, line)
+            assertEquals("9", LedgerExport.SCHEMA_VERSION)
         }
     }
 

@@ -403,6 +403,35 @@ data class IncidentBundle(
     }
 }
 
+/**
+ * 시도된 실패를 재작업으로 받을 때 읽은 것(§15.323). 출처는 칸 자리로 정해진다 — 손은 기체 스냅숏, 자리는 셀 신호다.
+ *
+ * 시도된 `pick_place` 계열 대상은 손·출발·목적지를 다 싣는다. 점검·이동 대상은 [robotId]·[readAt] 만 싣는다 — 재검사 유도식의 표지다.
+ *
+ * @param hold 읽은 손. 못 읽었거나 묻지 않았으면 널이다. 손에는 원천 시각이 계약에 없다(`task.proto`).
+ * @param source 출발 자리. 묻지 않았으면 널이다.
+ * @param destination 목적지. 묻지 않았으면 널이다.
+ * @param readAt 읽기를 마친 시각(이 층의 시계).
+ */
+data class ReworkBasis(
+    val robotId: String,
+    val hold: ReworkHold? = null,
+    val source: ReworkSlot? = null,
+    val destination: ReworkSlot? = null,
+    val readAt: Instant,
+)
+
+/** 읽은 손. [objectRef] 는 손이 물건 이름을 말했을 때만 있다. */
+data class ReworkHold(val kind: HoldKind, val objectRef: String? = null)
+
+/**
+ * 읽은 자리 하나. 물었으나 설비가 말이 없었으면 [slotId] 만 있다(나머지 널).
+ *
+ * @param occupied 설비가 말한 점유. 널이면 말이 없었다
+ * @param observedAt 설비가 준 원천 시각. 주지 않았으면 널이다
+ */
+data class ReworkSlot(val slotId: String, val occupied: Boolean? = null, val identity: String? = null, val observedAt: Instant? = null)
+
 /** 사람이 자동 진단에 동의했는가 이의를 달았는가(설계안 §7.2 둘째). */
 enum class ReviewVerdict { AGREED, DISPUTED }
 
@@ -433,6 +462,13 @@ data class IncidentResolution(
      * 종류만 넘긴다(인계 노트). 해시에서 빠진다([resolution] 과 같은 이유).
      */
     val decidedBy: Approver,
+    /**
+     * 보류가 아닌 재작업을 받을 때의 근거(§15.323, [ReworkBasis]). 묶음 뿌리(시도된 실패)와 물리 관문을 지난 단위의 인시던트에 붙은 재작업 판단에만
+     * 있다 — 건너뛴 쌍이면 실패한 이동의 인시던트다. 함께 되돌린 다른 단위의 인시던트·보류 판단·다른 걸음에는 널이다. **확인을 뜻하는 것은 `hold`·`source`·
+     * `destination` 의 관측값뿐이다** — `{robotId, readAt}` 만 든 표지는 «관측 없음» 이고 `occupied` 의 널은 확인이 아니다. 내보내기 판 9 부터
+     * `resolution.reworkBasis` 로 실린다. 해시에서 빠진다([resolution] 과 같은 이유).
+     */
+    val reworkBasis: ReworkBasis? = null,
 )
 
 /**

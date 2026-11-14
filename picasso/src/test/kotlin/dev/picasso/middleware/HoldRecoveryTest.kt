@@ -301,6 +301,18 @@ class HoldRecoveryTest {
             assertEquals(1, w.incidentsOf(exec, travel.unitId).size, "미발행 보류가 둘째 인시던트를 열었다")
             assertTrue(w.mw.pending().last().operatorRequired)
 
+            // 실패한 조치 단위는 재작업하지 않는다(§15.323) — 회복은 원래 단위의 다음 시도만 보므로 조치를 다시 내면 그 판정이 어긋난다. 아무것도 안 바뀐다.
+            val remedyRework = assertIs<ResolveOutcome.Refused>(w.mw.resolve(exec.executionId, remedy.unitId, OperatorDecision.REWORK, OPERATOR))
+            assertTrue("조치 단위" in remedyRework.reason, remedyRework.reason)
+            assertEquals(0, remedy.attempt)
+            // 재기동 뒤에도 — 승인 기록이 조치 단위의 id 를 실어 온다.
+            val record = JudgmentRecordWire.decode(JudgmentRecordWire.encode(assertNotNull(w.mw.judgmentRecord(exec.executionId))))
+            val again = w.middleware()
+            val rebuilt = assertIs<Middleware.Submission.Accepted>(again.resume(exec.order, ROBOT, ActiveMission(InspectAsset(), null), record)).execution
+            assertEquals(remedy.state, rebuilt.units.single { it.unitId == remedy.unitId }.state, "다시 지은 실행에 조치 단위의 판정이 옮겨지지 않았다")
+            val rebuiltRework = assertIs<ResolveOutcome.Refused>(again.resolve(rebuilt.executionId, remedy.unitId, OperatorDecision.REWORK, OPERATOR))
+            assertTrue("조치 단위" in rebuiltRework.reason, rebuiltRework.reason)
+
             // 그 뒤 사람의 걸음이 버려지지 않는다 — 원래 단위의 인시던트는 판단 칸이 차 있으므로 실패한 조치의 인시던트에 실린다.
             assertEquals(ResolveOutcome.Resolved, w.mw.cancelByOperator(exec.executionId, OPERATOR))
             val stepped = w.mw.incidents().filter { it.executionId == exec.executionId && it.resolution?.decision == IncidentDecision.OPERATOR_CANCEL }

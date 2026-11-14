@@ -295,6 +295,42 @@ class LedgerExportTest {
     }
 
     @Test
+    fun `재작업 근거는 판단마다 키가 있고 안의 빈 칸도 널로 실리며 해시를 바꾸지 않는다`() {
+        // 판 9(§15.323). 판단 기록과 달리 이 인코더는 빈 칸을 빼지 않는다 — «물었으나 침묵» 은 `occupied: null`, «묻지 않음» 은 객체가 널이다.
+        val person = Approver("op-9", ApproverKind.PERSON)
+        val plain = parse(LedgerExport.incidents(listOf(bundle().copy(resolution = IncidentResolution(IncidentDecision.REWORK, AT, AT, person)))).trim())
+        assertTrue(plain.getValue("resolution").structValue.fieldsMap.getValue("reworkBasis").hasNullValue(), "근거 없는 판단에 키가 없다")
+
+        val basis = ReworkBasis(
+            robotId = "hum-02",
+            hold = ReworkHold(HoldKind.HOLD_KIND_EMPTY),
+            source = ReworkSlot("SEQ-IN-02.BIN-A", occupied = true, identity = "ENGINE-COVER-A", observedAt = AT.minusSeconds(2)),
+            destination = ReworkSlot("RACK-204.S01"),
+            readAt = AT,
+        )
+        val based = bundle().copy(resolution = IncidentResolution(IncidentDecision.REWORK, AT, AT, person, basis))
+        val b = parse(LedgerExport.incidents(listOf(based)).trim()).getValue("resolution").structValue.fieldsMap.getValue("reworkBasis").structValue.fieldsMap
+        assertEquals(setOf("robotId", "hold", "source", "destination", "readAt"), b.keys)
+        val hold = b.getValue("hold").structValue.fieldsMap
+        assertEquals("HOLD_KIND_EMPTY", hold.getValue("kind").stringValue)
+        assertTrue(hold.getValue("objectRef").hasNullValue())
+        val source = b.getValue("source").structValue.fieldsMap
+        assertEquals(true to AT.minusSeconds(2).toString(), source.getValue("occupied").boolValue to source.getValue("observedAt").stringValue)
+        val destination = b.getValue("destination").structValue.fieldsMap
+        assertEquals(setOf("slotId", "occupied", "identity", "observedAt"), destination.keys)
+        assertTrue(listOf("occupied", "identity", "observedAt").all { destination.getValue(it).hasNullValue() }, "침묵한 자리의 빈 칸이 널이 아니다")
+        assertEquals(AT.toString(), b.getValue("readAt").stringValue)
+
+        // 점검·이동의 표지 — 손·자리를 묻지 않았다.
+        val marker = bundle().copy(resolution = IncidentResolution(IncidentDecision.REWORK, AT, AT, person, ReworkBasis("quad-01", readAt = AT)))
+        val m = parse(LedgerExport.incidents(listOf(marker)).trim()).getValue("resolution").structValue.fieldsMap.getValue("reworkBasis").structValue.fieldsMap
+        assertTrue(listOf("hold", "source", "destination").all { m.getValue(it).hasNullValue() })
+
+        assertEquals(bundle().digest(), based.digest(), "재작업 근거가 해시에 들었다")
+        assertEquals("9", LedgerExport.SCHEMA_VERSION)
+    }
+
+    @Test
     fun `현장 설정 셋은 함께 널이거나 함께 있다`() {
         // 버전만 있고 값이 빠진 의도는 서지 않는다 — 내보내기 줄이 «설정은 있었는데 그 값은 모른다» 를 지어내게 된다.
         val i = bundle().intent

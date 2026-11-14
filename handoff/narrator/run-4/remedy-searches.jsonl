@@ -1,2 +1,2 @@
-{"searchId":"search-1","robotId":"hum-02","jobOrderId":"PATROL-AFTER-1","at":"2026-09-06T00:00:07Z","wallClockAt":"2026-11-14T11:16:02.279795300Z","outcome":"FOUND","steps":[{"skillType":"pick_place","requires":[],"expectedHold":"HOLD_KIND_EMPTY","onFailureHold":"HOLD_KIND_HOLDING"}]}
-{"searchId":"search-2","robotId":"hum-04","jobOrderId":"PATROL-AFTER-2","at":"2026-09-06T00:00:14Z","wallClockAt":"2026-11-14T11:16:02.607779100Z","outcome":"WITHHELD"}
+{"searchId":"search-1","robotId":"hum-02","jobOrderId":"PATROL-AFTER-1","at":"2026-09-06T00:00:07Z","wallClockAt":"2026-11-14T16:01:47.220656500Z","outcome":"FOUND","steps":[{"skillType":"pick_place","requires":[],"expectedHold":"HOLD_KIND_EMPTY","onFailureHold":"HOLD_KIND_HOLDING"}]}
+{"searchId":"search-2","robotId":"hum-04","jobOrderId":"PATROL-AFTER-2","at":"2026-09-06T00:00:14Z","wallClockAt":"2026-11-14T16:01:47.541633100Z","outcome":"WITHHELD"}

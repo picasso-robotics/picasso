@@ -27,8 +27,7 @@ internal object MiddlewareSeams {
             "noteProgress", "pumpRobotUnit", "loseStream", "settleLate", "pumpSignalUnit", "describe", "pumpFleetUnit", "holdOf",
         ),
         "EvidenceBinding.kt" to listOf(
-            "judgeEffectMismatch", "beginVerify", "checkEvidence", "failWithEvidenceCheck", "reworkAsNewAttempt", "skippedPair",
-            "resolveSkipped",
+            "judgeEffectMismatch", "beginVerify", "checkEvidence", "failWithEvidenceCheck", "reworkAsNewAttempt",
         ),
         "RobotSync.kt" to listOf("sync", "record", "forgetAcknowledged", "trackLink"),
         "CommandPorts.kt" to listOf(

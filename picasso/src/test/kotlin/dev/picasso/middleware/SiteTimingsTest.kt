@@ -281,7 +281,7 @@ class SiteTimingsTest {
             assertTrue("\"siteSettingsVersion\":${i.siteSettingsVersion}" in line, line)
             assertTrue("\"inDoubtGrace\":\"${i.inDoubtGrace}\"" in line && "\"stallWindow\":\"${i.stallWindow}\"" in line, line)
             assertTrue("\"evidenceWindowBefore\":\"PT1M40S\"" in line, line)
-            assertEquals("8", LedgerExport.SCHEMA_VERSION)
+            assertEquals("9", LedgerExport.SCHEMA_VERSION)
 
             // 설정 없이 돈 인시던트는 셋이 함께 널이다 — 키는 빼지 않는다.
             val bare = w.mw.incidents().single().let { it.copy(intent = it.intent.copy(siteSettingsVersion = null, inDoubtGrace = null, stallWindow = null)) }

@@ -4,6 +4,7 @@ import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.middleware.Middleware.Submission
 import dev.picasso.middleware.MiddlewareCodes.ISSUE_RESUMED
 import dev.picasso.middleware.MiddlewareCodes.ISSUE_WITHHELD
+import dev.picasso.middleware.MiddlewareCodes.REWORK_RECHECK
 import dev.picasso.middleware.MiddlewareCodes.UPDATE_NOT_SENT
 
 // 리비전 개정: 높은 버전의 작업 지시로 계획을 다시 세우고, 도는 단위에 개정 갱신을 보내고 정산한다.
@@ -56,7 +57,7 @@ internal fun CommandEnv.revise(
     val toPlan = fresh.filter { f ->
         val current = execution.units.firstOrNull { it.unitId == f.unitId }
         current == null || current.state == UnitState.PENDING ||
-            (current.state == UnitState.FAILED && current.taskId.isEmpty())
+            (current.state == UnitState.FAILED && current.taskId.isEmpty() && current.failureClass != REWORK_RECHECK)
     }
     // **이미 승인을 든 실행의 개정은 제안을 세우지 않는다**(ADR 46, §15.175). 판단 기록이 승인 하나만 싣고, 그 열쇠에는 소모 기록이
     // 서 있다 — 세우면 재시도가 «이미 소모됐다» 를 못 본다. 승인한 조치 열을 붙인 개정의 거절은 서 있는 제안을 바꾸지 않는다.
@@ -76,7 +77,8 @@ internal fun CommandEnv.revise(
             UnitState.VERIFYING, UnitState.OPERATOR_HOLD -> unit
             // 물리적으로 시도된 실패는 확정된 단위다. 계획 단계에서 못 시작한 것(태스크가 없다)은
             // 아니다 — C형 부족처럼 새 버전이 공급을 채우면 그 슬롯은 다시 계획된다.
-            UnitState.FAILED -> if (unit.taskId.isEmpty()) {
+            // 첫 발행 직전 재검사를 못 지나 닫힌 재작업 시도(§15.323)는 태스크가 없어도 시도된 실패다 — 되살리면 사람의 새 판단 없이 나간다.
+            UnitState.FAILED -> if (unit.taskId.isEmpty() && unit.failureClass != REWORK_RECHECK) {
                 unit.replannedAs(replanned[unit.unitId]).also { it.revision = order.version }
             } else {
                 unit

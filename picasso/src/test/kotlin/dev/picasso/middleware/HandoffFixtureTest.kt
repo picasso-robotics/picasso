@@ -75,6 +75,21 @@ class HandoffFixtureTest {
     }
 
     @Test
+    fun `인계한 판단 칸이 지금 인코더와 같은 칸을 쓴다`() {
+        // 판 9(§15.323) — 판단에 `reworkBasis` 키가 늘었다. 최상위 칸만 대면 판단 칸 안에서 갈린 것을 못 본다.
+        val decided = bundle().copy(resolution = IncidentResolution(IncidentDecision.REWORK, AT, AT, Approver("op-1", ApproverKind.PERSON)))
+        val expected = parse(LedgerExport.incidents(listOf(decided)).trim()).getValue("resolution").structValue.fieldsMap.keys
+        var seen = 0
+        RUNS.forEach { run ->
+            lines(run, LedgerExport.INCIDENTS).map { parse(it).getValue("resolution") }.filter { it.hasStructValue() }.forEach {
+                assertEquals(expected, it.structValue.fieldsMap.keys, "$run 의 판단 칸이 지금의 칸과 다르다")
+                seen += 1
+            }
+        }
+        assertTrue(seen > 0, "인계 번들에 판단이 실린 줄이 없다 — 이 시험이 아무것도 대지 않는다")
+    }
+
+    @Test
     fun `인계한 명세가 지금의 판과 계약 버전을 댄다`() {
         // 판이 올라갔는데 인계한 한 벌이 옛 판이면, 받는 쪽은 멈추는 대신 조용히 옛 규약으로 읽는다.
         RUNS.forEach { run ->

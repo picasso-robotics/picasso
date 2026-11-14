@@ -1,5 +1,6 @@
 package dev.picasso.middleware
 
+import dev.picasso.contracts.v1.HoldKind
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,9 +32,9 @@ class JudgmentRecordWireTest {
     fun `모르는 판이나 판이 없는 기록은 읽지 않고 거부한다`() {
         val text = JudgmentRecordWire.encode(FULL)
         listOf(
-            text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"6\""),
-            text.replace("\"schemaVersion\":\"5\",", ""),
-            text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":5"),
+            text.replace(CURRENT, "\"schemaVersion\":\"7\""),
+            text.replace("$CURRENT,", ""),
+            text.replace(CURRENT, "\"schemaVersion\":6"),
         ).forEach { wrong ->
             assertTrue(wrong != text, "시험의 전제: 바꿀 자리를 못 찾았다")
             val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
@@ -44,7 +45,7 @@ class JudgmentRecordWireTest {
     @Test
     fun `버전 1 기록은 건 취소 칸 없이 읽고 취소가 걸리지 않은 기록이 된다`() {
         val text = JudgmentRecordWire.encode(FULL)
-        val v1 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"1\""))).replace(",\"cancelRequested\":true", "")
+        val v1 = withoutHeld(withoutPlaced(withoutBasis(text).replace(CURRENT, "\"schemaVersion\":\"1\""))).replace(",\"cancelRequested\":true", "")
         assertTrue(v1 != text && "cancelRequested" !in v1 && "everHeld" !in v1, "시험의 전제: 버전 1 모양을 못 지었다")
         assertEquals(NEVER_HELD.copy(cancelRequested = false), JudgmentRecordWire.decode(v1))
 
@@ -63,7 +64,7 @@ class JudgmentRecordWireTest {
     @Test
     fun `버전 2 기록은 단위의 파지 이력 칸 없이 읽고 쥔 것을 본 적 없는 단위가 된다`() {
         val text = JudgmentRecordWire.encode(FULL)
-        val v2 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"2\"")))
+        val v2 = withoutHeld(withoutPlaced(withoutBasis(text).replace(CURRENT, "\"schemaVersion\":\"2\"")))
         assertTrue(v2 != text && "everHeld" !in v2 && "heldInEarlierAttempt" !in v2, "시험의 전제: 버전 2 모양을 못 지었다")
         assertEquals(NEVER_HELD, JudgmentRecordWire.decode(v2))
 
@@ -84,7 +85,7 @@ class JudgmentRecordWireTest {
         val text = JudgmentRecordWire.encode(FULL)
         assertTrue("\"position\":{\"orderVersion\":3,\"unitId\":\"s2\",\"attempt\":1}" in text, text)
         assertTrue("\"preconditionSubjects\":[\"HOLD\"]" in text, text)
-        val v3 = withoutPlaced(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"3\""))
+        val v3 = withoutPlaced(withoutBasis(text).replace(CURRENT, "\"schemaVersion\":\"3\""))
         assertTrue(v3 != text && "position" !in v3 && "preconditionSubjects" !in v3, "시험의 전제: 버전 3 모양을 못 지었다")
         assertEquals(UNPLACED, JudgmentRecordWire.decode(v3))
 
@@ -92,7 +93,7 @@ class JudgmentRecordWireTest {
         val unplaced = JudgmentRecordWire.encode(UNPLACED)
         assertTrue("position" !in unplaced && "preconditionSubjects" !in unplaced, unplaced)
         assertEquals(UNPLACED, JudgmentRecordWire.decode(unplaced))
-        assertEquals(UNPLACED, JudgmentRecordWire.decode(withoutPlaced(withoutIdentity(text))))
+        assertEquals(UNPLACED, JudgmentRecordWire.decode(withoutPlaced(withoutIdentity(withoutBasis(text, keepIssued = true)))))
 
         // 버전 3 에 그 칸이 있으면 거부한다.
         mapOf(
@@ -110,20 +111,59 @@ class JudgmentRecordWireTest {
         // §15.322 — 판 4 로 다시 연 인시던트는 연결 불명이다. 판 5 는 정체성이 없으면 두 칸을 싣지 않아(판 4 의 두 칸과 같은 규칙) 판 4 와 같은 모양이다.
         val text = JudgmentRecordWire.encode(FULL)
         assertTrue("\"incidentKey\":\"mw-a/incident-3\",\"firstOpenedAt\":\"2026-10-14T00:00:04Z\"" in text, text)
-        val v4 = withoutIdentity(text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"4\""))
+        val v4 = withoutIdentity(withoutBasis(text).replace(CURRENT, "\"schemaVersion\":\"4\""))
         assertTrue(v4 != text && "incidentKey" !in v4 && "firstOpenedAt" !in v4, "시험의 전제: 버전 4 모양을 못 지었다")
         assertEquals(UNIDENTIFIED, JudgmentRecordWire.decode(v4))
 
         val unidentified = JudgmentRecordWire.encode(UNIDENTIFIED)
+        assertTrue("reworkBasis" !in unidentified, unidentified)
         assertTrue("incidentKey" !in unidentified && "firstOpenedAt" !in unidentified, unidentified)
         assertEquals(UNIDENTIFIED, JudgmentRecordWire.decode(unidentified))
 
         // 버전 4 에 그 칸이 있거나, 버전 5 에 두 칸 가운데 하나만 있거나, 시각이 아니면 거부한다.
         mapOf(
-            text.replace("\"schemaVersion\":\"5\"", "\"schemaVersion\":\"4\"") to "모르는 칸",
+            withoutBasis(text).replace(CURRENT, "\"schemaVersion\":\"4\"") to "모르는 칸",
             text.replace(",\"firstOpenedAt\":\"2026-10-14T00:00:04Z\"", "") to "하나만",
             text.replace("\"incidentKey\":\"mw-a/incident-3\",", "") to "하나만",
             text.replace("\"firstOpenedAt\":\"2026-10-14T00:00:04Z\"", "\"firstOpenedAt\":\"어제\"") to "시각이 아니다",
+        ).forEach { (wrong, why) ->
+            assertTrue(wrong != text, "시험의 전제: 바꿀 자리를 못 찾았다")
+            val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
+            assertTrue(why in e.message!!, e.message)
+        }
+    }
+
+    @Test
+    fun `버전 5 기록은 판단의 재작업 근거·사건 정체성 칸 없이 읽고 두 칸이 널인 판단이 된다`() {
+        // §15.323 — 판 6 은 두 칸이 없으면 키를 싣지 않아(판 4·5 의 칸과 같은 규칙) 판 5 와 같은 모양이다.
+        val text = JudgmentRecordWire.encode(FULL)
+        assertTrue(
+            "\"reworkBasis\":{\"robotId\":\"hum-02\",\"hold\":{\"kind\":\"HOLD_KIND_EMPTY\"}," +
+                "\"source\":{\"slotId\":\"BIN-A\",\"occupied\":true,\"identity\":\"A\",\"observedAt\":\"2026-10-14T00:00:28Z\"}," +
+                "\"destination\":{\"slotId\":\"S01\"},\"readAt\":\"2026-10-14T00:00:29Z\"}" in text,
+            text,
+        )
+        assertTrue("\"incident\":{\"incidentKey\":\"mw-a/incident-2\",\"firstOpenedAt\":\"2026-10-14T00:00:10Z\"}" in text, text)
+        val v5 = withoutBasis(text).replace(CURRENT, "\"schemaVersion\":\"5\"")
+        assertTrue(v5 != text && "reworkBasis" !in v5 && "\"incident\":" !in v5, "시험의 전제: 버전 5 모양을 못 지었다")
+        assertEquals(UNBASED, JudgmentRecordWire.decode(v5))
+
+        // 근거가 없는 판단은 판 5 와 같은 모양이다. 근거 안에서도 빈 칸은 키를 싣지 않는다 — 물었으나 침묵이면 자리 id 만 있다.
+        val unbased = JudgmentRecordWire.encode(UNBASED)
+        assertTrue("reworkBasis" !in unbased && "\"incident\":" !in unbased, unbased)
+        assertEquals(UNBASED, JudgmentRecordWire.decode(unbased))
+        val marker = FULL.copy(units = FULL.units.map { u -> u.copy(decision = u.decision?.copy(reworkBasis = ReworkBasis("hum-02", readAt = T0), incident = null)) })
+        val markerText = JudgmentRecordWire.encode(marker)
+        assertTrue("\"reworkBasis\":{\"robotId\":\"hum-02\",\"readAt\":\"2026-10-14T00:00:00Z\"}" in markerText, markerText)
+        assertEquals(marker, JudgmentRecordWire.decode(markerText))
+
+        // 버전 5 에 그 칸이 있거나, 근거 안에 모르는 칸·빠진 칸이 있거나, 손 종류가 모르는 값이면 거부한다.
+        mapOf(
+            text.replace(CURRENT, "\"schemaVersion\":\"5\"") to "모르는 칸",
+            text.replace("\"readAt\":\"2026-10-14T00:00:29Z\"", "\"readAt\":\"2026-10-14T00:00:29Z\",\"lease\":1") to "모르는 칸",
+            text.replace(",\"readAt\":\"2026-10-14T00:00:29Z\"", "") to "칸이 없다",
+            text.replace("\"destination\":{\"slotId\":\"S01\"}", "\"destination\":{\"occupied\":false}") to "칸이 없다",
+            text.replace("\"HOLD_KIND_EMPTY\"", "\"HANDS_FREE\"") to "모르는 값",
         ).forEach { (wrong, why) ->
             assertTrue(wrong != text, "시험의 전제: 바꿀 자리를 못 찾았다")
             val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
@@ -199,15 +239,30 @@ class JudgmentRecordWireTest {
                     requestedAt = T0.plusSeconds(20),
                     verifyWindow = VerifyWindow(T0.plusSeconds(25), T0.plusSeconds(40)),
                     verdict = null,
-                    decision = RecordedDecision(OperatorDecision.REWORK, OPERATOR, T0.plusSeconds(30), 1),
+                    decision = RecordedDecision(
+                        OperatorDecision.REWORK, OPERATOR, T0.plusSeconds(30), 1,
+                        reworkBasis = ReworkBasis(
+                            robotId = "hum-02",
+                            hold = ReworkHold(HoldKind.HOLD_KIND_EMPTY),
+                            source = ReworkSlot("BIN-A", occupied = true, identity = "A", observedAt = T0.plusSeconds(28)),
+                            destination = ReworkSlot("S01"),
+                            readAt = T0.plusSeconds(29),
+                        ),
+                        incident = IncidentOrigin("mw-a/incident-2", T0.plusSeconds(10)),
+                    ),
                     heldInEarlierAttempt = true,
+                    // 시도 2 — 앞 시도에 태스크가 나갔다(판 6, §15.323). 판 1~5 는 `attempt > 0` 이라 같은 값으로 읽는다.
+                    issuedInEarlierAttempt = true,
                 ),
             ),
             cancelRequested = true,
         )
 
+        /** 판단의 재작업 근거·사건 정체성 칸이 없는 앞 버전(1~5)으로 읽으면 나와야 하는 기록 — 두 칸이 널인 판단이다. */
+        val UNBASED = FULL.copy(units = FULL.units.map { u -> u.copy(decision = u.decision?.copy(reworkBasis = null, incident = null)) })
+
         /** 판정의 정체성 칸이 없는 앞 버전(1~4)으로 읽으면 나와야 하는 기록 — 판정에 정체성이 없다. */
-        val UNIDENTIFIED = FULL.copy(units = FULL.units.map { u -> u.copy(verdict = u.verdict?.copy(incident = null)) })
+        val UNIDENTIFIED = UNBASED.copy(units = UNBASED.units.map { u -> u.copy(verdict = u.verdict?.copy(incident = null)) })
 
         /** 위치 칸과 거부 주어 칸이 없는 앞 버전(1·2·3)으로 읽으면 나와야 하는 기록 — 접수 승인이고 판정에 주어가 없다. */
         val UNPLACED = UNIDENTIFIED.copy(
@@ -224,6 +279,22 @@ class JudgmentRecordWireTest {
 
         /** 판정의 정체성 두 칸을 지운다 — 버전 4 까지의 모양이다. */
         fun withoutIdentity(text: String): String = text.replace(Regex(""","incidentKey":"[^"]*","firstOpenedAt":"[^"]*""""), "")
+
+        /** 지금 판의 판 표기. */
+        const val CURRENT = "\"schemaVersion\":\"6\""
+
+        /** 판단의 재작업 근거·사건 정체성 칸을 지운다 — 버전 5 까지의 모양이다. 근거는 객체가 겹치므로 괄호를 세어 지운다. */
+        fun withoutBasis(text: String, keepIssued: Boolean = false): String = listOf(",\"reworkBasis\":", ",\"incident\":").fold(if (keepIssued) text else text.replace(",\"issuedInEarlierAttempt\":true", "")) { acc, key ->
+            val at = acc.indexOf(key)
+            if (at < 0) return@fold acc
+            var depth = 0
+            var end = at + key.length
+            do {
+                when (acc[end]) { '{' -> depth++; '}' -> depth-- }
+                end++
+            } while (depth > 0)
+            acc.removeRange(at, end)
+        }
 
         /** 단위의 파지 이력 칸을 지운다 — 앞 버전의 모양이다. */
         fun withoutHeld(text: String): String = text.replace(Regex(",\"everHeld\":(true|false),\"heldInEarlierAttempt\":(true|false)"), "")

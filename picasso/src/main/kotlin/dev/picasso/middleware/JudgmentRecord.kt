@@ -3,6 +3,7 @@ package dev.picasso.middleware
 import com.google.protobuf.Struct
 import com.google.protobuf.Value
 import com.google.protobuf.util.JsonFormat
+import dev.picasso.contracts.v1.HoldKind
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
@@ -108,6 +109,11 @@ data class UnitRecord(
     val decision: RecordedDecision?,
     val everHeld: Boolean = false,
     val heldInEarlierAttempt: Boolean = false,
+    /**
+     * 앞 시도에서 태스크가 나갔는가(§15.323, 버전 6). 뒤에 건너뛴 묶음으로 되돌린 `pick_place` 계열 단위에도 물리 관문을 다시 걸게 한다. 버전 6 은 참일 때만
+     * 키를 싣는다. 버전 1~5 기록은 이 칸이 없어 `attempt > 0` 이면 참으로 읽는다 — 앞 시도가 있었으면 나갔다고 보는 보수적 대체다.
+     */
+    val issuedInEarlierAttempt: Boolean = false,
 )
 
 /** 검증 대기의 창 — 하류가 끝났다고 한 시각과 그때 정한 근거 기한. 기한은 다시 계산하지 않는다(뒤 폭이 바뀌었을 수 있다). */
@@ -155,17 +161,27 @@ data class UnitVerdict(
 /**
  * 운영자 판단 한 번([Middleware.resolve]).
  *
- * 판단은 보류에 선 단위에 붙고, 건너뛴 대상의 재작업이면 **`FAILED` 였던 두 단위**(내지 않은 점검과 시도된 선행 이동)에 같은 판단이 붙는다.
- * 읽는 쪽은 단위 상태를 따지지 않고 판단을 옮긴다. 칸과 값의 집합은 그대로다.
+ * 판단은 보류에 선 단위에 붙고, 보류가 아닌 단위의 재작업이면 **묶음의 단위마다**(§15.323 — 시도된 실패 대상, 위로 함께 되돌린 파지 효과 없는
+ * 선행, 아래로 함께 되돌린 건너뛴 후손) 같은 판단이 붙는다. 그래서 `DONE` 이던 이동에도 `REWORK` 판단이 선다. 읽는 쪽은 단위 상태를 따지지 않고
+ * 판단을 옮긴다.
  *
  * @param attempt 판단이 선 시도. 재작업이면 그 뒤 단위의 시도는 하나 크다.
+ * @param reworkBasis 보류가 아닌 재작업 묶음의 **뿌리**(이 시도에서 실패한 단위 — 요청한 id 와 무관)와 물리 관문이 필요한 `pick_place` 계열 단위의 판단에
+ *   서는 근거(§15.323). 물리 관문을 지난 단위는 읽은 손·자리를, 그 밖은 `{robotId, readAt}` 표지만 싣는다 — 표지는 «관측 없음» 이지 확인이 아니다.
+ *   함께 되돌린 다른 단위와 보류 판단에는 널이다. 첫 발행 직전 재검사([ReworkDesk.halts])는 «판단이 `REWORK` ∧ 판단 시도 == 단위 시도−1 ∧ 이 칸
+ *   있음 ∧ 태스크 빔 ∧ `PENDING`» 인 `pick_place` 계열 단위를 대상으로 유도한다 — 재기동 뒤에도 같은 식이고 새 칸이 없다. 재검사는 스냅숏을 아직
+ *   못 읽었으면 진행 정체 유예까지 기다리고(받은 재작업의 관측 확인일 뿐 새 판단이 아니다), 못 지나면 그 시도를 `FAILED`(`REWORK_RECHECK`)로 닫는다.
+ * @param incident 뿌리 단위의 사건 정체성([IncidentOrigin]). 되돌리기 전에 정체성 표에서 떠 둔다. 없으면 널이다.
  */
 data class RecordedDecision(
     val decision: OperatorDecision,
     val approver: Approver,
     val at: Instant,
     val attempt: Int,
+    val reworkBasis: ReworkBasis? = null,
+    val incident: IncidentOrigin? = null,
 )
+
 
 /**
  * 판단 기록의 **인코딩**. [ApprovalWire]·`LedgerExport` 와 같은 성질이다 — 문자열만 다루며 저장소를 모른다.
@@ -174,12 +190,13 @@ data class RecordedDecision(
  * 조용히 «없었다» 가 되고, 그것이 이 기록이 막으려는 바로 그 손실이다. 그래서 칸이 하나만 늘어도 판을 올린다 — 모르는 칸을
  * 무시하는 읽는 쪽이 없다.
  *
- * **앞 버전 1·2·3·4 는 읽는다**(§15.253, §15.257, §15.320, §15.322). 버전 1 에는 건 취소 칸이 없고, 읽으면 취소가 걸리지 않은 기록이 된다. 그 실행이 다시
+ * **앞 버전 1·2·3·4·5 는 읽는다**(§15.253, §15.257, §15.320, §15.322, §15.323). 버전 1 에는 건 취소 칸이 없고, 읽으면 취소가 걸리지 않은 기록이 된다. 그 실행이 다시
  * 지은 뒤 하위의 취소를 만나면 요청 없는 취소로 운영자 보류에 서므로(§15.230) 모르는 사실이 진행 쪽으로 접히지 않는다. 1·2 는
  * 단위의 파지 이력 칸이 없고, 읽으면 쥔 것을 본 적 없는 단위가 된다 — 버전 3 전의 다시 짓기와 같다. 1·2·3 은 승인의 위치 칸과 판정의
  * 거부 주어 칸이 없다. 읽으면 접수 승인(걸음은 계획 맨 앞)이고 주어 없는 판정이다 — 그 판에는 회복 승인이 없었다. 1~4 는 보류 판정의
- * 인시던트 정체성 칸이 없다. 읽으면 정체성 없는 판정이고, 다시 연 인시던트는 연결 불명이다. 담는 쪽이 이미 적어 둔 앞 버전 기록으로도 다시
- * 지을 수 있어야 한다.
+ * 인시던트 정체성 칸이 없다. 읽으면 정체성 없는 판정이고, 다시 연 인시던트는 연결 불명이다. 1~5 는 판단의 재작업 근거·사건 정체성 칸이 없다.
+ * 읽으면 두 칸이 널인 판단이고, 그 단위는 첫 발행 직전 재검사를 받지 않는다 — 그 판에는 시도된 실패의 재작업이 없었다. 담는 쪽이 이미 적어 둔
+ * 앞 버전 기록으로도 다시 지을 수 있어야 한다.
  */
 object JudgmentRecordWire {
 
@@ -191,8 +208,15 @@ object JudgmentRecordWire {
      *
      * `5` 에서 판정 칸에 인시던트 정체성 두 칸(`incidentKey`·`firstOpenedAt`)이 붙었다(§15.322). 운영자 보류 판정에만 서고, 판 4 의 두 칸과 같은 규칙이다 —
      * **없으면 키를 싣지 않는다.** 보류가 없는 기록은 판 4 와 같은 모양이다. 둘은 함께 있거나 함께 없다. 앞 버전 1~4 에 그 칸이 있으면 모르는 칸이다.
+     *
+     * `6` 에서 판단 칸에 선택 칸 둘(`reworkBasis`·`incident`)이 붙었다(§15.323). 시도된 실패 대상의 재작업 판단에만 서고, 판 4·5 의 칸과 같은 규칙이다 —
+     * **없으면 키를 싣지 않는다.** `reworkBasis` 안의 선택 칸(`hold`·`source`·`destination`, 손의 `objectRef`, 자리의 `occupied`·`identity`·`observedAt`)도
+     * 없으면 키를 싣지 않는다. 그래서 그런 재작업이 없는 기록은 판 5 와 같은 모양이다. 앞 버전 1~5 에 그 칸이 있으면 모르는 칸이다.
      */
-    const val SCHEMA_VERSION: String = "5"
+    const val SCHEMA_VERSION: String = "6"
+
+    /** 읽을 줄 아는 앞 버전. 판단의 재작업 근거·사건 정체성 칸이 없다. */
+    private const val V5: String = "5"
 
     /** 읽을 줄 아는 앞 버전. 판정의 인시던트 정체성 칸이 없다. */
     private const val V4: String = "4"
@@ -223,15 +247,16 @@ object JudgmentRecordWire {
             throw IllegalArgumentException("판단 기록을 읽지 못했다: ${e.message}", e)
         }
         val version = root.fieldsMap["schemaVersion"]
-        if (version == null || !version.hasStringValue() || version.stringValue !in setOf(SCHEMA_VERSION, V4, V3, V2, V1)) {
+        if (version == null || !version.hasStringValue() || version.stringValue !in setOf(SCHEMA_VERSION, V5, V4, V3, V2, V1)) {
             throw IllegalArgumentException(
-                "모르는 판단 기록 판이다: ${version?.let { describe(it) } ?: "(없음)"} — 읽는 버전은 $V1, $V2, $V3, $V4, $SCHEMA_VERSION 이다",
+                "모르는 판단 기록 판이다: ${version?.let { describe(it) } ?: "(없음)"} — 읽는 버전은 $V1, $V2, $V3, $V4, $V5, $SCHEMA_VERSION 이다",
             )
         }
         val v1 = version.stringValue == V1
-        val held = version.stringValue in setOf(SCHEMA_VERSION, V4, V3)
-        val placed = version.stringValue in setOf(SCHEMA_VERSION, V4)
-        val identified = version.stringValue == SCHEMA_VERSION
+        val held = version.stringValue in setOf(SCHEMA_VERSION, V5, V4, V3)
+        val placed = version.stringValue in setOf(SCHEMA_VERSION, V5, V4)
+        val identified = version.stringValue in setOf(SCHEMA_VERSION, V5)
+        val based = version.stringValue == SCHEMA_VERSION
         val r = Fields("$", root, if (v1) ROOT - "cancelRequested" else ROOT)
         val unit = if (held) UNIT else UNIT - HELD
         return JudgmentRecord(
@@ -239,7 +264,7 @@ object JudgmentRecordWire {
             orderVersion = r.int("orderVersion"),
             acknowledgedFaults = r.list("acknowledgedFaults").mapIndexed { i, v -> stringOf("$.acknowledgedFaults[$i]", v) },
             approval = r.objOrNull("approval", APPROVAL - "position", if (placed) setOf("position") else emptySet())?.let { approvalOf(it, placed) },
-            units = r.list("units").mapIndexed { i, v -> unitOf(Fields("$.units[$i]", structOf("$.units[$i]", v), unit), held, placed, identified) },
+            units = r.list("units").mapIndexed { i, v -> unitOf(Fields("$.units[$i]", structOf("$.units[$i]", v), unit, if (based) setOf(ISSUED) else emptySet()), held, placed, identified, based) },
             cancelRequested = !v1 && r.bool("cancelRequested"),
         )
     }
@@ -271,6 +296,8 @@ object JudgmentRecordWire {
         .raw("decision", u.decision?.let { decision(it) } ?: "null")
         .bool("everHeld", u.everHeld)
         .bool("heldInEarlierAttempt", u.heldInEarlierAttempt)
+        // 참일 때만 싣는다(OPTIONAL, §15.323) — 거짓인 기록은 판 5 와 같은 모양이다.
+        .let { o -> if (u.issuedInEarlierAttempt) o.bool("issuedInEarlierAttempt", true) else o }
         .done()
 
     private fun verdict(v: UnitVerdict): String = Obj()
@@ -293,6 +320,24 @@ object JudgmentRecordWire {
         .str("approverKind", d.approver.kind.name)
         .str("at", d.at.toString())
         .num("attempt", d.attempt)
+        // 재작업 근거와 사건 정체성은 없으면 키를 싣지 않는다(OPTIONAL, §15.323).
+        .let { o -> d.reworkBasis?.let { o.raw("reworkBasis", basis(it)) } ?: o }
+        .let { o -> d.incident?.let { o.raw("incident", Obj().str("incidentKey", it.key).str("firstOpenedAt", it.firstOpenedAt.toString()).done()) } ?: o }
+        .done()
+
+    private fun basis(b: ReworkBasis): String = Obj()
+        .str("robotId", b.robotId)
+        .let { o -> b.hold?.let { h -> o.raw("hold", Obj().str("kind", h.kind.name).let { x -> h.objectRef?.let { x.str("objectRef", it) } ?: x }.done()) } ?: o }
+        .let { o -> b.source?.let { o.raw("source", slot(it)) } ?: o }
+        .let { o -> b.destination?.let { o.raw("destination", slot(it)) } ?: o }
+        .str("readAt", b.readAt.toString())
+        .done()
+
+    private fun slot(s: ReworkSlot): String = Obj()
+        .str("slotId", s.slotId)
+        .let { o -> s.occupied?.let { o.bool("occupied", it) } ?: o }
+        .let { o -> s.identity?.let { o.str("identity", it) } ?: o }
+        .let { o -> s.observedAt?.let { o.str("observedAt", it.toString()) } ?: o }
         .done()
 
     private fun approvalOf(f: Fields, placed: Boolean) = RecordedApproval(
@@ -311,7 +356,7 @@ object JudgmentRecordWire {
         position = if (placed && f.has("position")) f.objOrNull("position", POSITION)?.let { ProposalTarget.Hold(it.int("orderVersion"), it.string("unitId"), it.int("attempt")) } else null,
     )
 
-    private fun unitOf(f: Fields, held: Boolean, placed: Boolean, identified: Boolean) = UnitRecord(
+    private fun unitOf(f: Fields, held: Boolean, placed: Boolean, identified: Boolean, based: Boolean) = UnitRecord(
         unitId = f.string("unitId"),
         attempt = f.int("attempt"),
         taskId = f.string("taskId"),
@@ -332,16 +377,36 @@ object JudgmentRecordWire {
                 incident = identityOf(v),
             )
         },
-        decision = f.objOrNull("decision", DECISION)?.let { d ->
+        decision = f.objOrNull("decision", DECISION, if (based) DECISION_OPTIONAL else emptySet())?.let { d ->
             RecordedDecision(
                 decision = d.enum("decision", OperatorDecision.entries),
                 approver = Approver(d.string("approverId"), d.enum("approverKind", ApproverKind.entries)),
                 at = d.instant("at"),
                 attempt = d.int("attempt"),
+                reworkBasis = if (based && d.has("reworkBasis")) d.objOrNull("reworkBasis", BASIS, BASIS_OPTIONAL)?.let { basisOf(it) } else null,
+                incident = if (based && d.has("incident")) d.objOrNull("incident", IDENTITY)?.let { IncidentOrigin(it.string("incidentKey"), it.instant("firstOpenedAt")) } else null,
             )
         },
         everHeld = held && f.bool("everHeld"),
         heldInEarlierAttempt = held && f.bool("heldInEarlierAttempt"),
+        issuedInEarlierAttempt = if (based) f.has(ISSUED) && f.bool(ISSUED) else f.int("attempt") > 0,
+    )
+
+    private fun basisOf(b: Fields) = ReworkBasis(
+        robotId = b.string("robotId"),
+        hold = if (b.has("hold")) b.objOrNull("hold", setOf("kind"), setOf("objectRef"))?.let { h ->
+            ReworkHold(h.enum("kind", HoldKind.values().toList()), if (h.has("objectRef")) h.string("objectRef") else null)
+        } else null,
+        source = if (b.has("source")) b.objOrNull("source", SLOT, SLOT_OPTIONAL)?.let { slotOf(it) } else null,
+        destination = if (b.has("destination")) b.objOrNull("destination", SLOT, SLOT_OPTIONAL)?.let { slotOf(it) } else null,
+        readAt = b.instant("readAt"),
+    )
+
+    private fun slotOf(s: Fields) = ReworkSlot(
+        slotId = s.string("slotId"),
+        occupied = if (s.has("occupied")) s.bool("occupied") else null,
+        identity = if (s.has("identity")) s.string("identity") else null,
+        observedAt = if (s.has("observedAt")) s.instant("observedAt") else null,
     )
 
     /** 판정의 정체성 두 칸. **함께 있거나 함께 없다** — 하나만 있으면 던진다. 판 1~4 에는 칸 목록이 이미 거부했다. */
@@ -365,6 +430,12 @@ object JudgmentRecordWire {
     private val OPTIONAL_VERDICT = setOf("preconditionSubjects") + IDENTITY
     private val VERDICT = setOf("state", "reached", "verification", "evidenceAt", "failureClass", "note", "result") + OPTIONAL_VERDICT
     private val DECISION = setOf("decision", "approverId", "approverKind", "at", "attempt")
+    private val DECISION_OPTIONAL = setOf("reworkBasis", "incident")
+    private val BASIS = setOf("robotId", "readAt")
+    private val BASIS_OPTIONAL = setOf("hold", "source", "destination")
+    private const val ISSUED = "issuedInEarlierAttempt"
+    private val SLOT = setOf("slotId")
+    private val SLOT_OPTIONAL = setOf("occupied", "identity", "observedAt")
 
     /**
      * 객체 하나의 칸. **칸 목록이 정확히 맞아야 한다** — 빠진 칸도, 모르는 칸도 던진다. 널을 쓰는 칸도 키는 있어야 한다

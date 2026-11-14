@@ -240,6 +240,24 @@ internal class AdmissionGate(
     }
 
     /**
+     * **재작업의 재발행 입구**(§15.323) — 이미 선 실행의 [units](재작업 묶음)를 다시 낼 수 있는가. 셋을 본다. 손([recheck] — [hand] 에서 굴려 어긋나지 않는가,
+     * 모르면 [Recheck.Unknown]), 자리 예약([liveClaims]), 작업 구역([workspaceViolation]). 예약과 구역은 [self](그 실행 자신)를 빼고 센다 — 정착한
+     * 그 실행의 예약은 어차피 [liveClaims] 가 놓지만, 돌기 시작한 뒤에 다시 물어도 제 자리에 걸리지 않게 한다.
+     *
+     * [admits] 를 통째로 부르지 않는다. 자재 선언과 배정의 정합([inconsistent])은 주문 전체의 것이라 단위 몇 개의 열에서 깨지고, 사슬 검사의 출발점
+     * 고르기([chainRefusal])는 새 접수의 규칙이다. 출발·목적지의 지금 관측은 부르는 쪽([ReworkDesk])이 근거로 실으려고 직접 읽는다.
+     */
+    fun reissue(robotId: String, units: List<ExecutionUnit>, self: String, hand: HoldState?): Recheck {
+        val handed = recheck(robotId, units, hand, REISSUE_BASIS)
+        if (handed != Recheck.Clear) return handed
+        val claimed = liveClaims(moving = self)
+        units.firstNotNullOfOrNull { unit -> unit.destination?.takeIf { unit.expectedIdentity != null }?.let { claimed[it] } }?.let { holder ->
+            return Recheck.Violated(Submission.Rejected("자리 ${holder.location} 를 ${holder.jobOrderId}(${holder.executionId}) 가 이미 잡고 있다 — 같은 자리에 둘을 놓지 않는다"))
+        }
+        return workspaceViolation(robotId, units, self)?.let { Recheck.Violated(it) } ?: Recheck.Clear
+    }
+
+    /**
      * 셀 자리의 점유를 하달 전에 본다(§15.153) — **자리 경쟁**과 **출발 결품** 둘.
      *
      * 파지가 «이 기체가 무엇을 들었나» 라면 이것은 «저 자리가 지금 쓰이는가» 다. 축이 하나뿐일 때는 두
@@ -411,15 +429,24 @@ internal class AdmissionGate(
 
     private class Start(val hold: HoldState, val basis: Basis)
 
+    private companion object {
+        /** 재발행 입구([reissue])의 거절 사유에 붙는 손의 근거. */
+        const val REISSUE_BASIS = "재작업 전 기체 스냅숏의 파지"
+    }
+
     /**
      * 기체 스냅숏의 손(계약 `GetSnapshotResponse.hold`, 0.11.0) — **든 채·빈손으로 답했을 때만.** 관측 불가·말하지 않음·못 물음이면 널이다:
      * 모르는 손을 빈손으로 지어내지 않는다([PreconditionCheck] 는 관측 불가도 위반으로 세므로 여기서 거른다). 신선함은 포트가 진다 —
      * 미리 읽는 포트는 신선한 창 밖이면 스냅숏을 주지 않는다.
      */
-    fun snapshotHold(robotId: String): HoldState? =
-        // 읽기가 던지면 못 본 것이다 — 접수 판단을 예외로 무너뜨리지 않는다(발신자가 판정한다).
-        runCatching { robots.snapshot(robotId) }.getOrNull()?.hold
-            ?.takeIf { it.kind == HoldKind.HOLD_KIND_HOLDING || it.kind == HoldKind.HOLD_KIND_EMPTY }
+    fun snapshotHold(robotId: String): HoldState? = handOf(snapshotOf(robotId))
+
+    /** 기체 스냅숏 한 번의 읽기. 읽기가 던지거나 못 읽었으면 널이다 — 접수 판단을 예외로 무너뜨리지 않는다(발신자가 판정한다). */
+    fun snapshotOf(robotId: String): RobotSnapshot? = runCatching { robots.snapshot(robotId) }.getOrNull()
+
+    /** 스냅숏의 손 — 든 채·빈손으로 답했을 때만. 관측 불가·말하지 않음·못 읽음이면 널이다(같은 스냅숏으로 결함도 보는 쪽이 쓴다, §15.323). */
+    fun handOf(snapshot: RobotSnapshot?): HoldState? =
+        snapshot?.hold?.takeIf { it.kind == HoldKind.HOLD_KIND_HOLDING || it.kind == HoldKind.HOLD_KIND_EMPTY }
 
     /**
      * [except] 말고 이 기체를 쥔 실행 id. [RemedyDesk] 가 거절에 제안을 세울지 가른다 — 근거가 스냅숏이든 도는 단위의 관측이든 같다(§15.316·§15.319).
