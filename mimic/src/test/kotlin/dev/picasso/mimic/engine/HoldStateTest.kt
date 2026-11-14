@@ -265,4 +265,31 @@ class HoldStateTest {
         val nav = tasks.start("nav-1", 1, "navigate_to", navParams())
         assertTrue(nav is StartOutcome.Accepted, "옛 태스크의 HOLDING 이 빈손 종착을 가렸다: $nav")
     }
+
+    @Test
+    fun `실패해 다시 시도를 기다리는 옛 태스크의 HOLDING 이 뒤의 빈손 종착을 가리지 않는다`() {
+        // t1 이 든 채 실패해 RETRIABLE(비종착)로 남는다. 그 물건을 t2 pick_place(조치)가 놓고 끝나면 로봇은 빈손이다.
+        // 앞 판은 비종착 태스크를 먼저 봐 t1 의 HOLDING 이 이겼고, 조치 뒤의 navigate_to 가 PRECONDITION_UNMET 으로 거부됐다(§15.318).
+        val clock = VirtualClock(Instant.EPOCH)
+        val tasks = host(preconditionDocument(), clock)
+
+        val t1 = runningPickPlace(tasks, "t1")
+        tasks.forceFault("SKILL_EXECUTION_FAILED", "t1")
+        assertEquals(TaskState.RETRIABLE, t1.machine.state)
+        assertEquals(HoldKind.HOLD_KIND_HOLDING, tasks.hold().kind)
+
+        // 조치를 접수만 했을 때는 아직 든 채다 — 접수 기록의 빈손이 든 손을 덮지 않는다.
+        assertTrue(tasks.start("t2", 1, "pick_place", pickPlaceParams()) is StartOutcome.Accepted)
+        assertEquals(HoldKind.HOLD_KIND_HOLDING, tasks.hold().kind, "접수만 한 조치가 든 손을 비웠다")
+        assertTrue(tasks.start("nav-0", 1, "navigate_to", navParams()) is StartOutcome.Rejected, "든 채인데 navigate_to 를 받았다")
+
+        tasks.tick()
+        val t2 = tasks.find("t2")!!
+        clock.advance(Duration.ofMinutes(10))
+        tasks.tick()
+        assertEquals(TaskState.SUCCEEDED, t2.machine.state, "t2 가 소요시간을 채우고도 끝나지 않았다")
+        assertEquals(TaskState.RETRIABLE, t1.machine.state, "이 시험이 보려는 경우가 아니다 — t1 이 비종착으로 남아 있어야 한다")
+        assertEquals(HoldKind.HOLD_KIND_EMPTY, tasks.hold().kind)
+        assertTrue(tasks.start("nav-1", 1, "navigate_to", navParams()) is StartOutcome.Accepted, "실패한 옛 태스크의 HOLDING 이 조치 종착을 가렸다")
+    }
 }

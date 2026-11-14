@@ -138,6 +138,12 @@ class SnapshotHoldTest {
             val remedy = exec.units.first()
             assertTrue(remedy.unitId.startsWith("remedy-"), exec.units.map { it.unitId }.toString())
             w.drive { remedy.taskId.isNotEmpty() }
+
+            // 조치가 내려놓고 끝나면 원래 작업 지시의 다음 단위가 나간다 — 실패한 옛 태스크의 파지가 손을 가리지 않는다(§15.318).
+            val next = exec.units[1]
+            w.drive(rounds = 400) { remedy.state == UnitState.DONE && (next.state != UnitState.PENDING || exec.physicalState.isSettled) }
+            assertTrue(next.state != UnitState.OPERATOR_HOLD, "조치 뒤 다음 단위가 거부됐다: ${exec.units.map { it.unitId to it.state }}")
+            assertEquals(HoldKind.HOLD_KIND_EMPTY, w.raw.snapshot(ROBOT)?.hold?.kind)
         }
     }
 
