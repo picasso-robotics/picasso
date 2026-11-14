@@ -22,14 +22,18 @@ sealed interface Admission {
      * 못 받는다. [rejection] 은 이 거부를 그대로 상류에 낼 때 쓰는 답이며, **제안의 부작용은 아직 없다** —
      * 기록은 채택을 시도한 쪽이 한다.
      *
-     * @param sourceMissing 점유 관문이 **이미 계산한** 답. 널이면 이 거절은 그 갈래가 아니다.
+     * @param occupancy 점유 관문이 **이미 계산한** 답 — 출발 결품([RemedyOutcome.SourceMissing]), 출발 미관측([SourceUnobserved]),
+     *   목적지 점유·미관측([RemedyOutcome.DestinationOccupied]·[RemedyOutcome.DestinationUnobserved], §15.322). 널이면 이 거절은 그 갈래가 아니다.
      *   계산은 관문 안에서 하고 기록은 밖에서 한다 — 값을 여기 들려 보내도 [Middleware.admits] 는
      *   여전히 순수하고, 후보 셋에 물어봐도 대장에 셋이 쌓이지 않는다(§15.161).
      */
     data class Refused(
         val rejection: Middleware.Submission.Rejected,
-        val sourceMissing: RemedyOutcome.SourceMissing? = null,
-    ) : Admission
+        val occupancy: RemedyOutcome? = null,
+    ) : Admission {
+        /** [occupancy] 가 출발 결품이면 그 답. 미배정([Unassigned.sourceMissing])이 후보마다 모은다. */
+        val sourceMissing: RemedyOutcome.SourceMissing? get() = occupancy as? RemedyOutcome.SourceMissing
+    }
 }
 
 /**
@@ -69,7 +73,7 @@ data class AssignmentCost(val perLiveExecution: Int = 1, val whenHolding: Int = 
  *   떨어진 후보는 여기 없다. 산문의 사유만 내면 대체 자리가 문장 안에 갇혀, 읽는 쪽이 한국어를 뜯어야 한다.
  *   대장에도 `SOURCE_MISSING` 줄로 적힌다
  * @param sourceUnobserved 출발 자리를 확인하지 못해 떨어진 후보마다 관문의 답([SourceUnobserved]). [sourceMissing] 과
- *   **접지 않는다** — 결품은 주문을 고칠 일이고 이것은 사람이 확인할 일이다. 대장에는 줄이 없다 — [Middleware.submit] 의 거절과 같다
+ *   **접지 않는다** — 결품은 주문을 고칠 일이고 이것은 사람이 확인할 일이다. 대장에도 `SOURCE_UNOBSERVED` 줄로 적힌다(§15.322) — [Middleware.submit] 의 거절과 같다
  * @param trialPassed 거절만 받아 가는 후보([Middleware.adopt] 의 `trialOnly`) 가운데 **관문을 통과해 채택하지 않은** 기체, 순위 차례대로.
  *   [refusals] 에 없다 — 관문이 막지 않았고 담는 쪽의 정책이 막았다. 이 기체에는 실행도 제안도 서지 않았다(§15.317)
  */

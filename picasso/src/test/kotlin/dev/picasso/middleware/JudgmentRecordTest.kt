@@ -473,6 +473,154 @@ class JudgmentRecordTest {
         }
     }
 
+    // ── 인시던트 정체성(§15.322)
+
+    @Test
+    fun `보류가 선 라운드 직후 받은 판단 기록에 그 인시던트의 정체성과 처음 선 시각이 실린다`() {
+        // ★키는 봉인과 같은 라운드에 기록에 실려야 한다. 다음 라운드로 미루면 그 사이 죽은 인스턴스의 기록으로 다시 연 인시던트가 원래 보류와
+        //   이어지지 않는다.
+        World().use { w ->
+            val exec = w.submit(order(required = Evidence.E2))
+            w.old.pump()
+            assertEquals(null, w.old.judgmentRecord(exec.executionId)!!.units.single().verdict, "시험의 전제: 아직 판정이 없다")
+            w.robot.set("$ORDER#s1", TaskState.TASK_STATE_FAILED)
+            w.cell.program(slot(1), PART)
+            w.old.pump()
+            val incident = w.old.incidents().single()
+            assertEquals(OpeningKind.NEW to 0, incident.openingKind to incident.attempt)
+            val origin = assertNotNull(incident.origin, "새로 선 인시던트에 정체성이 없다")
+            assertEquals(incident.at, origin.firstOpenedAt)
+            assertTrue(w.old.instanceId in origin.key, "열쇠가 최초 봉인의 인스턴스를 안 든다: ${origin.key}")
+
+            val record = persisted(w.old.judgmentRecord(exec.executionId))
+            assertEquals(UnitState.OPERATOR_HOLD, record.units.single().verdict?.state)
+            assertEquals(origin, record.units.single().verdict?.incident, "보류가 선 라운드 직후의 기록에 정체성이 없다")
+        }
+    }
+
+    @Test
+    fun `재기동이 다시 연 인시던트는 원래 보류의 정체성을 두 차례 재기동에도 잇고 요약은 다르다`() {
+        World().use { w ->
+            val record = held(w)
+            val first = w.old.incidents().single()
+            val origin = assertNotNull(first.origin)
+
+            val second = w.restart()
+            val resumed = second.resumeWith(order(required = Evidence.E2), record)
+            val reopened = second.mw.incidents().single()
+            assertEquals(OpeningKind.REOPENED, reopened.openingKind)
+            assertEquals(origin, reopened.origin, "다시 연 인시던트가 원래 보류의 정체성을 안 이었다")
+            assertTrue(first.digest() != reopened.digest(), "다시 연 인시던트의 요약이 원래 것과 같다 — 사본 둘이 한 줄로 접힌다")
+            assertTrue(second.mw.instanceId != w.old.instanceId, "시험의 전제: 다른 인스턴스다")
+
+            // 두 번째 재기동 — 다시 연 인스턴스의 기록이 같은 정체성을 다시 싣는다.
+            val again = persisted(second.mw.judgmentRecord(resumed.executionId))
+            assertEquals(origin, again.units.single().verdict?.incident)
+            val third = w.restart()
+            third.resumeWith(order(required = Evidence.E2), again)
+            val twice = third.mw.incidents().single()
+            assertEquals(origin to OpeningKind.REOPENED, twice.origin to twice.openingKind, "두 번째 재기동에 정체성이 끊겼다")
+
+            // 대조: 기록 없이 다시 지으면 다시 관측한 실패로 새로 선다 — 정체성도 새 것이다.
+            val bare = w.restart()
+            bare.resumeWith(order(required = Evidence.E2), null)
+            repeat(2) { bare.mw.pump() }
+            val observed = bare.mw.incidents().single()
+            assertEquals(OpeningKind.NEW, observed.openingKind)
+            assertTrue(observed.origin != origin, "기록 없이 새로 선 인시던트가 원래 정체성을 지어냈다")
+        }
+    }
+
+    @Test
+    fun `다시 연 뒤 재작업해 또 깨진 보류는 시도가 오르고 새 정체성으로 새로 선다`() {
+        World().use { w ->
+            val record = held(w)
+            val origin = assertNotNull(w.old.incidents().single().origin)
+            val again = w.restart()
+            val resumed = again.resumeWith(order(required = Evidence.E2), record)
+            val reopened = again.mw.incidents().single()
+            assertEquals(ResolveOutcome.Resolved, again.mw.resolve(reopened.executionId, reopened.unitId, OperatorDecision.REWORK, OPERATOR))
+            again.mw.pump()
+            w.robot.set("$ORDER#s1@r1", TaskState.TASK_STATE_FAILED)
+            again.mw.pump()
+            assertEquals(UnitState.OPERATOR_HOLD, resumed.units.single().state, "시험의 전제: 재작업도 보류에 선다")
+
+            val fresh = again.mw.incidents().last()
+            assertEquals(OpeningKind.NEW, fresh.openingKind, "같은 원인의 새 보류를 다시 연 것으로 적었다")
+            assertEquals(0 to 1, reopened.attempt to fresh.attempt, "재발 판정의 재료인 시도가 안 올랐다")
+            val renewed = assertNotNull(fresh.origin)
+            assertTrue(renewed != origin && renewed != reopened.origin, "새 보류가 앞 보류의 정체성을 이었다")
+            // 그 뒤의 판단 기록은 지금 선 보류의 정체성을 싣는다 — 다음 재기동은 이 보류를 잇는다.
+            assertEquals(renewed, persisted(again.mw.judgmentRecord(resumed.executionId)).units.single().verdict?.incident)
+        }
+    }
+
+    @Test
+    fun `번들이 보존 상한으로 내려간 뒤에도 장부에 있는 보류 실행의 판단 기록은 정체성을 싣고 재기동하면 잇는다`() {
+        // ★정체성은 무거운 번들과 따로 그 실행이 장부에 있는 동안 남는다. 번들과 함께 내리면 연결할 수 있었던 보류가 재기동 뒤 연결 불명이 된다.
+        World().use { w ->
+            val small = Middleware(w.robot, w.cell, capabilities = listOf(Slots()), now = { w.t }, retention = Retention(incidents = 1))
+            val exec = assertIs<Middleware.Submission.Accepted>(small.submit(order(required = Evidence.E2), ROBOT)).execution
+            small.pump()
+            w.robot.set("$ORDER#s1", TaskState.TASK_STATE_FAILED)
+            w.cell.program(slot(1), PART)
+            small.pump()
+            val origin = assertNotNull(small.incidents().single().origin)
+            assertEquals(ResolveOutcome.Resolved, small.cancelByOperator(exec.executionId, OPERATOR))
+            repeat(3) { small.pump() }
+            assertEquals(PhysicalState.ABORTED to UnitState.OPERATOR_HOLD, exec.physicalState to exec.units.single().state, "시험의 전제: 구동이 놓았고 판정은 보류다")
+
+            // 다른 실행의 인시던트가 상한(1)을 넘겨 구동이 놓은 앞 실행의 번들을 밀어낸다.
+            val other = JobOrder("REC-2", Slots.WORK_MASTER, 1, Evidence.E2, parameters = mapOf("slots" to "1"))
+            assertIs<Middleware.Submission.Accepted>(small.submit(other, OTHER))
+            small.pump()
+            w.robot.set("REC-2#s1", TaskState.TASK_STATE_FAILED)
+            small.pump()
+            assertTrue(small.incidents().none { it.executionId == exec.executionId }, "시험의 전제: 앞 실행의 번들이 내려갔다")
+
+            val record = persisted(small.judgmentRecord(exec.executionId))
+            assertEquals(origin, record.units.single().verdict?.incident, "번들과 함께 정체성을 잃었다")
+            w.restart().let { again ->
+                again.resumeWith(order(required = Evidence.E2), record)
+                assertEquals(origin, again.mw.incidents().single().origin, "재기동 뒤 원래 보류와 안 이어졌다")
+            }
+        }
+    }
+
+    @Test
+    fun `같은 시드로 두 번 지은 인스턴스의 첫 인시던트는 열쇠가 다르다`() {
+        // ★열쇠의 유일성은 인스턴스 id 가 진다 — 인시던트 id 는 인스턴스마다 `incident-1` 부터 다시 센다. 인스턴스 id 를 고정하면 둘이 겹친다.
+        val keys = (1..2).map {
+            World().use { w ->
+                held(w)
+                val incident = w.old.incidents().single()
+                assertEquals("incident-1", incident.incidentId)
+                assertNotNull(incident.origin).key
+            }
+        }
+        assertTrue(keys[0] != keys[1], "같은 시드의 두 인스턴스가 같은 열쇠를 냈다: $keys")
+    }
+
+    @Test
+    fun `판 4 기록으로 다시 연 인시던트는 정체성이 널이고 그 뒤의 기록도 지어내지 않는다`() {
+        World().use { w ->
+            val record = held(w)
+            val v4 = JudgmentRecordWire.encode(record)
+                .replace("\"schemaVersion\":\"${JudgmentRecordWire.SCHEMA_VERSION}\"", "\"schemaVersion\":\"4\"")
+                .replace(Regex(""","incidentKey":"[^"]*","firstOpenedAt":"[^"]*""""), "")
+            assertTrue("incidentKey" !in v4, "시험의 전제: 판 4 모양을 못 지었다")
+
+            val again = w.restart()
+            val resumed = again.resumeWith(order(required = Evidence.E2), JudgmentRecordWire.decode(v4))
+            val reopened = again.mw.incidents().single()
+            assertEquals(OpeningKind.REOPENED, reopened.openingKind)
+            assertEquals(null, reopened.origin, "옛 판 기록에 없는 정체성을 지어냈다 — 연결 불명이어야 한다")
+            val line = LedgerExport.incidents(listOf(reopened))
+            assertTrue("\"incidentKey\":null,\"firstOpenedAt\":null,\"openingKind\":\"REOPENED\"" in line, line)
+            assertEquals(null, persisted(again.mw.judgmentRecord(resumed.executionId)).units.single().verdict?.incident)
+        }
+    }
+
     @Test
     fun `운영자 보류가 아닌 판정으로 다시 지은 단위는 인시던트를 열지 않는다`() {
         World().use { w ->
@@ -523,6 +671,8 @@ class JudgmentRecordTest {
             incidents.forEach { incident ->
                 val line = lines.single { it.detail.startsWith("${incident.unitId}:") }
                 assertEquals(Instant.parse(line.occurredAt), incident.at, "${incident.unitId}: 다시 연 줄의 시각이 인시던트 at 과 다르다")
+                // 다시 연 것은 줄 시각으로 추정하지 않고 재개 경로가 직접 적는다(§15.322).
+                assertEquals(OpeningKind.REOPENED, incident.openingKind, incident.unitId)
             }
 
             // 시험의 전제: 시계가 정말 흐른다 — 다시 연 줄 바로 앞의 옮김 줄은 그보다 이르고, 봉인 뒤에 읽은 시각은 그보다 늦다.
@@ -534,7 +684,7 @@ class JudgmentRecordTest {
     }
 
     @Test
-    fun `다시 연 뒤 근거 윈도우 앞 폭 안에 새로 선 보류는 그 줄을 싣지만 at 이 줄 시각과 달라 다시 연 것으로 읽히지 않는다`() {
+    fun `다시 연 뒤 근거 윈도우 앞 폭 안에 새로 선 보류는 그 줄을 싣지만 새로 선 인시던트로 적히고 정체성이 다르다`() {
         World().use { w ->
             val record = held(w)
             w.step = Duration.ofMillis(1)
@@ -561,11 +711,10 @@ class JudgmentRecordTest {
             assertTrue(Duration.between(lineAt, fresh.at) < Duration.ofSeconds(30), "시험의 전제: 근거 윈도우 앞 폭 안이다")
 
             assertTrue(fresh.evidenceWindow.any { it.kind == Middleware.RESUME_HOLD_REOPENED && it.occurredAt == line.occurredAt }, "새 보류의 윈도우에도 그 줄이 실린다")
-            assertTrue(fresh.at != lineAt, "새 보류의 at 이 다시 연 줄 시각과 같다")
-            // 줄 시각 = at 으로 가른다. 줄이 있는 것만으로는 둘 다 참이다.
-            fun reopenedAt(b: IncidentBundle) =
-                b.evidenceWindow.any { it.kind == Middleware.RESUME_HOLD_REOPENED && Instant.parse(it.occurredAt) == b.at }
-            assertEquals(listOf(true, false), again.mw.incidents().map(::reopenedAt))
+            // ★줄이 있는 것만으로는 둘 다 다시 연 것처럼 보인다. 가르는 것은 재개 경로가 적은 열림의 종류와 정체성이다(§15.322) — 줄 시각을
+            //   `at` 과 맞대 추정하지 않는다.
+            assertEquals(listOf(OpeningKind.REOPENED, OpeningKind.NEW), again.mw.incidents().map { it.openingKind })
+            assertTrue(fresh.origin != null && fresh.origin != reopened.origin, "새 보류가 다시 연 인시던트의 정체성을 이었다: ${fresh.origin}")
         }
     }
 

@@ -20,6 +20,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
@@ -250,6 +251,84 @@ class LedgerExportTest {
     }
 
     @Test
+    fun `사건 사이의 연결과 판단자는 해시를 바꾸지 않는다`() {
+        // ★판 8 의 연결 칸(§15.322)은 사건의 내용이 아니다. 해시에 넣으면 같은 보류가 재기동마다 다른 요약을 갖는 것은 그대로이고, 같은 시드의
+        //   기존 요약까지 움직여 인계 번들의 요약이 판 7 과 갈린다.
+        val b = bundle()
+        val same = mapOf(
+            "정체성 열쇠" to b.copy(origin = IncidentOrigin("mw-다른/incident-9", AT.plusSeconds(60))),
+            "연결 불명" to b.copy(origin = null, openingKind = OpeningKind.REOPENED),
+            "다시 연 것" to b.copy(openingKind = OpeningKind.REOPENED),
+            "시도" to b.copy(attempt = 3),
+            "판단자" to b.copy(resolution = IncidentResolution(IncidentDecision.REWORK, AT, AT, Approver("op-9", ApproverKind.PERSON))),
+        )
+        same.forEach { (what, other) -> assertEquals(b.digest(), other.digest(), "$what 가 해시에 들었다") }
+    }
+
+    @Test
+    fun `정체성 넷과 판단자와 임무·설정 칸이 널도 키를 빼지 않고 실린다`() {
+        val opened = parse(LedgerExport.incidents(listOf(bundle())).trim())
+        assertEquals("mw-test/incident-1", opened.getValue("incidentKey").stringValue)
+        assertEquals(AT.toString(), opened.getValue("firstOpenedAt").stringValue)
+        assertEquals("NEW", opened.getValue("openingKind").stringValue)
+        assertEquals(0.0, opened.getValue("attempt").numberValue)
+        val intent = opened.getValue("intent").structValue.fieldsMap
+        listOf("missionVersion", "siteSettingsVersion", "inDoubtGrace", "stallWindow").forEach {
+            assertTrue(intent.getValue(it).hasNullValue(), "$it 가 널로 안 실렸다")
+        }
+
+        // 연결 불명은 두 칸이 널이고 «다시 열었다» 는 그대로 실린다.
+        val unknown = parse(LedgerExport.incidents(listOf(bundle().copy(origin = null, openingKind = OpeningKind.REOPENED, attempt = 2))).trim())
+        assertTrue(unknown.getValue("incidentKey").hasNullValue() && unknown.getValue("firstOpenedAt").hasNullValue())
+        assertEquals("REOPENED", unknown.getValue("openingKind").stringValue)
+        assertEquals(2.0, unknown.getValue("attempt").numberValue)
+
+        val set = bundle().let { it.copy(intent = it.intent.copy(missionVersion = 4, siteSettingsVersion = 7, inDoubtGrace = "PT20S", stallWindow = "PT40S")) }
+        val withSettings = parse(LedgerExport.incidents(listOf(set)).trim()).getValue("intent").structValue.fieldsMap
+        assertEquals(4.0, withSettings.getValue("missionVersion").numberValue)
+        assertEquals(7.0, withSettings.getValue("siteSettingsVersion").numberValue)
+        assertEquals("PT20S" to "PT40S", withSettings.getValue("inDoubtGrace").stringValue to withSettings.getValue("stallWindow").stringValue)
+
+        val decided = bundle().copy(resolution = IncidentResolution(IncidentDecision.OPERATOR_CANCEL, AT, AT, Approver("op-9", ApproverKind.PERSON)))
+        val by = parse(LedgerExport.incidents(listOf(decided)).trim()).getValue("resolution").structValue.fieldsMap.getValue("decidedBy").structValue.fieldsMap
+        assertEquals("op-9" to "PERSON", by.getValue("id").stringValue to by.getValue("kind").stringValue)
+    }
+
+    @Test
+    fun `현장 설정 셋은 함께 널이거나 함께 있다`() {
+        // 버전만 있고 값이 빠진 의도는 서지 않는다 — 내보내기 줄이 «설정은 있었는데 그 값은 모른다» 를 지어내게 된다.
+        val i = bundle().intent
+        assertFailsWith<IllegalArgumentException> { i.copy(siteSettingsVersion = 7) }
+        assertFailsWith<IllegalArgumentException> { i.copy(inDoubtGrace = "PT20S", stallWindow = "PT40S") }
+        assertFailsWith<IllegalArgumentException> { i.copy(siteSettingsVersion = 7, inDoubtGrace = "PT20S") }
+    }
+
+    @Test
+    fun `새로 선 인시던트는 정체성 없이 서지 않는다`() {
+        assertFailsWith<IllegalArgumentException> { bundle().copy(origin = null) }
+    }
+
+    @Test
+    fun `출발 미관측과 목적지 점유·미관측은 갈래마다 제 값을 적고 걸음 칸이 없다`() {
+        // 판 8 의 탐색 새 갈래(§15.322). 승인할 조치가 아니므로 `steps` 키가 없다 — 키를 맞추려고 빈 배열을 적으면 «걸음이 빈 조치» 로 읽힌다.
+        val silent = parse(LedgerExport.remedySearches(listOf(record(SourceUnobserved("ENGINE-COVER-A", "SEQ-IN-02.BIN-A", null)))).trim())
+        assertEquals("SOURCE_UNOBSERVED", silent.getValue("outcome").stringValue)
+        assertEquals("ENGINE-COVER-A" to "SEQ-IN-02.BIN-A", silent.getValue("material").stringValue to silent.getValue("source").stringValue)
+        assertTrue(silent.getValue("occupied").hasNullValue(), "설비의 침묵이 널로 안 실렸다")
+        val bare = parse(LedgerExport.remedySearches(listOf(record(SourceUnobserved(null, "SEQ-IN-02.BIN-A", true)))).trim())
+        assertTrue(bare.getValue("occupied").boolValue, "«있다» 고만 한 것이 안 실렸다")
+        assertTrue(bare.getValue("material").hasNullValue())
+
+        val occupied = parse(LedgerExport.remedySearches(listOf(record(RemedyOutcome.DestinationOccupied("RACK-204.S01", null)))).trim())
+        assertEquals("DESTINATION_OCCUPIED" to "RACK-204.S01", occupied.getValue("outcome").stringValue to occupied.getValue("destination").stringValue)
+        assertTrue(occupied.getValue("observed").hasNullValue(), "점유 신원 불명이 널로 안 실렸다")
+        val unobserved = parse(LedgerExport.remedySearches(listOf(record(RemedyOutcome.DestinationUnobserved("RACK-204.S01")))).trim())
+        assertEquals("DESTINATION_UNOBSERVED" to "RACK-204.S01", unobserved.getValue("outcome").stringValue to unobserved.getValue("destination").stringValue)
+
+        listOf(silent, bare, occupied, unobserved).forEach { assertTrue("steps" !in it.keys, "승인할 조치가 아닌 줄에 걸음 칸이 섰다: $it") }
+    }
+
+    @Test
     fun `맵의 순회 순서가 해시를 바꾸지 않는다`() {
         // ★의도가 맵 둘을 데려온다. 순회 순서가 해시를 바꾸면 **같은 사건이 두 값을 갖고**, 읽는 쪽의
         //   멱등이 그 위에 서 있으므로 같은 사건을 두 번 처리한다.
@@ -280,10 +359,12 @@ class LedgerExportTest {
     @Test
     fun `한 벌의 명세가 구동 식별자와 개수를 싣는다`() {
         val runId = LedgerExport.newRunId(AT)
-        val m = parse(LedgerExport.manifest(runId, AT, AT.plusSeconds(5), incidents = 2, remedySearches = 3))
+        val m = parse(LedgerExport.manifest(runId, AT, AT.plusSeconds(5), incidents = 2, remedySearches = 3, instanceId = "mw-test"))
 
         assertEquals(LedgerExport.SCHEMA_VERSION, m.getValue("schemaVersion").stringValue)
         assertEquals(runId, m.getValue("runId").stringValue)
+        // 한 벌은 한 인스턴스의 것이다(판 8, §15.322) — 인시던트 id 는 그 인스턴스 안의 셈이다.
+        assertEquals("mw-test", m.getValue("instanceId").stringValue)
         assertEquals(AT.plusSeconds(5).toString(), m.getValue("virtualNow").stringValue)
         val counts = m.getValue("counts").structValue.fieldsMap
         assertEquals(2.0, counts.getValue("incidents").numberValue)
@@ -348,6 +429,9 @@ class LedgerExportTest {
 
     private fun bundle(review: IncidentReview? = null, fault: FaultDetail? = null) = IncidentBundle(
         incidentId = "incident-1",
+        origin = IncidentOrigin("mw-test/incident-1", AT),
+        openingKind = OpeningKind.NEW,
+        attempt = 0,
         jobOrderId = "SEQ-204",
         executionId = "exec-1",
         robotId = ROBOT,
@@ -422,7 +506,7 @@ class LedgerExportTest {
          * 명세가 맨 마지막이다. **앞 판은 그 절차를 여기에 따로 적었다**(§15.193).
          */
         fun export(dir: Path = Path.of("build", "export")): Path {
-            check(BundleWriter(dir).snapshot(mw.incidents(), mw.remedySearches(), harness.clock.now())) {
+            check(BundleWriter(dir, mw.instanceId).snapshot(mw.incidents(), mw.remedySearches(), harness.clock.now())) {
                 "$dir 에 한 벌을 안 썼다"
             }
             return dir

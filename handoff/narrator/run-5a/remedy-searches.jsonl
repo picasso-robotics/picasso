@@ -1,0 +1,3 @@
+{"searchId":"search-1","robotId":"hum-11","jobOrderId":"SEQ-SILENT-SOURCE","at":"2026-09-06T00:00:01Z","wallClockAt":"2026-11-14T11:15:50.259983800Z","outcome":"SOURCE_UNOBSERVED","material":"ENGINE-COVER-A","source":"SEQ-IN-09.BIN-A","occupied":null}
+{"searchId":"search-2","robotId":"hum-11","jobOrderId":"SEQ-FULL-SLOT","at":"2026-09-06T00:00:01Z","wallClockAt":"2026-11-14T11:15:50.260984Z","outcome":"DESTINATION_OCCUPIED","destination":"RACK-208.S01","observed":"ENGINE-COVER-B"}
+{"searchId":"search-3","robotId":"hum-11","jobOrderId":"SEQ-SILENT-SLOT","at":"2026-09-06T00:00:01Z","wallClockAt":"2026-11-14T11:15:50.261984300Z","outcome":"DESTINATION_UNOBSERVED","destination":"RACK-209.S01"}

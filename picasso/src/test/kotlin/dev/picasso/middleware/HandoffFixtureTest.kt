@@ -62,6 +62,9 @@ class HandoffFixtureTest {
             "NONE" to keys(LedgerExport.remedySearches(listOf(record(NONE))).trim()),
             "WITHHELD" to keys(LedgerExport.remedySearches(listOf(record(RemedyOutcome.Withheld))).trim()),
             "SOURCE_MISSING" to keys(LedgerExport.remedySearches(listOf(record(SOURCE_MISSING))).trim()),
+            "SOURCE_UNOBSERVED" to keys(LedgerExport.remedySearches(listOf(record(SourceUnobserved("ENGINE-COVER-A", "SEQ-IN-02.BIN-A", null)))).trim()),
+            "DESTINATION_OCCUPIED" to keys(LedgerExport.remedySearches(listOf(record(RemedyOutcome.DestinationOccupied("RACK-204.S01", null)))).trim()),
+            "DESTINATION_UNOBSERVED" to keys(LedgerExport.remedySearches(listOf(record(RemedyOutcome.DestinationUnobserved("RACK-204.S01")))).trim()),
         )
         RUNS.forEach { run ->
             lines(run, LedgerExport.REMEDY_SEARCHES).forEach { line ->
@@ -78,6 +81,57 @@ class HandoffFixtureTest {
             val m = parse(Files.readString(HANDOFF.resolve(run).resolve(LedgerExport.MANIFEST)))
             assertEquals(LedgerExport.SCHEMA_VERSION, m.getValue("schemaVersion").stringValue, "$run 의 판이 낡았다")
             assertEquals(ContractIdentity.semver, m.getValue("contractSemver").stringValue, "$run 의 계약 버전이 낡았다")
+            // 한 벌은 한 인스턴스의 것이다(판 8) — 인시던트 id 는 그 인스턴스 안의 셈이다.
+            assertTrue(m.getValue("instanceId").stringValue.isNotBlank(), "$run 의 안내에 인스턴스가 없다")
+        }
+    }
+
+    // ── 재기동 장면(§15.322)
+
+    @Test
+    fun `재기동 장면의 두 벌이 같은 incidentKey 로 이어지고 사본의 요약은 다르다`() {
+        // ★★**이것이 감사 내보내기 묶음의 기준이다.** 읽는 쪽은 인스턴스마다 번들을 모아 재발을 센다. 잇는 열쇠가 없으면 같은 보류가 재기동 횟수만큼
+        //   더 셈되고, 열쇠가 있어도 실물에서 한 번도 안 이어지면 그쪽 셈법은 시험으로만 선다.
+        val original = lines(RESTART_ORIGINAL, LedgerExport.INCIDENTS).map { parse(it) }
+        val reopened = lines(RESTART_REOPENED, LedgerExport.INCIDENTS).map { parse(it) }
+        assertTrue(original.isNotEmpty() && reopened.isNotEmpty(), "재기동 장면의 한 벌이 비었다")
+        assertTrue(original.all { it.getValue("openingKind").stringValue == "NEW" }, "원래 벌에 다시 연 인시던트가 있다")
+        val keys = original.map { it.getValue("incidentKey").stringValue }.toSet()
+        reopened.forEach {
+            assertEquals("REOPENED", it.getValue("openingKind").stringValue)
+            assertTrue(it.getValue("incidentKey").stringValue in keys, "다시 연 인시던트가 원래 벌의 열쇠로 안 이어진다: ${it.getValue("incidentKey")}")
+            val same = original.single { o -> o.getValue("incidentKey").stringValue == it.getValue("incidentKey").stringValue }
+            assertEquals(same.getValue("firstOpenedAt").stringValue, it.getValue("firstOpenedAt").stringValue, "처음 선 시각이 갈렸다")
+            assertNotEquals(same.getValue("digest").stringValue, it.getValue("digest").stringValue, "사본 둘의 요약이 같다 — 다른 줄인데 한 줄로 접힌다")
+        }
+        val instances = listOf(RESTART_ORIGINAL, RESTART_REOPENED).map {
+            parse(Files.readString(HANDOFF.resolve(it).resolve(LedgerExport.MANIFEST))).getValue("instanceId").stringValue
+        }
+        assertNotEquals(instances[0], instances[1], "두 벌이 같은 인스턴스의 것이다 — 재기동이 아니다")
+    }
+
+    @Test
+    fun `재기동 장면이 점유 관문의 새 갈래 셋을 걸음 없이 든다`() {
+        // 판 8 에서 산문 사유가 구조로 남는다(§15.322). 승인할 조치가 아니므로 걸음 칸이 없다.
+        val searches = lines(RESTART_ORIGINAL, LedgerExport.REMEDY_SEARCHES).map { parse(it) }
+        assertEquals(
+            setOf("SOURCE_UNOBSERVED", "DESTINATION_OCCUPIED", "DESTINATION_UNOBSERVED"),
+            searches.map { it.getValue("outcome").stringValue }.toSet(),
+        )
+        searches.forEach { assertTrue("steps" !in it.keys, "승인할 조치가 아닌 줄에 걸음이 실렸다: $it") }
+    }
+
+    @Test
+    fun `현장 설정 셋은 벌마다 함께 널이거나 함께 있고 임무 버전은 재기동 장면만 값이다`() {
+        // ★셋이 갈리면 «설정은 있었는데 그 값은 모른다» 를 읽는 쪽이 지어내야 한다. 인코더가 단언하고 여기서 실물을 댄다.
+        RUNS.forEach { run ->
+            lines(run, LedgerExport.INCIDENTS).map { parse(it).getValue("intent").structValue.fieldsMap }.forEach { intent ->
+                val nulls = listOf("siteSettingsVersion", "inDoubtGrace", "stallWindow").map { intent.getValue(it).hasNullValue() }
+                assertEquals(1, nulls.distinct().size, "$run 의 설정 셋이 갈렸다: $intent")
+                val defined = run in listOf(RESTART_ORIGINAL, RESTART_REOPENED)
+                assertEquals(!defined, nulls.first(), "$run 의 설정 셋이 장면과 다르다")
+                assertEquals(!defined, intent.getValue("missionVersion").hasNullValue(), "$run 의 임무 버전이 장면과 다르다")
+            }
         }
     }
 
@@ -339,8 +393,12 @@ class HandoffFixtureTest {
         /** 사건이 **먼저** 나고 탐색이 그 뒤에 서는 한 벌. 읽는 쪽이 회복 설명을 재는 자리다. */
         private const val AFTER_INCIDENT = "run-4"
 
+        /** 재기동 장면 한 벌 — 앞 인스턴스의 벌과 판단 기록으로 다시 지은 인스턴스의 벌(§15.322). */
+        private const val RESTART_ORIGINAL = "run-5a"
+        private const val RESTART_REOPENED = "run-5b"
+
         /** 인계 지점의 모든 벌. 칸과 판을 대는 검사는 전부에 건다. */
-        private val RUNS = REPLAY + RECURRENCE + AFTER_INCIDENT
+        private val RUNS = REPLAY + RECURRENCE + AFTER_INCIDENT + RESTART_ORIGINAL + RESTART_REOPENED
         private val AT: Instant = Instant.parse("2026-09-05T00:03:21Z")
 
         /** [bundle] 의 요약을 `2ca7cd6`(현장 설정 칸을 더하기 전)에서 잰 값. */
@@ -373,6 +431,10 @@ class HandoffFixtureTest {
 
         private fun bundle() = IncidentBundle(
             incidentId = "incident-1",
+            // 정체성 셋은 해시에서 빠진다 — [GOLDEN_DIGEST] 는 그대로다(§15.322).
+            origin = IncidentOrigin("mw-handoff/incident-1", AT),
+            openingKind = OpeningKind.NEW,
+            attempt = 0,
             jobOrderId = "SEQ-204",
             executionId = "exec-1",
             robotId = "hum-02",

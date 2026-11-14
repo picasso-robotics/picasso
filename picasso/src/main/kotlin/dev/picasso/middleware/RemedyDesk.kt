@@ -95,7 +95,8 @@ internal class RemedyDesk(
         robotId: String,
         order: JobOrder,
         rejection: Submission.Rejected,
-        sourceMissing: RemedyOutcome.SourceMissing? = null,
+        /** 점유 관문이 이미 계산한 답(결품·출발 미관측·목적지 점유·목적지 미관측, [Admission.Refused.occupancy]). 있으면 그것만 적는다. */
+        occupancy: RemedyOutcome? = null,
         /** 이미 승인을 든 실행의 개정(`revise`) 거절인가. 그러면 조치 열을 찾아도 제안을 세우지 않는다(ADR 46, §15.175). */
         carriesApproval: Boolean = false,
         /** 승인한 조치 열을 붙인 접수의 거절인가. 그러면 조치 열을 찾아도 서 있는 제안을 바꾸지 않는다. */
@@ -110,9 +111,10 @@ internal class RemedyDesk(
 
         // **점유 관문의 답도 답이다.** 여기서 버리면 밖에서 «다른 자리가 있다» 와 «아무것도 계산 안 했다» 가
         // 같은 침묵이 된다 — 탐색의 «못 찾았다» 를 버리고 있던 것과 같은 자리다(§15.164).
-        // 관문이 첫 거절에서 되돌아가므로 이것과 아래의 탐색 결과가 함께 서는 일은 없다.
-        if (sourceMissing != null) {
-            note(robotId, jobOrderId, sourceMissing)
+        // 관문이 첫 거절에서 되돌아가므로 이것과 아래의 탐색 결과가 함께 서는 일은 없다. 출발 미관측과 목적지 점유·미관측도 같다(§15.322) —
+        // 산문 사유만 내면 «확인을 못 했다» 와 «자리가 차 있다» 가 아무것도 안 적힌 거절과 같은 침묵이다. 승인할 조치가 아니다.
+        if (occupancy != null) {
+            note(robotId, jobOrderId, occupancy)
             return rejection
         }
 

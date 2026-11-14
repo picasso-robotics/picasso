@@ -18,11 +18,21 @@ internal class IncidentLog(
     private val cap: Int = Retention().incidents,
     /** 이 실행을 아직 구동이 돌리는가. 그 실행의 번들은 상한을 넘어도 내리지 않는다. */
     private val live: (String) -> Boolean = { false },
+    /** 이 인스턴스([Middleware.instanceId]). 새로 선 인시던트의 정체성 열쇠([IncidentOrigin.key])가 이것과 인시던트 id 로 선다. 기본값을 두지 않는다 — 고정하면 열쇠가 인스턴스 사이에 겹친다. */
+    private val instanceId: String,
+    /** 이 실행이 아직 실행 표(장부)에 있는가. 정체성 표([origins])는 그동안만 든다 — 놓은 실행의 줄은 다음 봉인에서 내린다. */
+    private val known: (String) -> Boolean,
 ) {
 
     /** 상한으로 내린 번들의 수([RetentionEvictions.incidents]). */
     var evicted = 0L
         private set
+
+    /**
+     * (실행, 단위)마다 가장 최근 인시던트의 **정체성**(§15.322). 무거운 번들과 따로 둔다 — 번들은 보존 상한([cap])으로 내려가도 그 실행이
+     * 장부에 있는 동안 판단 기록은 이미 선 정체성을 계속 싣는다. 내리면 재기동 뒤 연결할 수 있었던 보류가 연결 불명이 된다.
+     */
+    private val origins = linkedMapOf<Pair<String, String>, IncidentOrigin>()
 
     /** 열린 사건들(설계안 §4). **조회만 한다** — 이 목록이 이 층의 거동을 바꾸지 않는다. */
     private val bundles = mutableListOf<IncidentBundle>()
@@ -88,18 +98,31 @@ internal class IncidentLog(
      *
      * @param timings 봉인하는 라운드의 현장 시간값. 널이면 케이퍼빌리티 값이다. 근거 시간 윈도우와 의도의 시간값이 이것에서 나온다.
      * @param reopenedAt 번들의 `at` 이자 근거 윈도우의 기준. 널이면 지금이다. 넘기는 자리는 재기동이 보류를 다시 연 봉인 하나뿐이다
-     *   ([Middleware.resume]) — 다시 연 줄과 같은 시각이어야 그 줄로 다시 연 인시던트를 가른다. 실 시계([wallClock])는 따로 읽는다.
+     *   ([Middleware.resume]) — 다시 연 줄과 같은 시각이다. 실 시계([wallClock])는 따로 읽는다.
+     * @param reopenedFrom 재기동이 넘긴 판단 기록. 넘기는 자리는 위와 같다. 그 기록의 운영자 보류로 다시 선 단위의 인시던트는
+     *   [OpeningKind.REOPENED] 이고 기록의 보류 판정이 실어 온 정체성([UnitVerdict.incident])을 잇는다(§15.322). 재개 절차가 다시 연
+     *   표시만 남기므로 그 «다시 열었다» 를 여기서 채운다 — 줄 시각을 `at` 과 맞대 추정하지 않는다.
      */
-    fun sealIncidents(execution: Execution, timings: SiteTimings?, reopenedAt: Instant? = null) {
+    fun sealIncidents(execution: Execution, timings: SiteTimings?, reopenedAt: Instant? = null, reopenedFrom: JudgmentRecord? = null) {
         if (execution.pendingIncidents.isEmpty()) return
+        val reopened = reopenedFrom?.units?.associateBy { it.unitId }
         val at = reopenedAt ?: now()
         val wall = wallClock()
         val window = timings?.evidenceWindow ?: execution.capability.evidenceWindow
         val inWindow = execution.eventTrail.filter { within(it, at.minus(window.before), at.plus(window.after)) }
         execution.pendingIncidents.forEach { unitId ->
             val unit = execution.units.firstOrNull { it.unitId == unitId } ?: return@forEach
+            val incidentId = "incident-${++incidentSeq}"
+            // 기록의 운영자 보류를 그대로 옮긴 단위만 다시 연 것이다. 그 밖은 이 봉인이 정체성의 처음이다.
+            val prior = reopened?.get(unitId)?.takeIf { it.verdict?.state == UnitState.OPERATOR_HOLD && unit.state == UnitState.OPERATOR_HOLD }
+            val origin = if (prior != null) prior.verdict?.incident else IncidentOrigin("$instanceId/$incidentId", at)
+            // 연결 불명(널)도 그대로 둔다 — 앞 정체성이 남아 있으면 다시 연 이 인시던트에 엉뚱한 열쇠가 붙는다.
+            if (origin != null) origins[execution.executionId to unit.unitId] = origin else origins.remove(execution.executionId to unit.unitId)
             bundles += IncidentBundle(
-                incidentId = "incident-${++incidentSeq}",
+                incidentId = incidentId,
+                origin = origin,
+                openingKind = if (prior != null) OpeningKind.REOPENED else OpeningKind.NEW,
+                attempt = unit.attempt,
                 jobOrderId = execution.order.jobOrderId,
                 executionId = execution.executionId,
                 // 사건은 단위의 것이다 — 그 단위가 묶인 기체를 싣는다.
@@ -162,8 +185,20 @@ internal class IncidentLog(
             )
         }
         execution.pendingIncidents.clear()
+        origins.keys.removeAll { !known(it.first) }
         trim()
     }
+
+    /**
+     * 이 단위가 **운영자 보류에 서 있으면** 그 단위의 가장 최근 인시던트의 정체성(§15.322). 아니면 널이다. 판단 기록이 보류 판정에 싣는다
+     * ([Middleware.judgmentRecord]) — 봉인과 같은 라운드에 실린다(봉인은 라운드 끝, 기록은 그 뒤에 받는다).
+     *
+     * 번들이 아니라 정체성 표([origins])에서 읽는다 — 번들이 보존 상한으로 내려가도 그 실행이 장부에 있는 동안은 남는다. 같은 시도에서
+     * 미확정과 보류가 각각 열었으면 뒤의 것(보류)이고, 조치 실패로 선 미발행 보류(§15.320)는 둘째 인시던트를 열지 않으므로 거부 때 선
+     * 인시던트다(그래서 그 정체성의 시도와 단위의 지금 시도가 하나 어긋날 수 있다). 다시 연 인시던트가 연결 불명이면 널이다.
+     */
+    fun holdOrigin(executionId: String, unit: ExecutionUnit): IncidentOrigin? =
+        if (unit.state != UnitState.OPERATOR_HOLD) null else origins[executionId to unit.unitId]
 
     /** 상한을 넘은 만큼 **가장 오래된 것부터** 내린다. 구동이 돌리는 실행의 번들은 건너뛴다([Retention]). */
     private fun trim() {

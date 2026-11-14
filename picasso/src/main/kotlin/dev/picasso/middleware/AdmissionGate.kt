@@ -271,7 +271,7 @@ internal class AdmissionGate(
             )
         }
 
-        destinationViolation(planned)?.let { return Admission.Refused(it) }
+        destinationViolation(planned)?.let { return it }
 
         for (unit in planned) {
             // **이 층이 집으러 보내는 단위만 본다.** 플릿 위임은 플릿이 인수 시점에 대조하고 불일치를
@@ -290,6 +290,8 @@ internal class AdmissionGate(
                             "(이 단위는 출발 관측을 요구한다, 확인 전에는 보내지 않는다)",
                         sourceUnobserved = unobserved,
                     ),
+                    // 대장에도 적는다(§15.322) — 산문 사유만 내면 «확인을 못 했다» 가 다른 거절과 같은 침묵이다. 승인할 조치가 아니다.
+                    occupancy = unobserved,
                 )
             }
             if (check !is SourceCheck.Missing) continue
@@ -307,7 +309,7 @@ internal class AdmissionGate(
                 ),
                 // **계산한 것을 그 자리에서 버리지 않는다**(§15.164 와 같은 자리). 산문의 사유만 내면
                 // 읽는 쪽이 한국어를 문자열로 뜯어야 하고, 그 대조는 문구를 고치는 날 조용히 깨진다.
-                sourceMissing = RemedyOutcome.SourceMissing(
+                occupancy = RemedyOutcome.SourceMissing(
                     material = material,
                     source = from,
                     observed = check.observed,
@@ -330,11 +332,12 @@ internal class AdmissionGate(
      * **이 계층이 보내는 단위만 본다.** 플릿 위임은 플릿이 목적지에 앞 용기가 남은 것을 보고한다(`WAITING_HANDOVER`). 식별 정보가
      * 없는 단위(갈 자리)도 보지 않는다 — 예약과 같은 기준이다. 선언이 [DestinationObservation.OPTIONAL] 이면 설비에 묻지도 않는다.
      *
-     * **거부는 텍스트 사유로만 낸다.** 조치 탐색 레지스터에 적지 않는다 — 이 계층이 계산한 응답이 없다(§15.183 의 자리 경쟁과 같은
-     * 처리). 구조 칸도 두지 않는다 — 읽을 소비자가 생기면 더한다(ADR 9). 확인은 셀의 관측으로 들어오고, 그때 같은 작업 요청이 이
-     * 판정을 다시 지난다.
+     * **거부의 답을 구조로 남긴다**(§15.322). 사유 산문과 함께 목적지 점유([RemedyOutcome.DestinationOccupied])·미관측
+     * ([RemedyOutcome.DestinationUnobserved])을 관문의 답으로 들려 보내 조치 탐색 레지스터에 적는다 — 산문만 내면 밖에서는 «자리가 차
+     * 있다» 와 «아예 안 봤다» 가 같은 침묵이다. **승인할 조치가 아니다** — 걸음이 없고 제안 표에도 서지 않는다. 사람이 목적지를
+     * 확인·덮어쓰는 입구는 없다(한계 대장 §15.235). 확인은 셀의 관측으로 들어오고, 그때 같은 작업 요청이 이 판정을 다시 지난다.
      */
-    private fun destinationViolation(planned: List<ExecutionUnit>): Submission.Rejected? {
+    private fun destinationViolation(planned: List<ExecutionUnit>): Admission.Refused? {
         for (unit in planned) {
             if (unit.destinationObservation != DestinationObservation.REQUIRED) continue
             if (unit.route != Route.ROBOT || unit.expectedIdentity == null) continue
@@ -343,13 +346,19 @@ internal class AdmissionGate(
                 DestinationCheck.Free -> continue
                 is DestinationCheck.Occupied -> {
                     val seen = check.observed?.let { "'$it' 이 있다" } ?: "설비가 있다고만 했다"
-                    return Submission.Rejected(
-                        "목적지 $where 가 비어 있지 않다 — $seen (목적지 점유, 이 단위는 목적지 관측을 요구한다, 보내지 않았다)",
+                    return Admission.Refused(
+                        Submission.Rejected(
+                            "목적지 $where 가 비어 있지 않다 — $seen (목적지 점유, 이 단위는 목적지 관측을 요구한다, 보내지 않았다)",
+                        ),
+                        occupancy = RemedyOutcome.DestinationOccupied(where, check.observed),
                     )
                 }
-                DestinationCheck.Unobserved -> return Submission.Rejected(
-                    "목적지 $where 를 확인하지 못했다 — 설비가 말이 없다 " +
-                        "(목적지 미관측, 이 단위는 목적지 관측을 요구한다, 확인 전에는 보내지 않는다)",
+                DestinationCheck.Unobserved -> return Admission.Refused(
+                    Submission.Rejected(
+                        "목적지 $where 를 확인하지 못했다 — 설비가 말이 없다 " +
+                            "(목적지 미관측, 이 단위는 목적지 관측을 요구한다, 확인 전에는 보내지 않는다)",
+                    ),
+                    occupancy = RemedyOutcome.DestinationUnobserved(where),
                 )
             }
         }

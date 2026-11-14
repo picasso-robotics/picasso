@@ -35,12 +35,14 @@ import java.time.format.DateTimeParseException
  *    끝난 시도의 파지는 스냅숏에 실리지 않고, 재기동 사이에 놓친 것은 다시 관측해도 «쥔 적 있다» 가 되지 않는다. 옮기지 않으면
  *    다시 지은 실행이 쥐고 놓친 단위의 중단을 판정하지 않고(효과-관측 대조의 기대가 비어 [ExecutionUnit.holdMismatch] 가 서지
  *    않는다) 재할당이 자재를 다룬 단위를 거르지 못한다.
+ * 9. 보류의 인시던트 정체성 — 운영자 보류 판정의 [UnitVerdict.incident](§15.322). 번들은 옮기지 않지만 그 열쇠와 처음 선 시각은 옮긴다. 옮기지
+ *    않으면 다시 연 인시던트가 원래 보류와 이어지지 않아, 인스턴스마다 번들을 모아 세는 쪽이 같은 보류를 재기동 횟수만큼 더 센다.
  *
  * **들지 않는 것**: 사건 번들, 조치 탐색 대장, 같은 조치의 승인 횟수, 결과 통보 아웃박스, 실행 자취, 지금의 파지 관측, 진행률 정체 표시,
  * 미확정 조회 횟수. 앞의 넷은 이 층의 다른 장부이고 저마다의 적재가 있거나(§15.166) 이 기록의 소비자가 없다(ADR 9). 뒤의 넷은
  * 판단이 아니라 관측이다 — 다시 지은 실행이 기체에서 다시 관측한다. 종료한 단위의 파지는 정보이지 판정이 아니다(§15.146).
  * 인시던트 번들은 옮기지 않지만, 운영자 보류로 옮긴 단위의 인시던트는 다시 지은 인스턴스가 새로 연다 — 사람이 판단할 자리가
- * 그것이기 때문이다. 이전 인스턴스의 번들 자체(그때의 근거 윈도우와 결함 원문)는 넘어오지 않는다.
+ * 그것이기 때문이다. 이전 인스턴스의 번들 자체(그때의 근거 윈도우와 결함 원문)는 넘어오지 않고, 그 정체성(9)만 넘어온다.
  *
  * **세대 칸이 없다**(ADR 51 «정의»). 판단과 결정 기록은 기대 상태 버전만 든다 — 여기서는 [orderVersion] 과 단위마다의
  * [UnitRecord.attempt] 다. 세대는 결정을 적용하는 쪽의 기록에 있다.
@@ -131,6 +133,12 @@ data class UnitVerdict(
      * 않으면 다시 지은 실행은 그 보류가 파지 때문인지 모른다. 거부가 아니면 빈 목록이다.
      */
     val preconditionSubjects: List<String> = emptyList(),
+    /**
+     * 운영자 보류 판정이면 그 단위의 열린 인시던트의 **정체성**([IncidentOrigin], §15.322). 다시 지은 인스턴스가 다시 연 인시던트에
+     * 그대로 잇는다 — 재기동을 몇 번 넘어도 같은 열쇠다. 보류가 아니거나 다시 연 인시던트가 연결 불명이면 널이고, 판 1~4 기록도 널로
+     * 읽는다(다시 연 인시던트는 연결 불명). 번들이 보존 상한으로 내려가도 그 실행이 장부에 있는 동안은 싣는다.
+     */
+    val incident: IncidentOrigin? = null,
 ) {
     init {
         require(state in STATES) { "종결하지 않은 상태는 판정이 아니다: $state" }
@@ -166,11 +174,12 @@ data class RecordedDecision(
  * 조용히 «없었다» 가 되고, 그것이 이 기록이 막으려는 바로 그 손실이다. 그래서 칸이 하나만 늘어도 판을 올린다 — 모르는 칸을
  * 무시하는 읽는 쪽이 없다.
  *
- * **앞 버전 1·2·3 은 읽는다**(§15.253, §15.257, §15.320). 버전 1 에는 건 취소 칸이 없고, 읽으면 취소가 걸리지 않은 기록이 된다. 그 실행이 다시
+ * **앞 버전 1·2·3·4 는 읽는다**(§15.253, §15.257, §15.320, §15.322). 버전 1 에는 건 취소 칸이 없고, 읽으면 취소가 걸리지 않은 기록이 된다. 그 실행이 다시
  * 지은 뒤 하위의 취소를 만나면 요청 없는 취소로 운영자 보류에 서므로(§15.230) 모르는 사실이 진행 쪽으로 접히지 않는다. 1·2 는
  * 단위의 파지 이력 칸이 없고, 읽으면 쥔 것을 본 적 없는 단위가 된다 — 버전 3 전의 다시 짓기와 같다. 1·2·3 은 승인의 위치 칸과 판정의
- * 거부 주어 칸이 없다. 읽으면 접수 승인(걸음은 계획 맨 앞)이고 주어 없는 판정이다 — 그 판에는 회복 승인이 없었다. 담는 쪽이 이미 적어 둔 앞
- * 버전 기록으로도 다시 지을 수 있어야 한다.
+ * 거부 주어 칸이 없다. 읽으면 접수 승인(걸음은 계획 맨 앞)이고 주어 없는 판정이다 — 그 판에는 회복 승인이 없었다. 1~4 는 보류 판정의
+ * 인시던트 정체성 칸이 없다. 읽으면 정체성 없는 판정이고, 다시 연 인시던트는 연결 불명이다. 담는 쪽이 이미 적어 둔 앞 버전 기록으로도 다시
+ * 지을 수 있어야 한다.
  */
 object JudgmentRecordWire {
 
@@ -179,8 +188,14 @@ object JudgmentRecordWire {
      * 이 둘만 **비면 키를 싣지 않는다**(위치 없음·주어 없음) — 다른 칸은 지금처럼 널도 키를 싣는다. 그래서 회복 승인도 거부 주어도 없는 실행의 기록은
      * 앞 버전과 같은 모양이고, 그 모양에 기대는 쪽(앞 버전 기록을 지어 쓰는 담는 쪽)이 그대로 돈다. 읽을 때 없으면 널·빈 목록이고, 앞 버전 1·2·3 에
      * 그 칸이 있으면 모르는 칸이다.
+     *
+     * `5` 에서 판정 칸에 인시던트 정체성 두 칸(`incidentKey`·`firstOpenedAt`)이 붙었다(§15.322). 운영자 보류 판정에만 서고, 판 4 의 두 칸과 같은 규칙이다 —
+     * **없으면 키를 싣지 않는다.** 보류가 없는 기록은 판 4 와 같은 모양이다. 둘은 함께 있거나 함께 없다. 앞 버전 1~4 에 그 칸이 있으면 모르는 칸이다.
      */
-    const val SCHEMA_VERSION: String = "4"
+    const val SCHEMA_VERSION: String = "5"
+
+    /** 읽을 줄 아는 앞 버전. 판정의 인시던트 정체성 칸이 없다. */
+    private const val V4: String = "4"
 
     /** 읽을 줄 아는 앞 버전. 승인의 위치 칸과 판정의 거부 주어 칸이 없다. */
     private const val V3: String = "3"
@@ -208,14 +223,15 @@ object JudgmentRecordWire {
             throw IllegalArgumentException("판단 기록을 읽지 못했다: ${e.message}", e)
         }
         val version = root.fieldsMap["schemaVersion"]
-        if (version == null || !version.hasStringValue() || version.stringValue !in setOf(SCHEMA_VERSION, V3, V2, V1)) {
+        if (version == null || !version.hasStringValue() || version.stringValue !in setOf(SCHEMA_VERSION, V4, V3, V2, V1)) {
             throw IllegalArgumentException(
-                "모르는 판단 기록 판이다: ${version?.let { describe(it) } ?: "(없음)"} — 읽는 버전은 $V1, $V2, $V3, $SCHEMA_VERSION 이다",
+                "모르는 판단 기록 판이다: ${version?.let { describe(it) } ?: "(없음)"} — 읽는 버전은 $V1, $V2, $V3, $V4, $SCHEMA_VERSION 이다",
             )
         }
         val v1 = version.stringValue == V1
-        val held = version.stringValue == SCHEMA_VERSION || version.stringValue == V3
-        val placed = version.stringValue == SCHEMA_VERSION
+        val held = version.stringValue in setOf(SCHEMA_VERSION, V4, V3)
+        val placed = version.stringValue in setOf(SCHEMA_VERSION, V4)
+        val identified = version.stringValue == SCHEMA_VERSION
         val r = Fields("$", root, if (v1) ROOT - "cancelRequested" else ROOT)
         val unit = if (held) UNIT else UNIT - HELD
         return JudgmentRecord(
@@ -223,7 +239,7 @@ object JudgmentRecordWire {
             orderVersion = r.int("orderVersion"),
             acknowledgedFaults = r.list("acknowledgedFaults").mapIndexed { i, v -> stringOf("$.acknowledgedFaults[$i]", v) },
             approval = r.objOrNull("approval", APPROVAL - "position", if (placed) setOf("position") else emptySet())?.let { approvalOf(it, placed) },
-            units = r.list("units").mapIndexed { i, v -> unitOf(Fields("$.units[$i]", structOf("$.units[$i]", v), unit), held, placed) },
+            units = r.list("units").mapIndexed { i, v -> unitOf(Fields("$.units[$i]", structOf("$.units[$i]", v), unit), held, placed, identified) },
             cancelRequested = !v1 && r.bool("cancelRequested"),
         )
     }
@@ -267,6 +283,8 @@ object JudgmentRecordWire {
         .str("result", v.result)
         // 주어가 없으면 칸을 싣지 않는다 — 위치 칸과 같은 까닭이다(OPTIONAL).
         .let { o -> if (v.preconditionSubjects.isEmpty()) o else o.raw("preconditionSubjects", LedgerExport.arrayOfStrings(v.preconditionSubjects)) }
+        // 정체성이 없으면 두 칸을 싣지 않는다 — 같은 까닭이다(OPTIONAL, §15.322).
+        .let { o -> v.incident?.let { o.str("incidentKey", it.key).str("firstOpenedAt", it.firstOpenedAt.toString()) } ?: o }
         .done()
 
     private fun decision(d: RecordedDecision): String = Obj()
@@ -293,13 +311,13 @@ object JudgmentRecordWire {
         position = if (placed && f.has("position")) f.objOrNull("position", POSITION)?.let { ProposalTarget.Hold(it.int("orderVersion"), it.string("unitId"), it.int("attempt")) } else null,
     )
 
-    private fun unitOf(f: Fields, held: Boolean, placed: Boolean) = UnitRecord(
+    private fun unitOf(f: Fields, held: Boolean, placed: Boolean, identified: Boolean) = UnitRecord(
         unitId = f.string("unitId"),
         attempt = f.int("attempt"),
         taskId = f.string("taskId"),
         requestedAt = f.instantOrNull("requestedAt"),
         verifyWindow = f.objOrNull("verifyWindow", WINDOW)?.let { VerifyWindow(it.instant("doneAt"), it.instant("deadline")) },
-        verdict = f.objOrNull("verdict", VERDICT - "preconditionSubjects", if (placed) setOf("preconditionSubjects") else emptySet())?.let { v ->
+        verdict = f.objOrNull("verdict", VERDICT - OPTIONAL_VERDICT, (if (placed) setOf("preconditionSubjects") else emptySet()) + (if (identified) IDENTITY else emptySet()))?.let { v ->
             val state = v.enum("state", UnitState.entries)
             if (state !in UnitVerdict.STATES) throw IllegalArgumentException("${v.path}.state: 종결하지 않은 상태는 판정이 아니다: $state")
             UnitVerdict(
@@ -311,6 +329,7 @@ object JudgmentRecordWire {
                 note = v.stringOrNull("note"),
                 result = v.stringOrNull("result"),
                 preconditionSubjects = if (placed && v.has("preconditionSubjects")) v.list("preconditionSubjects").mapIndexed { i, s -> stringOf("${v.path}.preconditionSubjects[$i]", s) } else emptyList(),
+                incident = identityOf(v),
             )
         },
         decision = f.objOrNull("decision", DECISION)?.let { d ->
@@ -325,6 +344,14 @@ object JudgmentRecordWire {
         heldInEarlierAttempt = held && f.bool("heldInEarlierAttempt"),
     )
 
+    /** 판정의 정체성 두 칸. **함께 있거나 함께 없다** — 하나만 있으면 던진다. 판 1~4 에는 칸 목록이 이미 거부했다. */
+    private fun identityOf(v: Fields): IncidentOrigin? {
+        val present = IDENTITY.filter { v.has(it) }
+        if (present.isEmpty()) return null
+        if (present.size != IDENTITY.size) throw IllegalArgumentException("${v.path}: 정체성 칸이 하나만 있다: $present")
+        return IncidentOrigin(v.string("incidentKey"), v.instant("firstOpenedAt"))
+    }
+
     // 칸 이름 — 읽는 쪽이 모르는 칸을 거부하는 기준이다. 적는 쪽(위)과 한 벌로 고친다.
     private val ROOT = setOf("schemaVersion", "jobOrderId", "orderVersion", "acknowledgedFaults", "approval", "units", "cancelRequested")
     private val APPROVAL = setOf("robotId", "approverId", "approverKind", "at", "wallClockAt", "steps", "position")
@@ -334,7 +361,9 @@ object JudgmentRecordWire {
     private val HELD = setOf("everHeld", "heldInEarlierAttempt")
     private val UNIT = setOf("unitId", "attempt", "taskId", "requestedAt", "verifyWindow", "verdict", "decision") + HELD
     private val WINDOW = setOf("doneAt", "deadline")
-    private val VERDICT = setOf("state", "reached", "verification", "evidenceAt", "failureClass", "note", "result", "preconditionSubjects")
+    private val IDENTITY = setOf("incidentKey", "firstOpenedAt")
+    private val OPTIONAL_VERDICT = setOf("preconditionSubjects") + IDENTITY
+    private val VERDICT = setOf("state", "reached", "verification", "evidenceAt", "failureClass", "note", "result") + OPTIONAL_VERDICT
     private val DECISION = setOf("decision", "approverId", "approverKind", "at", "attempt")
 
     /**

@@ -5,6 +5,9 @@ import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.harness.Harness
 import dev.picasso.host.BundleWriter
+import dev.picasso.middleware.mission.Activation
+import dev.picasso.middleware.mission.InMemoryMissionCatalog
+import dev.picasso.middleware.mission.MissionFixtures
 import dev.picasso.mimic.control.v1.ForceFaultRequest
 import dev.picasso.mimic.control.v1.SetConnectionRequest
 import java.nio.file.Files
@@ -28,7 +31,10 @@ import kotlin.test.assertTrue
  * **`run-3` 은 재실행이 아니라 다른 시나리오다.** 같은 기체가 같은 분류로 거듭 깨지는 한 벌이고,
  * 앞의 두 벌과 달리 한 벌 안에서 재발이 실제로 일어난다([recurrence]).
  *
- * 산출물은 `picasso/build/export/run-1` · `run-2` · `run-3` 이다.
+ * **`run-5a`·`run-5b` 는 재기동 장면 한 벌이다**(§15.322). 앞 인스턴스가 보류를 내고 죽은 뒤 판단 기록으로 다시 지은 인스턴스가 그 보류를
+ * 다시 연다 — 두 벌이 같은 `incidentKey` 로 이어진다([restartScene]).
+ *
+ * 산출물은 `picasso/build/export/run-1` ~ `run-4`, `run-5a`·`run-5b` 다.
  */
 class ExportFixtureTest {
 
@@ -367,7 +373,7 @@ class ExportFixtureTest {
      * 얻을 길이 없고, 건너뛰기도 새 쓰개에는 걸리지 않는다. 그래도 «안 썼다» 를 조용히 넘기지 않는다.
      */
     private fun write(w: World, dir: Path) {
-        check(BundleWriter(dir).snapshot(w.mw.incidents(), w.mw.remedySearches(), w.harness.clock.now())) {
+        check(BundleWriter(dir, w.mw.instanceId).snapshot(w.mw.incidents(), w.mw.remedySearches(), w.harness.clock.now())) {
             "$dir 에 한 벌을 안 썼다"
         }
     }
@@ -397,6 +403,9 @@ class ExportFixtureTest {
                         is RemedyOutcome.None -> "NONE:${outcome.cause.name}"
                         RemedyOutcome.Withheld -> "WITHHELD"
                         is RemedyOutcome.SourceMissing -> "SOURCE_MISSING"
+                        is SourceUnobserved -> "SOURCE_UNOBSERVED"
+                        is RemedyOutcome.DestinationOccupied -> "DESTINATION_OCCUPIED"
+                        is RemedyOutcome.DestinationUnobserved -> "DESTINATION_UNOBSERVED"
                     }
                 }
                 approvers += w.mw.incidents().map { it.approvedBy?.kind?.name }
@@ -531,7 +540,141 @@ class ExportFixtureTest {
         }
     }
 
+    /**
+     * 재기동 장면의 세계 — 임무 정의와 현장 설정으로 돈다. 그래서 이 벌의 줄은 임무 버전과 설정 셋을 값으로 싣는다(앞 벌들은 코드 케이퍼빌리티라
+     * 넷 다 널이다). 정의는 출발·목적지 관측을 둘 다 요구한다 — 그래야 점유 관문의 새 갈래 셋이 실물 장면에서 선다.
+     */
+    private class RestartWorld : AutoCloseable {
+        val harness = Harness(mapOf(FOUND_ROBOT to PRECOND, GATE_ROBOT to PRECOND))
+        val cell = CellMimic(now = { harness.clock.now() })
+        val catalog = InMemoryMissionCatalog(now = { harness.clock.now() })
+        private val timings = SiteTimingsSource { SiteTimings.ofSeconds(3, 30, 15, 20, 40) }
+
+        init {
+            val activated = catalog.activate(
+                MissionFixtures.prepareSequencedRack(sourceObservation = "REQUIRED", destinationObservation = "REQUIRED"),
+                MissionFixtures.SIGNALS,
+                FloorOwnership.None,
+                MissionFixtures.SITE_SKILLS,
+            )
+            assertIs<Activation.Activated>(activated, "시험 정의가 서지 않았다: $activated")
+        }
+
+        /** 같은 기체·셀·카탈로그 위에 새 인스턴스를 띄운다 — 재기동이다. */
+        fun instance() = Middleware(ClientRobotPort(harness.client()), cell, now = { harness.clock.now() }, missions = catalog, siteTimings = timings)
+
+        fun drive(mw: Middleware, rounds: Int = 250, until: () -> Boolean) {
+            repeat(rounds) {
+                mw.pump()
+                if (until()) return
+                harness.advance(Duration.ofSeconds(1))
+                Thread.sleep(40)
+                mw.pump()
+                if (until()) return
+            }
+            error("조건에 못 미쳤다")
+        }
+
+        fun forceFault(robotId: String, errorType: String, taskId: String) = harness.oracle.forceFault(
+            ForceFaultRequest.newBuilder().setRobotId(robotId).setErrorType(errorType).setTaskId(taskId).build(),
+        )
+
+        override fun close() = harness.close()
+    }
+
+    /**
+     * **재기동 장면**(`run-5a`·`run-5b`, §15.322). 앞 인스턴스에서 랙이 든 채 실패해 운영자 보류에 서고(인시던트), 점유 관문이 셋을 거절한다 —
+     * 출발 미관측·목적지 점유·목적지 미관측. 그 인스턴스의 한 벌을 낸 뒤 판단 기록(인코딩을 한 번 지난다)으로 새 인스턴스가 다시 짓고, 그
+     * 보류를 다시 연 인시던트로 그 인스턴스의 한 벌을 낸다.
+     *
+     * ★**두 벌이 같은 `incidentKey` 로 이어지는 것이 이 장면의 이유다.** 읽는 쪽은 인스턴스마다 번들을 모아 세므로, 잇는 열쇠가 없으면 같은 보류가
+     * 재기동 횟수만큼 더 셈된다. 요약은 다르다 — 사본 둘은 다른 줄이다.
+     */
+    private fun restartScene(w: RestartWorld): Triple<Middleware, Middleware, JudgmentRecord> {
+        val first = w.instance()
+        w.cell.program(SCENE_SOURCE, SCENE_MATERIAL)
+        w.cell.empty(SCENE_SLOT)
+        val order = sceneRack("SEQ-RESTART", SCENE_SLOT, SCENE_SOURCE)
+        val exec = assertIs<Middleware.Submission.Accepted>(first.submit(order, FOUND_ROBOT)).execution
+        // 접수 뒤 설비가 목적지에 그 자재를 본다 — 하류는 실패하고 설비에는 있으니 사람이 판단할 보류다(목적지 관측은 접수 때 «비었다» 였다).
+        w.cell.program(SCENE_SLOT, SCENE_MATERIAL)
+        w.drive(first) { exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
+        w.forceFault(FOUND_ROBOT, "SKILL_EXECUTION_FAILED", exec.units.first().taskId)
+        w.drive(first) { exec.physicalState == PhysicalState.OPERATOR_HOLD }
+
+        // 점유 관문의 답 셋 — 거절은 실행을 만들지 않고 시계도 안 돌린다. 빈손인 기체라 사슬 검사는 지난다.
+        w.cell.empty("RACK-207.S01")
+        assertIs<Middleware.Submission.Rejected>(first.submit(sceneRack("SEQ-SILENT-SOURCE", "RACK-207.S01", "SEQ-IN-09.BIN-A"), GATE_ROBOT))
+        w.cell.program("RACK-208.S01", "ENGINE-COVER-B")
+        assertIs<Middleware.Submission.Rejected>(first.submit(sceneRack("SEQ-FULL-SLOT", "RACK-208.S01", SCENE_SOURCE), GATE_ROBOT))
+        assertIs<Middleware.Submission.Rejected>(first.submit(sceneRack("SEQ-SILENT-SLOT", "RACK-209.S01", SCENE_SOURCE), GATE_ROBOT))
+
+        val record = JudgmentRecordWire.decode(JudgmentRecordWire.encode(assertNotNull(first.judgmentRecord(exec.executionId))))
+        // ★재기동 사이에 시계가 흐른다 — 다시 연 인시던트의 `at` 은 다시 연 시각이고 `firstOpenedAt` 은 처음 선 시각이라 둘이 갈린다.
+        w.harness.advance(Duration.ofSeconds(5))
+        val second = w.instance()
+        val mission = assertNotNull(w.catalog.active(PrepareSequencedRack.WORK_MASTER))
+        assertIs<Middleware.Submission.Accepted>(second.resume(order, FOUND_ROBOT, mission, record))
+        return Triple(first, second, record)
+    }
+
+    @Test
+    fun `재기동 장면의 두 벌을 낸다`() {
+        RestartWorld().use { w ->
+            val (first, second, record) = restartScene(w)
+            check(BundleWriter(Path.of("build", "export", "run-5a"), first.instanceId).snapshot(first.incidents(), first.remedySearches(), w.harness.clock.now()))
+            check(BundleWriter(Path.of("build", "export", "run-5b"), second.instanceId).snapshot(second.incidents(), second.remedySearches(), w.harness.clock.now()))
+
+            val held = first.incidents().single()
+            val origin = assertNotNull(held.origin)
+            assertEquals(OpeningKind.NEW, held.openingKind)
+            assertEquals(origin, record.units.single().verdict?.incident, "판단 기록이 보류의 정체성을 안 실었다")
+            val reopened = second.incidents().single()
+            assertEquals(OpeningKind.REOPENED to origin, reopened.openingKind to reopened.origin, "다시 연 인시던트가 원래 보류와 안 이어졌다")
+            assertNotEquals(held.digest(), reopened.digest(), "사본 둘의 요약이 같다")
+            assertTrue(reopened.at.isAfter(origin.firstOpenedAt), "다시 연 시각과 처음 선 시각이 갈리지 않았다: ${reopened.at} / ${origin.firstOpenedAt}")
+
+            // 이 벌은 임무 정의와 현장 설정으로 돈다 — 두 칸이 값을 싣는다.
+            listOf(held, reopened).forEach {
+                assertEquals(1, it.intent.missionVersion)
+                assertEquals(3L, it.intent.siteSettingsVersion)
+                assertEquals("PT20S" to "PT40S", it.intent.inDoubtGrace to it.intent.stallWindow)
+            }
+
+            // ★**칸을 만들어도 장면이 안 채우면 빈 칸이다.** 새 갈래 셋이 실물로 적힌다.
+            val outcomes = first.remedySearches().map { it.outcome }
+            assertEquals(
+                listOf(
+                    SourceUnobserved(SCENE_MATERIAL, "SEQ-IN-09.BIN-A", null),
+                    RemedyOutcome.DestinationOccupied("RACK-208.S01", "ENGINE-COVER-B"),
+                    RemedyOutcome.DestinationUnobserved("RACK-209.S01"),
+                ),
+                outcomes,
+            )
+            assertEquals(emptyList(), second.remedySearches(), "다시 짓기가 탐색을 적었다")
+        }
+    }
+
     companion object {
+        /** 재기동 장면의 거절을 받는 빈손 기체. */
+        const val GATE_ROBOT = "hum-11"
+        const val SCENE_SLOT = "RACK-206.S01"
+        const val SCENE_SOURCE = "SEQ-IN-08.BIN-A"
+        const val SCENE_MATERIAL = "ENGINE-COVER-A"
+
+        /** 한 자재를 [bin] 에서 집어 [slot] 에 두는 작업 지시(임무 정의용). */
+        private fun sceneRack(jobOrderId: String, slot: String, bin: String) = JobOrder(
+            jobOrderId = jobOrderId,
+            workMasterId = PrepareSequencedRack.WORK_MASTER,
+            version = 1,
+            requiredEvidence = Evidence.E2,
+            materialRequirements = listOf(MaterialRequirement(SCENE_MATERIAL, 1)),
+            equipmentRequirements = listOf(
+                EquipmentRequirement(slot, EquipmentUse.DESTINATION, mapOf(EquipmentUse.PROP_MATERIAL to SCENE_MATERIAL)),
+                EquipmentRequirement(bin, EquipmentUse.SOURCE, mapOf(EquipmentUse.PROP_MATERIAL to SCENE_MATERIAL)),
+            ),
+        )
+
         /** 판단하는 사람 — 운영자 판단은 사람만 낸다(ADR 47). */
         val OPERATOR = Approver("op-1", ApproverKind.PERSON)
 

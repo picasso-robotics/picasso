@@ -697,29 +697,6 @@ enum class SourceObservation {
 }
 
 /**
- * 출발 자리를 **확인하지 못해** 보내지 않았다 — 관측을 요구한 단위([SourceObservation.REQUIRED])의 답이다.
- *
- * **결품([RemedyOutcome.SourceMissing])과 접지 않는다.** 결품은 «없다» 는 관측이고 다음 행동이 주문을 고치는 것(대체
- * 자리)이다. 이것은 관측이 없다는 것이고 다음 행동이 **사람의 확인**이다 — 접으면 운영자가 재고를 의심하고 멀쩡한 자재를
- * 두고 주문을 고친다. 그래서 대체 자리를 계산하지 않는다.
- *
- * **확인은 이 층의 덮어쓰기 칸으로 들어오지 않는다.** 상위 시스템의 확인, 인계 시점 점검, 기록된 수동 확인 중 무엇이든
- * 셀 포트([CellSignals.observe])가 그 자리의 신원을 답하는 것으로 들어오고, 같은 작업 요청을 다시 내면 관문이 그 관측으로
- * 판정한다. 일반 운영 해제로 이 답을 넘기는 길은 이 층에 없다.
- *
- * **조치 탐색 대장에 적지 않는다.** 대장의 답([RemedyOutcome])에 갈래를 더하면 내보내기 줄의 `outcome` 이 바뀐다.
- *
- * @param material 그 자리에 있어야 할 것. 단위가 자재를 지정하지 않으면 널이다
- * @param source 확인하지 못한 출발 자리
- * @param occupied 설비가 말한 것. 널이면 말이 없었고, 참이면 «있다» 고만 했다(무엇인지는 모른다)
- */
-data class SourceUnobserved(
-    val material: String?,
-    val source: String,
-    val occupied: Boolean?,
-)
-
-/**
  * 목적지(자재를 둘 자리)를 하달 전에 **설비 관측으로 볼지** — 임무 정의가 단위 노드마다 선언한다(`destinationObservation`).
  *
  * 출발 관측 선언([SourceObservation])을 본뜬 것이지만 **기본이 뜻하는 것이 다르다.** 출발 자리는 선언과 무관하게 결품을 보고

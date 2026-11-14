@@ -61,9 +61,9 @@ class SourceObservationTest {
             assertEquals(BIN_A, unobserved.source)
             assertEquals(MATERIAL, unobserved.material)
             assertNull(unobserved.occupied, "말이 없었는데 있다·없다를 지어냈다")
-            // 결품이 아니다 — 대체 자리를 계산하지 않고 결품의 줄도 대장에 안 선다.
+            // 결품이 아니다 — 대체 자리를 계산하지 않는다. 대장에는 결품이 아니라 출발 미관측 줄로 선다(§15.322).
             assertNull(rejected.alternativeLocations)
-            assertEquals(emptyList(), w.mw.remedySearches(), "확인 요구가 결품으로 대장에 섰다")
+            assertEquals(listOf<RemedyOutcome>(unobserved), w.mw.remedySearches().map { it.outcome }, "확인 요구가 출발 미관측으로 대장에 안 섰다")
             assertEquals(emptyList(), w.mw.executions(), "확인 전에 실행이 생겼다")
         }
     }
@@ -78,8 +78,8 @@ class SourceObservationTest {
             assertNull(unobserved.occupied)
             assertEquals(emptyMap(), unassigned.sourceMissing, "확인 요구가 결품으로 접혔다")
             assertTrue(ROBOT in unassigned.refusals)
-            // 미배정도 작업 수락의 거절과 같이 적는다(§15.164). 확인 요구는 그 거절에서도 대장에 줄이 없다.
-            assertEquals(emptyList(), w.mw.remedySearches(), "확인 요구가 대장에 섰다")
+            // 미배정도 작업 수락의 거절과 같이 적는다(§15.164). 확인 요구는 출발 미관측 줄이다(§15.322).
+            assertEquals(listOf<RemedyOutcome>(unobserved), w.mw.remedySearches().map { it.outcome }, "확인 요구가 대장에 출발 미관측으로 안 섰다")
         }
     }
 
@@ -91,7 +91,7 @@ class SourceObservationTest {
             val rejected = assertIs<Middleware.Submission.Rejected>(w.mw.submit(rack("SEQ-1"), ROBOT))
             val unobserved = assertIs<SourceUnobserved>(rejected.sourceUnobserved)
             assertEquals(true, unobserved.occupied, "있다는 관측을 버렸다")
-            assertEquals(emptyList(), w.mw.remedySearches())
+            assertEquals(listOf<RemedyOutcome>(unobserved), w.mw.remedySearches().map { it.outcome })
         }
     }
 

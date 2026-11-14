@@ -254,15 +254,17 @@ class EvidenceWindowTest {
     }
 
     @Test
-    fun `판단자는 내보내는 사건 줄에 실리지 않는다`() {
-        // 읽는 쪽이 아직 없다(ADR 9). 판단자를 실으면 판이 오르고 인계본이 다시 산출된다 — 판은 걸음 값이 는 7(§15.320)이고 판단자 칸은 없다.
+    fun `판단자가 내보내는 사건 줄에 승인자와 같은 모양으로 실리고 요약은 그대로다`() {
+        // 판 8 의 감사 내보내기 묶음(§15.322) — 같은 줄 `approvedBy` 와 같은 `{id, kind}` 모양이다. 판단은 해시에서 빠진다.
         World().use { w ->
             val exec = w.held()
+            val before = w.mw.incidents().single().digest()
             w.mw.resolve(exec.executionId, SLOT, OperatorDecision.REWORK, OPERATOR)
             val line = LedgerExport.incidents(w.mw.incidents())
             assertTrue("\"resolution\":{\"decision\":\"REWORK\"" in line, line)
-            assertTrue("decidedBy" !in line && OPERATOR.id !in line, line)
-            assertEquals("7", LedgerExport.SCHEMA_VERSION)
+            assertTrue("\"decidedBy\":{\"id\":\"${OPERATOR.id}\",\"kind\":\"PERSON\"}" in line, line)
+            assertEquals(before, w.mw.incidents().single().digest(), "판단이 요약을 바꿨다")
+            assertEquals("8", LedgerExport.SCHEMA_VERSION)
         }
     }
 

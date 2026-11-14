@@ -37,9 +37,17 @@ import java.time.Instant
  * 두 대장은 append-only 라 **줄 수가 곧 변경 신호**다. 안 늘었는데 다시 쓰면 읽는 쪽이 세 파일을
  * 한 벌로 집을 때 파일마다 다른 순간을 볼 수 있다. 쓰는 순서는 대장 먼저, 안내가 마지막이다 —
  * 안내가 나타나는 것이 «다 나왔다» 는 신호이고, 그때 그 수만큼의 줄이 이미 자리에 있다.
+ *
+ * ## 한 벌은 한 인스턴스의 것이다
+ *
+ * 안내에 [instanceId] 를 싣는다(내보내기 판 8, §15.322). 인시던트 id 와 실행 id 는 인스턴스 안의 셈이라 재기동 뒤 같은 문자열이 다시
+ * 나올 수 있다 — 한 사본을 가리키는 것은 (인스턴스, 인시던트 id)이고, 재기동을 넘어 같은 사건을 잇는 것은 줄의 `incidentKey` 다.
+ *
+ * @param instanceId 이 벌을 내는 미들웨어 인스턴스([dev.picasso.middleware.Middleware.instanceId]).
  */
 class BundleWriter(
     private val dir: Path,
+    private val instanceId: String,
     private val runId: String = LedgerExport.newRunId(Instant.now()),
 ) {
 
@@ -61,7 +69,7 @@ class BundleWriter(
         val wall = Instant.now()
         atomically(
             LedgerExport.MANIFEST,
-            LedgerExport.manifest(runId, wall, virtualNow, incidents.size, searches.size),
+            LedgerExport.manifest(runId, wall, virtualNow, incidents.size, searches.size, instanceId),
         )
         written = size
         return true

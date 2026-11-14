@@ -8,12 +8,16 @@ import java.time.Instant
 /**
  * 관문이 막은 한 번에 대해 이 층이 **무엇을 답했는가.**
  *
- * 앞의 셋은 능력 사슬의 탐색이 낸 답이고([Found]·[None]·[Withheld]), [SourceMissing] 은 셀 자리의
- * 점유가 낸 답이다. 둘을 한 대장에 두는 이유는 **접수 관문이 첫 거절에서 되돌아가기 때문**이다 —
+ * 앞의 셋은 능력 사슬의 탐색이 낸 답이고([Found]·[None]·[Withheld]), 나머지는 셀 자리의 점유 관문이 낸 답이다 —
+ * 출발 결품([SourceMissing]), 출발 미관측([SourceUnobserved]), 목적지 점유([DestinationOccupied]), 목적지 미관측
+ * ([DestinationUnobserved]). 뒤의 셋은 판 8 에서 붙었다(§15.322) — 앞 판은 산문 사유로만 냈다. 둘을 한 대장에 두는 이유는 **접수 관문이 첫 거절에서 되돌아가기 때문**이다 —
  * 한 번의 접수는 많아야 한 번 거절되고, 그 거절에 대한 답은 하나뿐이다. 갈래마다 대장을 따로 두면
  * 읽는 쪽이 «이 주문이 왜 안 들어갔나» 를 알려고 여러 파일을 합쳐 봐야 한다.
  *
  * ## 승인할 수 있는 답은 [Found] 뿐이다
+ *
+ * 점유 관문의 답은 전부 걸음을 싣지 않고 제안 표에도 서지 않는다. 미관측 둘과 목적지 점유는 «사람이 확인하거나 치우면 통과한다»
+ * 는 답이고, 확인은 셀의 관측으로 들어온다 — 이 층에 덮어쓰는 입구는 없다.
  *
  * [SourceMissing] 은 조치 열이 아니라 «주문을 고치면 통과한다» 는 답이다. **어느 자리를 쓸지는 주문을
  * 고치는 쪽의 결정이고 이 층은 고르지 않는다**(§15.159). 그래서 걸음을 싣지 않고 제안 표에도 서지 않는다 —
@@ -58,6 +62,18 @@ sealed interface RemedyOutcome {
         val observed: String?,
         val alternatives: List<String>?,
     ) : RemedyOutcome
+
+    /**
+     * 목적지 관측을 요구한(`REQUIRED`) 단위의 목적지가 **차 있다**(§15.235, §15.322). 대체 자리를 계산하지 않는다 —
+     * 어느 자리를 쓸지는 주문을 고치는 쪽이 정하고, 치울 것은 사람이 치운다.
+     *
+     * @param destination 차 있던 목적지
+     * @param observed 거기 있는 신원. **널이면 설비가 «있다» 고만 했다**(점유 신원 불명) — 빈 문자열로 접지 않는다
+     */
+    data class DestinationOccupied(val destination: String, val observed: String?) : RemedyOutcome
+
+    /** 목적지 관측을 요구한 단위의 목적지를 설비가 **말해 주지 않았다**(§15.322). 점유와 접지 않는다 — 말이 없는 것을 차 있다고 지어내지 않는다. */
+    data class DestinationUnobserved(val destination: String) : RemedyOutcome
 }
 
 /**
@@ -84,3 +100,27 @@ data class RemedySearchRecord(
     val wallClockAt: Instant,
     val outcome: RemedyOutcome,
 )
+
+/**
+ * 출발 자리를 **확인하지 못해** 보내지 않았다 — 관측을 요구한 단위([SourceObservation.REQUIRED])의 답이다.
+ *
+ * **결품([RemedyOutcome.SourceMissing])과 접지 않는다.** 결품은 «없다» 는 관측이고 다음 행동이 주문을 고치는 것(대체
+ * 자리)이다. 이것은 관측이 없다는 것이고 다음 행동이 **사람의 확인**이다 — 접으면 운영자가 재고를 의심하고 멀쩡한 자재를
+ * 두고 주문을 고친다. 그래서 대체 자리를 계산하지 않는다.
+ *
+ * **확인은 이 층의 덮어쓰기 칸으로 들어오지 않는다.** 상위 시스템의 확인, 인계 시점 점검, 기록된 수동 확인 중 무엇이든
+ * 셀 포트([CellSignals.observe])가 그 자리의 신원을 답하는 것으로 들어오고, 같은 작업 요청을 다시 내면 관문이 그 관측으로
+ * 판정한다. 일반 운영 해제로 이 답을 넘기는 길은 이 층에 없다.
+ *
+ * **조치 탐색 대장에 적는다**(§15.322). 대장의 답([RemedyOutcome])의 한 갈래이고 내보내기 줄의 `outcome` 은 `SOURCE_UNOBSERVED` 다 —
+ * 걸음이 없고 승인할 조치가 아니다. 앞 판은 산문 사유로만 냈다(§15.218).
+ *
+ * @param material 그 자리에 있어야 할 것. 단위가 자재를 지정하지 않으면 널이다
+ * @param source 확인하지 못한 출발 자리
+ * @param occupied 설비가 말한 것. 널이면 말이 없었고, 참이면 «있다» 고만 했다(무엇인지는 모른다)
+ */
+data class SourceUnobserved(
+    val material: String?,
+    val source: String,
+    val occupied: Boolean?,
+) : RemedyOutcome

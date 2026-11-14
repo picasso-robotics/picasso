@@ -50,8 +50,8 @@ data class Intent(
      * 이 실행을 계획한 **임무 버전**. 코드 케이퍼빌리티로 돈 실행이면 널이다. 작업 지시의 버전([orderVersion])과 다른 축이다 —
      * 같은 작업 지시라도 어느 정의로 펼쳤는지가 «무엇을 하려 했나» 를 바꾼다.
      *
-     * **해시에 든다** — 다른 버전으로 펼친 같은 모양의 인시던트는 다른 인시던트다. **내보내기에는 안 실린다** — 읽는 쪽이
-     * 아직 없다(ADR 9). 읽는 쪽이 생기는 날 내보내기 버전을 올려 싣는다.
+     * **해시에 든다** — 다른 버전으로 펼친 같은 모양의 인시던트는 다른 인시던트다. 내보내기 판 8 부터 의도의 칸(`intent.missionVersion`)으로
+     * 실린다(§15.322) — 널은 코드 케이퍼빌리티로 돈 실행이다. 읽는 코드는 세 읽는 쪽 저장소가 인계 노트를 받아 짓는다(ADR 9).
      */
     val missionVersion: Int? = null,
     /**
@@ -59,20 +59,53 @@ data class Intent(
      * 되짚는 자리다(운영 관리 화면 설계 제안 §9).
      *
      * **해시에는 이 값이 있을 때만 줄 하나가 든다** — 그래서 설정 없이 도는 인시던트의 요약은 이 칸이 생기기 전과 같다.
-     * **내보내기에는 안 실린다**([missionVersion] 과 같은 이유, ADR 9).
+     * 내보내기 판 8 부터 의도의 평평한 칸 셋(`intent.siteSettingsVersion`·`inDoubtGrace`·`stallWindow`)으로 실린다(§15.322).
+     *
+     * ★**셋은 봉인 라운드의 값이다.** 과거 근거 기한(단위가 완료된 라운드의 뒤 폭)을 정한 설정이라고 읽으면 안 된다 — 그 사이 설정이
+     * 바뀌었을 수 있다.
      */
     val siteSettingsVersion: Long? = null,
-    /** 봉인하는 라운드의 `IN_DOUBT` 유예. ISO-8601. [siteSettingsVersion] 이 널이면 널이다. */
+    /** 봉인하는 라운드의 `IN_DOUBT` 유예. ISO-8601. [siteSettingsVersion] 과 함께 널이거나 함께 있다. */
     val inDoubtGrace: String? = null,
-    /** 봉인하는 라운드의 진행 정체 유예. ISO-8601. [siteSettingsVersion] 이 널이면 널이다. */
+    /** 봉인하는 라운드의 진행 정체 유예. ISO-8601. [siteSettingsVersion] 과 함께 널이거나 함께 있다. */
     val stallWindow: String? = null,
 ) {
     init {
-        // 시간값 둘은 설정 버전과 함께만 선다. 버전 없이 값만 있으면 해시에 안 들어 같은 요약의 두 인시던트가 생긴다.
-        require(siteSettingsVersion != null || (inDoubtGrace == null && stallWindow == null)) {
-            "설정 버전 없이 현장 시간값을 실었다: inDoubtGrace=$inDoubtGrace, stallWindow=$stallWindow"
+        // 설정에서 온 셋은 **함께 널이거나 함께 있다**(§15.322). 버전 없이 값만 있으면 해시에 안 들어 같은 요약의 두 인시던트가 생기고,
+        // 버전만 있고 값이 빠지면 내보내기 줄이 «설정은 있었는데 그 값은 모른다» 를 지어낸다.
+        require((siteSettingsVersion == null) == (inDoubtGrace == null) && (inDoubtGrace == null) == (stallWindow == null)) {
+            "현장 설정 셋이 함께 널이거나 함께 있지 않다: siteSettingsVersion=$siteSettingsVersion, inDoubtGrace=$inDoubtGrace, stallWindow=$stallWindow"
         }
     }
+}
+
+/**
+ * **인시던트의 정체성**(§15.222, §15.322) — 재기동을 넘어 같은 사건을 잇는 열쇠와 그 사건이 처음 선 시각.
+ *
+ * 인시던트 id(`incident-N`)와 요약은 인스턴스 안의 것이라 재기동마다 바뀐다. 이전 인스턴스의 번들은 메모리라 사라지고, 다시 지은
+ * 인스턴스가 같은 보류를 새 인시던트로 연다 — 그래서 인스턴스마다 번들을 모아 세면 같은 보류가 재기동 횟수만큼 더 셈된다. 이 값이
+ * 그 둘을 잇는다.
+ *
+ * **최초 봉인 때마다 하나 선다**([IncidentLog.sealIncidents]). 같은 원인·같은 단위라도 새로 선 보류는 새 열쇠다 — 열쇠는 원인의
+ * 분류가 아니라 사건 하나다. 재기동이 다시 연 인시던트는 판단 기록(`JudgmentRecordWire` 판 5)이 보류 판정에 실어 온 값을 그대로 잇는다.
+ *
+ * @param key **불투명한** 열쇠 — 최초 봉인의 (인스턴스, 인시던트 id)를 적은 문자열이다. 뜯어 읽지 않는다. 같으면 같은 사건이다.
+ * @param firstOpenedAt 최초 봉인의 가상 시계([IncidentBundle.at]). 다시 연 인시던트의 `at` 은 다시 연 시각이고 이것은 처음 선 시각이다.
+ */
+data class IncidentOrigin(val key: String, val firstOpenedAt: Instant)
+
+/**
+ * 이 인시던트가 **이 인스턴스에서 처음 선 것인가, 재기동이 다시 연 것인가**(§15.322).
+ *
+ * 재개 경로가 직접 채운다([IncidentLog.sealIncidents] 의 다시 연 봉인). 근거 윈도우의 `RESUME_HOLD_REOPENED` 줄 시각을 `at` 과 맞대
+ * 추정하던 자리를 이 값이 대신한다 — 줄은 다시 연 뒤 근거 윈도우 앞 폭 안에 새로 선 보류의 윈도우에도 실린다.
+ */
+enum class OpeningKind {
+    /** 이 인스턴스가 관측으로 연 인시던트. 정체성([IncidentOrigin])이 이 봉인에서 처음 선다. */
+    NEW,
+
+    /** 재기동이 판단 기록의 운영자 보류로 다시 연 인시던트. 정체성은 기록이 실어 온 것을 잇고, 옛 판 기록이면 널(연결 불명)이다. */
+    REOPENED,
 }
 
 /**
@@ -164,6 +197,22 @@ data class StepPosition(
  */
 data class IncidentBundle(
     val incidentId: String,
+    /**
+     * 재기동을 넘는 **정체성**(§15.322). 새로 선 인시던트([OpeningKind.NEW])는 언제나 있다. 다시 연 인시던트는 판단 기록이 실어 온
+     * 값을 잇고, 옛 판(1~4) 기록으로 다시 열면 널이다 — **연결 불명**이며 실행·단위·분류로 추측해 잇지 않는다. 연결 불명은 이후의
+     * 재기동에서도 널로 이어진다. 정체성은 번들의 보존 상한과 무관하다 — 그 실행이 장부에 있는 동안 [IncidentLog] 의 정체성 표가 든다.
+     *
+     * 해시에서 빠진다 — 사건의 내용이 아니라 사건 사이의 연결이다.
+     */
+    val origin: IncidentOrigin?,
+    /** 처음 선 것인가 다시 연 것인가. 해시에서 빠진다. */
+    val openingKind: OpeningKind,
+    /**
+     * 봉인할 때 이 단위의 **시도 번호**(재작업이면 하나씩 오른다). 재발 판정의 재료다 — 다시 연 뒤 재작업해 또 깨지면 시도가 오르고
+     * 정체성은 새 것이다. **같은 보류를 잇는 데 쓰지 않는다** — 같은 시도에서 미확정과 보류가 각각 인시던트를 열 수 있어 시도만으로는
+     * 원본이 모호하다. 잇는 것은 [origin] 이다. 해시에서 빠진다.
+     */
+    val attempt: Int,
     val jobOrderId: String,
     val executionId: String,
     /**
@@ -273,6 +322,11 @@ data class IncidentBundle(
      */
     val resolution: IncidentResolution? = null,
 ) {
+    init {
+        // 새로 선 인시던트는 그 봉인이 정체성의 처음이다. 널은 다시 연 인시던트의 연결 불명에만 선다.
+        require(openingKind == OpeningKind.REOPENED || origin != null) { "새로 선 인시던트 $incidentId 에 정체성이 없다" }
+    }
+
     /**
      * 같은 시드와 가상 시계면 같은 값이 나온다(설계안 §4.4).
      *
@@ -283,7 +337,9 @@ data class IncidentBundle(
      *
      * **맵은 키 순서로 정렬해 적는다**([canonicalMap]). 순회 순서가 해시를 바꾸면 같은 사건이 두 값을 갖는다.
      *
-     * **해시에서 빼는 것은 셋뿐이다 — [wallClockAt] 과 [review] 와 [resolution].** 설계안은 식별자도 빼라고 적었는데,
+     * **해시에서 빼는 것은 이것뿐이다 — [wallClockAt] 과 [review] 와 [resolution](판단자 `decidedBy` 포함), 그리고 사건 사이의
+     * 연결 셋([origin]·[openingKind]·[attempt], §15.322).** 앞의 셋은 실 시계와 나중의 사람 걸음이다. 뒤의 셋은 사건의 내용이 아니라 다른
+     * 사건과의 연결이라 빼고, 그래서 같은 시드의 요약은 이 칸들이 생기기 전과 같다. 설계안은 식별자도 빼라고 적었는데,
      * 이 층의 식별자는 전부 세는 수에서 나오므로(`exec-N`·`incident-N`·`resp-N`) 같은 시드면 같은 값이다.
      * 뺄 이유가 없고, 넣으면 사건의 순서까지 고정된다. 이 목록이 곧 "무엇이 결정적인가" 의 답이다.
      */
@@ -372,7 +428,9 @@ data class IncidentResolution(
     /**
      * 누가 판단했는가(ADR 47). 사람만 판단하므로 종류는 언제나 `PERSON` 이다 — 운영자 취소와 회복 승인도 사람의 입구로만 온다(§15.320).
      *
-     * **내보내지 않는다** — 읽는 쪽이 아직 없다(ADR 9, 한계 대장 §15.202). 프로세스 안의 사건 조회로만 보인다.
+     * 내보내기 판 8 부터 인시던트 줄의 `resolution.decidedBy` 로 실린다(§15.322) — 같은 줄 `approvedBy` 와 같은 `{id, kind}` 모양이다.
+     * **id 는 호출자의 주장이지 인증 증명이 아니다**(ADR 47). 읽는 쪽은 원문 id 를 감사 조회·승인자 연결에서만 읽고, 설명 생성 입력에는
+     * 종류만 넘긴다(인계 노트). 해시에서 빠진다([resolution] 과 같은 이유).
      */
     val decidedBy: Approver,
 )

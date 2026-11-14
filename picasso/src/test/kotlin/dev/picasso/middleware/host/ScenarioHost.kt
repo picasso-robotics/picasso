@@ -125,7 +125,7 @@ object ScenarioHost {
             var advancing = false
             // ★**구동 식별자는 이 바퀴에 하나다.** 내보낼 때마다 찍으면 읽는 쪽의 «같은 구동의 같은
             //   줄은 한 번만» 이 죽는다 — 앞 판이 그랬고 30분에 만 개가 넘었다(BundleWriter 의 KDoc).
-            val live = BundleWriter(exportDir)
+            val live = BundleWriter(exportDir, middleware.instanceId)
             val until = Instant.now().plusSeconds(seconds)
             while (Instant.now().isBefore(until)) {
                 synchronized(lock) {

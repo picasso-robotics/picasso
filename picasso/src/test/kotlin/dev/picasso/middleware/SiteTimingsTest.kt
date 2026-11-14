@@ -270,18 +270,23 @@ class SiteTimingsTest {
     }
 
     @Test
-    fun `현장 설정 칸은 내보내기에 안 실리고 내보내기 버전은 6 이다`() {
+    fun `현장 설정 셋이 의도의 평평한 칸으로 함께 실리고 설정 없이 돈 줄은 셋이 함께 널이다`() {
+        // 판 8(§15.322). 셋은 봉인 라운드의 값이고 함께 널이거나 함께 있다 — 인코더가 단언한다.
         World(SITE, lookup = ExecutionLookup.NONE).use { w ->
             w.inDoubt()
             w.advance(30)
             w.mw.pump()
             val line = LedgerExport.incidents(w.mw.incidents())
-            listOf("siteSettingsVersion", "inDoubtGrace", "stallWindow").forEach {
-                assertTrue(it !in line, "$it 가 내보내기에 실렸다: $line")
-            }
+            val i = w.mw.incidents().single().intent
+            assertTrue("\"siteSettingsVersion\":${i.siteSettingsVersion}" in line, line)
+            assertTrue("\"inDoubtGrace\":\"${i.inDoubtGrace}\"" in line && "\"stallWindow\":\"${i.stallWindow}\"" in line, line)
             assertTrue("\"evidenceWindowBefore\":\"PT1M40S\"" in line, line)
-            // 판 7 은 판단 칸의 걸음 값이 늘어서다(§15.320) — 현장 설정 칸 때문이 아니다.
-            assertEquals("7", LedgerExport.SCHEMA_VERSION, "읽는 쪽이 없는데 내보내기 버전이 올랐다(ADR 9)")
+            assertEquals("8", LedgerExport.SCHEMA_VERSION)
+
+            // 설정 없이 돈 인시던트는 셋이 함께 널이다 — 키는 빼지 않는다.
+            val bare = w.mw.incidents().single().let { it.copy(intent = it.intent.copy(siteSettingsVersion = null, inDoubtGrace = null, stallWindow = null)) }
+            val bareLine = LedgerExport.incidents(listOf(bare))
+            assertTrue("\"siteSettingsVersion\":null,\"inDoubtGrace\":null,\"stallWindow\":null" in bareLine, bareLine)
         }
     }
 
