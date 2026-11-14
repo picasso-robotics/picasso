@@ -31,9 +31,9 @@ class JudgmentRecordWireTest {
     fun `모르는 판이나 판이 없는 기록은 읽지 않고 거부한다`() {
         val text = JudgmentRecordWire.encode(FULL)
         listOf(
-            text.replace("\"schemaVersion\":\"3\"", "\"schemaVersion\":\"4\""),
-            text.replace("\"schemaVersion\":\"3\",", ""),
-            text.replace("\"schemaVersion\":\"3\"", "\"schemaVersion\":3"),
+            text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"5\""),
+            text.replace("\"schemaVersion\":\"4\",", ""),
+            text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":4"),
         ).forEach { wrong ->
             assertTrue(wrong != text, "시험의 전제: 바꿀 자리를 못 찾았다")
             val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
@@ -44,7 +44,7 @@ class JudgmentRecordWireTest {
     @Test
     fun `버전 1 기록은 건 취소 칸 없이 읽고 취소가 걸리지 않은 기록이 된다`() {
         val text = JudgmentRecordWire.encode(FULL)
-        val v1 = withoutHeld(text.replace("\"schemaVersion\":\"3\"", "\"schemaVersion\":\"1\"")).replace(",\"cancelRequested\":true", "")
+        val v1 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"1\""))).replace(",\"cancelRequested\":true", "")
         assertTrue(v1 != text && "cancelRequested" !in v1 && "everHeld" !in v1, "시험의 전제: 버전 1 모양을 못 지었다")
         assertEquals(NEVER_HELD.copy(cancelRequested = false), JudgmentRecordWire.decode(v1))
 
@@ -63,7 +63,7 @@ class JudgmentRecordWireTest {
     @Test
     fun `버전 2 기록은 단위의 파지 이력 칸 없이 읽고 쥔 것을 본 적 없는 단위가 된다`() {
         val text = JudgmentRecordWire.encode(FULL)
-        val v2 = withoutHeld(text.replace("\"schemaVersion\":\"3\"", "\"schemaVersion\":\"2\""))
+        val v2 = withoutHeld(withoutPlaced(text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"2\"")))
         assertTrue(v2 != text && "everHeld" !in v2 && "heldInEarlierAttempt" !in v2, "시험의 전제: 버전 2 모양을 못 지었다")
         assertEquals(NEVER_HELD, JudgmentRecordWire.decode(v2))
 
@@ -74,6 +74,32 @@ class JudgmentRecordWireTest {
             text.replace("\"everHeld\":true", "\"everHeld\":1") to "참거짓이 아니다",
         ).forEach { (wrong, why) ->
             assertTrue(wrong != text && wrong != v2, "시험의 전제: 바꿀 자리를 못 찾았다")
+            val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
+            assertTrue(why in e.message!!, e.message)
+        }
+    }
+
+    @Test
+    fun `버전 3 기록은 위치 칸과 거부 주어 칸 없이 읽고 접수 승인과 주어 없는 판정이 된다`() {
+        val text = JudgmentRecordWire.encode(FULL)
+        assertTrue("\"position\":{\"orderVersion\":3,\"unitId\":\"s2\",\"attempt\":1}" in text, text)
+        assertTrue("\"preconditionSubjects\":[\"HOLD\"]" in text, text)
+        val v3 = withoutPlaced(text.replace("\"schemaVersion\":\"4\"", "\"schemaVersion\":\"3\""))
+        assertTrue(v3 != text && "position" !in v3 && "preconditionSubjects" !in v3, "시험의 전제: 버전 3 모양을 못 지었다")
+        assertEquals(UNPLACED, JudgmentRecordWire.decode(v3))
+
+        // 버전 4 는 두 칸이 비면 키를 싣지 않는다 — 그 모양은 앞 버전과 같고, 읽으면 위치 없음·주어 없음이다.
+        val unplaced = JudgmentRecordWire.encode(UNPLACED)
+        assertTrue("position" !in unplaced && "preconditionSubjects" !in unplaced, unplaced)
+        assertEquals(UNPLACED, JudgmentRecordWire.decode(unplaced))
+        assertEquals(UNPLACED, JudgmentRecordWire.decode(withoutPlaced(text)))
+
+        // 버전 3 에 그 칸이 있으면 거부한다.
+        mapOf(
+            v3.replace("\"steps\":", "\"position\":null,\"steps\":") to "모르는 칸",
+            v3.replace("\"result\":\"ref://m1\"", "\"result\":\"ref://m1\",\"preconditionSubjects\":[]") to "모르는 칸",
+        ).forEach { (wrong, why) ->
+            assertTrue(wrong != text && wrong != v3, "시험의 전제: 바꿀 자리를 못 찾았다")
             val e = assertFailsWith<IllegalArgumentException>(wrong) { JudgmentRecordWire.decode(wrong) }
             assertTrue(why in e.message!!, e.message)
         }
@@ -124,6 +150,7 @@ class JudgmentRecordWireTest {
                 at = T0,
                 wallClockAt = T0.plusMillis(7),
                 steps = listOf(ApprovedStep("pick_place", mapOf("object" to "A", "destination" to "S01"), "remedy-1-pick_place")),
+                position = ProposalTarget.Hold(orderVersion = 3, unitId = "s2", attempt = 1),
             ),
             units = listOf(
                 UnitRecord(
@@ -132,7 +159,7 @@ class JudgmentRecordWireTest {
                     taskId = "J-1#s1",
                     requestedAt = T0,
                     verifyWindow = null,
-                    verdict = UnitVerdict(UnitState.DONE, Evidence.E2, Verification.MATCHED, T0.plusSeconds(3), null, "operator \"confirmed\"\n두 줄", "ref://m1"),
+                    verdict = UnitVerdict(UnitState.DONE, Evidence.E2, Verification.MATCHED, T0.plusSeconds(3), null, "operator \"confirmed\"\n두 줄", "ref://m1", listOf("HOLD")),
                     decision = null,
                     everHeld = true,
                 ),
@@ -150,8 +177,18 @@ class JudgmentRecordWireTest {
             cancelRequested = true,
         )
 
-        /** 파지 이력 칸이 없는 앞 버전으로 읽으면 나와야 하는 기록 — 두 칸이 거짓인 것 말고는 [FULL] 과 같다. */
-        val NEVER_HELD = FULL.copy(units = FULL.units.map { it.copy(everHeld = false, heldInEarlierAttempt = false) })
+        /** 위치 칸과 거부 주어 칸이 없는 앞 버전(1·2·3)으로 읽으면 나와야 하는 기록 — 접수 승인이고 판정에 주어가 없다. */
+        val UNPLACED = FULL.copy(
+            approval = FULL.approval!!.copy(position = null),
+            units = FULL.units.map { u -> u.copy(verdict = u.verdict?.copy(preconditionSubjects = emptyList())) },
+        )
+
+        /** 파지 이력 칸이 없는 앞 버전으로 읽으면 나와야 하는 기록 — 두 칸이 거짓인 것 말고는 [UNPLACED] 와 같다. */
+        val NEVER_HELD = UNPLACED.copy(units = UNPLACED.units.map { it.copy(everHeld = false, heldInEarlierAttempt = false) })
+
+        /** 승인의 위치 칸과 판정의 거부 주어 칸을 지운다 — 버전 3 까지의 모양이다. */
+        fun withoutPlaced(text: String): String =
+            text.replace(Regex(""","position":(null|\{[^}]*\})"""), "").replace(Regex(""","preconditionSubjects":\[[^\]]*]"""), "")
 
         /** 단위의 파지 이력 칸을 지운다 — 앞 버전의 모양이다. */
         fun withoutHeld(text: String): String = text.replace(Regex(",\"everHeld\":(true|false),\"heldInEarlierAttempt\":(true|false)"), "")

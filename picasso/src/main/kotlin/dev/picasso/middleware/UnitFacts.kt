@@ -71,3 +71,21 @@ internal fun TaskState.isTerminal(): Boolean = this == TaskState.TASK_STATE_SUCC
     this == TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED ||
     // 사람이 와야 진행되는 것은 이 층에서 단위의 종착이다 — 운영자 판단은 상류의 것.
     this == TaskState.TASK_STATE_NEEDS_INTERVENTION || this == TaskState.TASK_STATE_RETRIABLE
+
+/**
+ * 낼 단위가 없을 때 실행이 정착할 상태 — 단위 상태들로만 정한다(`Middleware` 의 정착이 부른다, §15.320 에서 옮겼다). 운영자 보류가 하나라도
+ * 있으면 보류, 전부 완료면 물리 완료, 전부 실패면 실패, 실패가 섞이면 부분, 미확인이 있으면 미확인, 중단이 있으면 중단이다.
+ */
+internal fun settledStateOf(units: List<ExecutionUnit>): PhysicalState {
+    val states = units.map { it.state }
+    return when {
+        states.any { it == UnitState.OPERATOR_HOLD } -> PhysicalState.OPERATOR_HOLD
+        states.all { it == UnitState.DONE } -> PhysicalState.PHYSICALLY_DONE
+        states.all { it == UnitState.FAILED } -> PhysicalState.FAILED
+        states.any { it == UnitState.FAILED } -> PhysicalState.PARTIAL
+        states.any { it == UnitState.UNVERIFIED } -> PhysicalState.UNVERIFIED
+        states.any { it == UnitState.ABORTED } -> PhysicalState.ABORTED
+        else -> PhysicalState.PHYSICALLY_DONE
+    }
+}
+

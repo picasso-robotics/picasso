@@ -220,7 +220,7 @@ class EquipmentWaitTest {
             assertEquals(PhysicalState.PHYSICALLY_DONE, exec.physicalState)
             assertEquals(Evidence.E0, w.mw.responses().last().reachedEvidence)
             assertEquals(2, w.mw.incidents().size, "기한마다 인시던트 하나")
-            assertEquals(listOf(OperatorDecision.REWORK, OperatorDecision.CONFIRM_DONE), w.mw.incidents().map { it.resolution?.decision })
+            assertEquals(listOf(IncidentDecision.REWORK, IncidentDecision.CONFIRM_DONE), w.mw.incidents().map { it.resolution?.decision })
         }
     }
 

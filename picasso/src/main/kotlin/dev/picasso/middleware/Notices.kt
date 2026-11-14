@@ -32,6 +32,12 @@ internal sealed interface Notice {
 
     /** 지연 이벤트(15.1)로 적은 (단위, 리비전, 하위 상태). 같은 것은 한 번만 적는다. */
     data class Late(val unitId: String, val revision: Int, val state: String) : Notice
+
+    /**
+     * 발신자 거부로 선 보류를 다시 본 (단위, 시도)(§15.320). 시도마다 한 번 판정한다 — 손을 몰라 판정하지 못했으면 적지 않아 보류인 동안 다음
+     * 라운드에 다시 본다. 실행마다의 표시라 재기동이 다시 지은 실행에는 없다 — 다시 연 보류는 다시 본다.
+     */
+    data class Recheck(val unitId: String, val attempt: Int) : Notice
 }
 
 /** 실행 하나의 «알린 것» — [Notice] 마다 마지막으로 알린 값. */
@@ -51,5 +57,17 @@ internal class Noticed {
     /** [value] 를 이미 알린 것으로 둔다. 널이면 걷는다. */
     fun set(key: Notice, value: Any?) {
         if (value == null) last.remove(key) else last[key] = value
+    }
+}
+
+/**
+ * 상위가 «사람이 볼 것이 있는가» 로 읽는 칸 — 보류·미확정인 실행 상태, 막는 결함의 분류, 미확정 단위. `Middleware` 의 주의 대조가 마지막
+ * 작업 응답의 값과 견준다([Notice.Attention], §15.320 에서 옮겼다).
+ */
+internal data class Attention(val state: PhysicalState?, val blockedBy: List<String>, val inDoubt: List<String>) {
+    companion object {
+        fun of(state: PhysicalState, blockedBy: List<String>, inDoubt: List<String>) = Attention(
+            state.takeIf { it == PhysicalState.IN_DOUBT || it == PhysicalState.OPERATOR_HOLD }, blockedBy, inDoubt,
+        )
     }
 }

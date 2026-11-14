@@ -44,6 +44,18 @@ internal object MiddlewareCodes {
     const val ISSUE_RESUMED = "ISSUE_RESUMED"
     const val PREDECESSOR_NOT_DONE = "PREDECESSOR_NOT_DONE"
     const val CLOCK_SKEW = "CLOCK_SKEW"
+
+    /** 발신자 거부로 선 보류를 신선한 스냅숏의 손으로 다시 봤다는 실행 자취의 종류(§15.320). 세부에 답(찾음·못 찾음·위반 없음)이 든다. */
+    const val HOLD_RECHECK = "HOLD_RECHECK"
+
+    /** 사람이 승인한 회복 조치 열이 보류였던 단위 앞에 끼고 그 단위가 새 시도의 대기로 돌아갔다는 실행 자취의 종류(§15.320). */
+    const val REMEDY_APPLIED = "REMEDY_APPLIED"
+
+    /**
+     * 회복 조치가 `DONE` 아닌 채 끝나 원래 단위를 내지 않고 운영자 보류로 세웠다 — 실패 분류이자 실행 자취의 종류(§15.320). 태스크가 없으므로
+     * 하위 분류가 아니라 이 계층의 이름이다. 둘째 인시던트를 열지 않는다 — 거부 때 선 인시던트가 그 사건이다.
+     */
+    const val REMEDY_NOT_DONE = "REMEDY_NOT_DONE"
     val OPEN_UNIT_STATES = setOf(UnitState.PENDING, UnitState.RUNNING, UnitState.VERIFYING, UnitState.IN_DOUBT, UnitState.OPERATOR_HOLD)
     val RETRY_SUFFIX = Regex("""@r([1-9]\d*)""")
 }

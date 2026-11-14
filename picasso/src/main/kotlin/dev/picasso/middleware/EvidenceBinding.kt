@@ -243,7 +243,7 @@ internal fun CommandEnv.resolveSkipped(execution: Execution, unitId: String, dec
     execution.noticed.clear(Notice.Hold)
     execution.physicalState = PhysicalState.RUNNING
     notify(execution)
-    incidentLog.noteResolution(execution.executionId, travel.unitId, decision, approver)
+    incidentLog.noteResolution(execution.executionId, travel.unitId, IncidentDecision.of(decision), approver)
     return ResolveOutcome.Resolved
 }
 

@@ -375,6 +375,8 @@ class LayeringTest {
             "EvidenceBinding.kt" to Layer.TRANSITION,
             "CommandPorts.kt" to Layer.TRANSITION,
             "ClockSkew.kt" to Layer.TRANSITION,
+            // 발신자 거부 뒤 회복(§15.320) — 장부·관문을 쓰고 재작업의 되돌림(EvidenceBinding)을 부른다.
+            "HoldRecovery.kt" to Layer.TRANSITION,
             // 조율·공개 창구
             "Middleware.kt" to Layer.FACADE,
             // 옆가지 — 포트 구현과 데코레이터
@@ -392,7 +394,7 @@ class LayeringTest {
         val UPWARD: Map<Pair<String, String>, String> = buildMap {
             // 공개 결과 계약 — 하위 파일이 `Middleware.Submission.*` 을 짓거나 돌려준다(§15.307, 리비전은 §15.313). 이 간선은 Submission 만 쓴다는
             // 것을 `Middleware 밖의 파일은 Middleware 에서 Submission 만 쓴다` 가 따로 댄다. 풀 단계 없음 — 푸는 것은 공개 API 변경이다.
-            listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "Revision.kt", "UnitFacts.kt")
+            listOf("AdmissionGate.kt", "Assignment.kt", "RemedyDesk.kt", "Revision.kt", "UnitFacts.kt", "HoldRecovery.kt")
                 .forEach { put(it to "Middleware.kt", "공개 결과 계약 Submission(§15.307)") }
         }
 

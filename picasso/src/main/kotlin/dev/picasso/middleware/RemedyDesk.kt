@@ -31,6 +31,16 @@ internal class RemedyDesk(
     private val live: (String) -> Boolean = { false },
     /** (기체, 뺄 실행) — 그 실행 말고 기체를 쥔 실행([AdmissionGate.holder]). 있으면 거절에 제안을 세우지 않는다(§15.316·§15.319). */
     private val holder: (String, String?) -> String? = { _, _ -> null },
+    /**
+     * (작업 지시, 보류 대상) — 그 작업 지시의 실행에서 그 대상이 아직 같은 판·같은 시도의 운영자 보류이고 취소가 안 걸렸는가(§15.320,
+     * [holdStands]). 아니면 회복 제안은 낡았다 — 판정이 내리고 `REMEDY_NOT_APPLIED` 로 답한다.
+     */
+    private val holdStands: (String, ProposalTarget.Hold) -> Boolean = { _, _ -> true },
+    /**
+     * 그 작업 지시의 계획(이미 선 실행이면 그 단위 열과 지금 판의 계획)이 쓰는 단위 id([plannedUnitIds]). 조치 단위의 이름이 이것과 겹치면
+     * 접미를 붙여 피한다(§15.320) — 겹치면 리비전·인시던트·작업 응답이 단위 id 로 가리키는 것 가운데 하나가 가려진다.
+     */
+    private val taken: (JobOrder) -> Set<String> = { emptySet() },
 ) {
 
     private var searchesEvicted = 0L
@@ -50,8 +60,8 @@ internal class RemedyDesk(
      */
     private val proposals = mutableMapOf<String, Proposal>()
 
-    /** 서 있는 제안 하나 — 무엇에 대한 제안인지까지. */
-    private data class Proposal(val order: JobOrder, val remedy: Remedy.Found)
+    /** 서 있는 제안 하나 — 무엇에 대한 제안인지까지. [target] 은 접수 거절인지 발신자 거부로 선 보류인지다(§15.320). */
+    private data class Proposal(val order: JobOrder, val remedy: Remedy.Found, val target: ProposalTarget)
 
     /** 가려 둔 제안의 열쇠 — 사람이 먼저 진단해야 풀린다. */
     private val withheld = mutableSetOf<String>()
@@ -90,8 +100,10 @@ internal class RemedyDesk(
         carriesApproval: Boolean = false,
         /** 승인한 조치 열을 붙인 접수의 거절인가. 그러면 조치 열을 찾아도 서 있는 제안을 바꾸지 않는다. */
         approval: Boolean = false,
-        /** 개정(`revise`)이면 그 실행 id. 기체를 쥔 실행을 셀 때 뺀다 — 자기 실행의 개정은 남의 점유가 아니다(§15.319). */
+        /** 개정(`revise`)이나 회복 재확인이면 그 실행 id. 기체를 쥔 실행을 셀 때 뺀다 — 자기 실행은 남의 점유가 아니다(§15.319·§15.320). */
         revising: String? = null,
+        /** 제안이 서면 그 대상. 회복 재확인([HoldRecovery])만 보류 대상을 준다. */
+        target: ProposalTarget = ProposalTarget.Order,
     ): Submission.Rejected {
         val jobOrderId = order.jobOrderId
         val remedy = rejection.remedy
@@ -146,7 +158,7 @@ internal class RemedyDesk(
         }
 
         val key = proposalKey(robotId, jobOrderId)
-        proposals[key] = Proposal(order, remedy)
+        proposals[key] = Proposal(order, remedy, target)
         trimProposals(key)
         proposalsMade += 1
         // **가릴 차례인가.** 이미 사람이 진단을 적어 둔 건은 다시 가리지 않는다 — 같은 값을
@@ -226,17 +238,32 @@ internal class RemedyDesk(
 
     private fun proposalKey(robotId: String, jobOrderId: String) = "$robotId|$jobOrderId"
 
-    /** 이 (기체, 주문)에 서 있는 제안. 없거나 **가려져 있으면** 널. */
+    /** 이 (기체, 주문)에 서 있는 제안. 없거나 **가려져 있거나** 낡은 회복 제안이면 널. */
     fun proposal(robotId: String, jobOrderId: String): Remedy.Found? {
         val key = proposalKey(robotId, jobOrderId)
         if (key in withheld) return null
-        return proposals[key]?.remedy
+        return standing(key, jobOrderId)?.remedy
+    }
+
+    /**
+     * 서 있는 제안 — 회복 제안이면 그 대상이 아직 같은 판·같은 시도의 보류일 때만(§15.320). 조회는 낡은 것을 내리지 않고 안 보일 뿐이다.
+     * 내리는 것은 판정([judge])이 한다.
+     */
+    private fun standing(key: String, jobOrderId: String): Proposal? =
+        proposals[key]?.takeIf { p -> (p.target as? ProposalTarget.Hold)?.let { holdStands(jobOrderId, it) } ?: true }
+
+    /** 이 (기체, 주문)에 서 있는 제안의 대상(§15.320). 없거나 가려져 있으면 널 — [proposal] 과 같은 규칙이다. */
+    fun proposalTarget(robotId: String, jobOrderId: String): ProposalTarget? {
+        val key = proposalKey(robotId, jobOrderId)
+        if (key in withheld) return null
+        return standing(key, jobOrderId)?.target
     }
 
     /**
      * 가려 둔 제안이 있는가(설계안 §7.2 넷째). 조회가 널을 내는 이유가 «없다» 인지 «가렸다» 인지를 가른다.
      */
-    fun withheldProposal(robotId: String, jobOrderId: String): Boolean = proposalKey(robotId, jobOrderId) in withheld
+    fun withheldProposal(robotId: String, jobOrderId: String): Boolean =
+        proposalKey(robotId, jobOrderId).let { it in withheld && standing(it, jobOrderId) != null }
 
     /**
      * **사람이 먼저 진단한다.** 가려 둔 제안은 이것을 적어야 풀린다 — 제안을 보고 나서 적으면 그것은
@@ -279,6 +306,8 @@ internal class RemedyDesk(
             val prefix: List<ExecutionUnit>,
             /** 누른 쪽. 접수가 되면 실행과 소모 기록이 이것을 든다. */
             val approver: Approver,
+            /** 승인한 제안의 대상. 소모 기록이 든다(§15.320). */
+            val target: ProposalTarget = ProposalTarget.Order,
         ) : Judgment
 
         /**
@@ -302,8 +331,10 @@ internal class RemedyDesk(
     /**
      * 이 시도가 서는가 — 그리고 서면 무엇이 나가는가.
      *
-     * @param given 사람이 그 자리에서 준 값. 널이면 **선언과 관측**에서 채운다([RemedyValues]).
+     * @param given 사람이 그 자리에서 준 값. 널이면 **선언과 관측**에서 채운다([RemedyValues]) — 값 없는 문이고, 회복 제안은 받지 않는다.
      * @param saw 부르는 쪽이 본 조치 열. 널이면 대조하지 않는다 — 프로세스 안에서 제안을 방금 읽은 쪽이다.
+     * @param target 값을 든 문이 승인한다고 지목한 대상(§15.320). 서 있는 제안의 대상과 다르면 거절이다. 값 없는 문에서는 보지 않는다.
+     * @param sawSteps 회복 입구가 본 조치 열 — 유형·값·순서까지 서 있는 제안과 **정확히** 같아야 한다. 널이면 대조하지 않는다.
      */
     fun judge(
         robotId: String,
@@ -311,6 +342,8 @@ internal class RemedyDesk(
         approver: Approver,
         given: List<Map<String, String>>?,
         saw: List<String>?,
+        target: ProposalTarget = ProposalTarget.Order,
+        sawSteps: List<RemedyStep>? = null,
     ): Judgment {
         val key = proposalKey(robotId, jobOrderId)
         // **가림이 맨 앞이다.** 가려 둔 것은 자격이 있어도 값이 맞아도 안 눌린다. 뒤로 물리면 자격 없는
@@ -318,9 +351,10 @@ internal class RemedyDesk(
         if (key in withheld) {
             return Judgment.No(ApprovalRefusal.WITHHELD, "가려 둔 제안이다 — 사람이 먼저 진단해야 한다: $key")
         }
-        // **서 있는 제안이 없으면 왜 없는지를 가른다**(ADR 46). 소모된 것과 선 적이 없는 것은 다음 행동이 다르다.
+        // **서 있는 제안이 없으면 왜 없는지를 가른다**(ADR 46). 소모된 것과 선 적이 없는 것은 다음 행동이 다르다. 값을 든 문은 **같은 대상**의
+        // 소모만 `CONSUMED` 로 받는다(§15.320) — 다른 대상의 소모를 내 요청의 결과로 읽으면 안 된다.
         val standing = proposals[key]
-            ?: return consumed[key]?.let { c ->
+            ?: return consumed[key]?.takeIf { given == null || it.target == target }?.let { c ->
                 Judgment.No(
                     ApprovalRefusal.CONSUMED,
                     "이미 소모된 제안이다: ${c.approver.id}(${c.approver.kind}) · ${c.executionId} · ${c.at}: $key",
@@ -338,10 +372,28 @@ internal class RemedyDesk(
             )
         val steps = standing.remedy.steps
 
+        // **회복 제안은 사람만, 대상이 그대로일 때만 승인한다**(§15.320). 낡은 것은 판정이 내린다 — 사람이 재작업·확인·취소했거나 판이 올랐다.
+        (standing.target as? ProposalTarget.Hold)?.let { hold ->
+            if (!holdStands(jobOrderId, hold)) {
+                proposals.remove(key)
+                withheld.remove(key)
+                return Judgment.No(ApprovalRefusal.REMEDY_NOT_APPLIED, "회복 제안의 대상이 더는 그 보류가 아니다 — 제안을 내렸다: $hold")
+            }
+            if (given == null) {
+                return Judgment.No(ApprovalRefusal.HUMAN_APPROVAL_REQUIRED, "발신자 거부 뒤 회복 제안은 사람만 승인한다 — 대상과 본 조치 열을 들고 회복 입구로 온다: $hold")
+            }
+        }
+        if (given != null && standing.target != target) {
+            return Judgment.No(ApprovalRefusal.PROPOSAL_CHANGED, "지목한 대상과 서 있는 제안의 대상이 다르다: $target != ${standing.target}")
+        }
+
         // 읽은 뒤 제안이 바뀌었으면 부르는 쪽은 **자기가 못 본 것**을 승인하는 중이다.
         val now = steps.map { it.skillType }
         if (saw != null && saw != now) {
             return Judgment.No(ApprovalRefusal.PROPOSAL_CHANGED, "본 조치 열과 지금 제안이 다르다: $saw != $now")
+        }
+        if (sawSteps != null && sawSteps != steps) {
+            return Judgment.No(ApprovalRefusal.PROPOSAL_CHANGED, "본 조치 열(유형·값·순서)과 지금 제안이 다르다: $sawSteps != $steps")
         }
 
         val declared = robots.capabilities(robotId)?.skillsList?.associateBy { it.skillType }
@@ -384,8 +436,9 @@ internal class RemedyDesk(
             }
         }
 
-        val prefix = steps.mapIndexed { at, step -> remedyUnit("remedy-${at + 1}-${step.skillType}", step.skillType, parameters[at]) }
-        return Judgment.Go(key, robotId, standing.order, steps, prefix, approver)
+        val used = taken(standing.order)
+        val prefix = steps.mapIndexed { at, step -> remedyUnit(remedyUnitId("remedy-${at + 1}-${step.skillType}", used), step.skillType, parameters[at]) }
+        return Judgment.Go(key, robotId, standing.order, steps, prefix, approver, standing.target)
     }
 
     /**
@@ -437,6 +490,7 @@ internal class RemedyDesk(
             wallClockAt = wallClock(),
             executionId = executionId,
             steps = go.prefix.map { ApprovedStep(it.skillType, it.parameters, it.unitId) },
+            target = go.target,
         )
         rememberConsumed(go.key, record)
         // **승인자 종류로 가르지 않는다**(ADR 43 §4). 이 수가 재는 것은 «같은 조치가 몇 번 반복됐나» 이고
@@ -458,6 +512,24 @@ internal class RemedyDesk(
         proposals.remove(key)
         rememberConsumed(key, record)
     }
+}
+
+/**
+ * 조치 단위의 이름 — [base] 가 계획의 단위 id([taken])와 겹치면 `-2`, `-3` … 을 붙인 첫 빈 이름(§15.320). 점검 대상의 설비 id 처럼 작업 지시가 정하는
+ * 단위 id 가 `remedy-1-pick_place` 일 수 있다. 실행 하나가 승인을 하나만 드므로 조치 단위끼리는 걸음 번호로 갈린다.
+ */
+internal fun remedyUnitId(base: String, taken: Set<String>): String =
+    if (base !in taken) base else generateSequence(2) { it + 1 }.map { "$base-$it" }.first { it !in taken }
+
+/**
+ * 그 작업 지시가 쓰는 단위 id — 이미 선 실행이 있으면 그 단위 열과 그 실행의 케이퍼빌리티로 지금 판을 계획한 것, 없으면 [active] 로 계획한 것.
+ * 계획이 던지면 계획 몫은 비운다(그 작업 지시는 어차피 작업 수락에서 거부된다).
+ */
+internal fun plannedUnitIds(executions: Collection<Execution>, order: JobOrder, active: ActiveMission?): Set<String> {
+    val existing = executions.firstOrNull { it.order.jobOrderId == order.jobOrderId }
+    val capability = existing?.capability ?: active?.capability
+    val plan = capability?.let { runCatching { it.plan(order) }.getOrNull() }.orEmpty()
+    return (existing?.units.orEmpty() + plan).mapTo(HashSet()) { it.unitId }
 }
 
 /**

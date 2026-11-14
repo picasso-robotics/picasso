@@ -1,1 +1,1 @@
-{"schemaVersion":"6","runId":"run-2026-11-14T03:03:10.164154300Z-4","writtenAt":"2026-11-14T03:03:10.168716900Z","virtualNow":"2026-09-06T00:00:09Z","contractSemver":"0.11.0","counts":{"incidents":3,"remedySearches":2}}
+{"schemaVersion":"7","runId":"run-2026-11-14T05:47:02.101898600Z-4","writtenAt":"2026-11-14T05:47:02.104898600Z","virtualNow":"2026-09-06T00:00:15Z","contractSemver":"0.11.0","counts":{"incidents":3,"remedySearches":2}}

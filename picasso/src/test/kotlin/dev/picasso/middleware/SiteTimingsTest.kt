@@ -280,7 +280,8 @@ class SiteTimingsTest {
                 assertTrue(it !in line, "$it 가 내보내기에 실렸다: $line")
             }
             assertTrue("\"evidenceWindowBefore\":\"PT1M40S\"" in line, line)
-            assertEquals("6", LedgerExport.SCHEMA_VERSION, "읽는 쪽이 없는데 내보내기 버전이 올랐다(ADR 9)")
+            // 판 7 은 판단 칸의 걸음 값이 늘어서다(§15.320) — 현장 설정 칸 때문이 아니다.
+            assertEquals("7", LedgerExport.SCHEMA_VERSION, "읽는 쪽이 없는데 내보내기 버전이 올랐다(ADR 9)")
         }
     }
 

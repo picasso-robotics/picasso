@@ -114,9 +114,12 @@ class ExportFixtureTest {
             val mark = harness.clock.now()
             drive(rounds = 10) { harness.clock.now().isAfter(mark.plusSeconds(2)) }
 
-            // 취소는 인시던트의 판단 칸에 안 실린다(한계 레지스터 §15.319) — 닫은 시각은 시험이 쥐고 [closings] 로 댄다.
+            // 닫는 것은 사람의 운영자 취소 입구라 그 걸음이 사건의 판단 칸에 실린다(§15.320). 닫은 시각은 시험도 쥐고 [closings] 로 댄다.
             closings[robotId] = exec.executionId to harness.clock.now()
             mw.closeByCancel(exec) { drive(rounds = 250, until = it) }
+            // ★닫은 뒤에도 시계를 민다. 사람의 걸음(운영자 취소)과 뒤이은 탐색이 같은 초에 앉으면 읽는 쪽이 그 사이의 순서를 못 가른다.
+            val closed = harness.clock.now()
+            drive(rounds = 10) { harness.clock.now().isAfter(closed.plusSeconds(2)) }
             assertIs<Middleware.Submission.Rejected>(mw.submit(patrol(jobOrderId), robotId))
         }
 
@@ -498,11 +501,13 @@ class ExportFixtureTest {
                 )
             }
 
-            // ★**사람의 걸음은 실행 상태로 댄다.** 취소는 인시던트의 판단 칸에 안 실리므로(한계 레지스터 §15.319) 번들만으로는
-            //   사건과 탐색 사이의 사람이 안 보인다. 그 보장을 여기서 쥔다 — 짝지어진 사건의 실행이 사람의 취소로 닫혔고(`ABORTED`),
-            //   그 닫힘이 사건 뒤·탐색 앞이다.
+            // ★**사람의 걸음은 판단 칸과 실행 상태 둘로 댄다.** 운영자 취소가 사건의 판단 칸에 실리고(§15.320) 번들에서도
+            //   읽힌다. 여기서는 그 걸음이 실제 닫힘과 같은 것인지 댄다 — 짝지어진 사건의 실행이 사람의 취소로 닫혔고(`ABORTED`),
+            //   그 닫힘이 사건 뒤·탐색 앞이며, 그 사건의 판단 칸이 닫은 사람의 운영자 취소다.
             searches.forEach { search ->
                 val incident = incidents.filter { it.robotId == search.robotId && it.at.isBefore(search.at) }.maxBy { it.at }
+                val step = assertNotNull(incident.resolution, "${search.robotId} 의 사건에 사람의 걸음이 없다")
+                assertEquals(IncidentDecision.OPERATOR_CANCEL to CLOSING_OPERATOR, step.decision to step.decidedBy)
                 val (closed, at) = assertNotNull(w.closings[search.robotId], "${search.robotId} 를 닫은 걸음이 없다")
                 assertEquals(incident.executionId, closed, "${search.robotId} 에서 닫은 실행이 그 사건의 실행이 아니다")
                 assertEquals(PhysicalState.ABORTED, assertNotNull(w.mw.execution(closed)).physicalState, "${search.robotId} 의 사건 실행이 취소로 닫히지 않았다")

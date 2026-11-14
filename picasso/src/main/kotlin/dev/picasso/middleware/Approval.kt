@@ -114,6 +114,30 @@ enum class ApprovalRefusal {
      * 소모로도 남기지 않는다. 접지 않으면 «승인했는데 아무 일도 안 일어났다» 가 성공으로 보인다.
      */
     REMEDY_NOT_APPLIED,
+
+    /**
+     * 그 제안은 **사람만 승인한다**(§15.320) — 발신자 거부로 운영자 보류에 선 단위 앞에 끼울 회복 제안이다. 값 없는 문
+     * ([Middleware.attemptApproval])과 에이전트가 이것을 받는다. 사람이 회복 입구([Middleware.approveRecovery])로 대상과 본 조치 열을
+     * 들고 누르는 것이 다음 행동이다. 에이전트 회복 승인을 열려면 «재작업은 사람» (ADR 47)의 예외를 소유자가 정해야 한다.
+     */
+    HUMAN_APPROVAL_REQUIRED,
+}
+
+/**
+ * 제안이 **무엇을 위한 것인가**(§15.320). 장부의 열쇠는 그대로 (기체, 작업 지시)이고, 대상은 그 열쇠에 선 제안 하나가 든다.
+ *
+ * 실행 id 를 들지 않는다 — 인스턴스 안의 셈이라 다시 뜨면 바뀐다(ADR 48). 대상은 판단 기록과 소모 기록에 실려 재기동을 넘는다.
+ */
+sealed interface ProposalTarget {
+    /** 접수 관문의 거절에 선 제안 — 승인되면 조치 열이 계획 맨 앞에 선다. */
+    data object Order : ProposalTarget
+
+    /**
+     * 발신자가 `PRECONDITION_UNMET` 으로 거부해 운영자 보류에 선 단위 — 작업 지시 판 [orderVersion] 의 단위 [unitId] 가 시도 [attempt] 에서
+     * 거부됐다. 승인되면 조치 열이 그 단위 바로 앞에 서고 그 단위는 다음 시도([attempt] + 1)의 대기로 돌아간다. 판·단위·시도 셋 가운데
+     * 하나라도 바뀌었으면(개정, 재작업, 확인, 취소) 그 제안은 낡은 것이다.
+     */
+    data class Hold(val orderVersion: Int, val unitId: String, val attempt: Int) : ProposalTarget
 }
 
 /** 승인 시도의 답. **거절은 정상 경로다** — 오류가 아니다. */
@@ -148,7 +172,8 @@ sealed interface ApprovalOutcome {
  * 승인으로 실제로 나간 걸음 하나.
  *
  * @param unitId 이 걸음이 선 실행 단위(ADR 48). 결과 통보의 `completedUnits` 등이 이 값으로 그 걸음을 가리킨다.
- *   조치 열은 실행 계획의 맨 앞에 걸음 순서대로 서고, 이름은 `remedy-{n}-{skillType}`(n 은 1부터)이다.
+ *   조치 열은 실행 계획의 맨 앞(회복이면 보류였던 단위 바로 앞, §15.320)에 걸음 순서대로 서고, 이름은 `remedy-{n}-{skillType}`(n 은 1부터)이다.
+ *   실행 하나가 승인을 하나만 드므로(접수와 회복 합계) 조치 단위끼리는 겹치지 않고, 계획의 단위 id 와 겹치면 `-2`, `-3` … 을 붙인다(§15.320).
  */
 data class ApprovedStep(val skillType: String, val parameters: Map<String, String>, val unitId: String)
 
@@ -159,6 +184,7 @@ data class ApprovedStep(val skillType: String, val parameters: Map<String, Strin
  * 제안은 많아야 하나다. 보존 상한([Retention.consumedApprovals])을 넘으면 오래된 것부터 내린다(§15.166).
  *
  * @param steps 그 승인의 답이 돌려준 `steps` 와 같은 것 — 걸음마다 조치 유형과 실린 값.
+ * @param target 소모된 제안의 대상(§15.320). 회복 입구는 **같은 대상**을 다시 승인할 때만 `CONSUMED` 를 받는다.
  */
 data class ConsumedApproval(
     val approver: Approver,
@@ -166,9 +192,10 @@ data class ConsumedApproval(
     val at: Instant,
     /** 소모한 순간의 실 시각 — 현장 대조용이다. */
     val wallClockAt: Instant,
-    /** 그 승인으로 선 실행. */
+    /** 그 승인으로 선 실행. 회복이면 그 조치를 끼운 실행(같은 실행)이다. */
     val executionId: String,
     val steps: List<ApprovedStep>,
+    val target: ProposalTarget = ProposalTarget.Order,
 )
 
 /**
@@ -265,8 +292,11 @@ object ApprovalWire {
      *
      * `4` 에서 모든 답에 `instanceId` 가, 걸음마다 `unitId` 가 붙었다(ADR 48). 칸이 는 것뿐이지만 **결과 통보와
      * 잇는 칸이라** 판을 올린다 — 읽는 쪽이 이 판을 보고서야 «통보의 어느 단위가 이 조치인가» 를 이 칸으로 묻는다.
+     *
+     * `5` 에서 `refusal` 에 [ApprovalRefusal.HUMAN_APPROVAL_REQUIRED] 가 늘고, 소모 기록에 `target`(접수면 `null`, 보류면
+     * `orderVersion`·`unitId`·`attempt`) 칸이 생겼다(§15.320). 값 없는 이 문은 회복 제안을 승인하지 못한다 — 그 답이 이 값이다.
      */
-    const val SCHEMA_VERSION: String = "4"
+    const val SCHEMA_VERSION: String = "5"
 
     /**
      * 요청 한 줄을 읽는다. **못 읽으면 던진다** — 못 읽는 요청은 거절이 아니라 잘못된 요청이고, 둘을
@@ -322,6 +352,15 @@ object ApprovalWire {
         .str("wallClockAt", c.wallClockAt.toString())
         .str("executionId", c.executionId)
         .raw("steps", c.steps.joinToString(",", "[", "]") { step(it) })
+        // **키를 빼지 않는다.** 접수 승인의 소모면 `null` 이다.
+        .raw("target", (c.target as? ProposalTarget.Hold)?.let { hold(it) } ?: "null")
+        .done()
+
+    /** 보류 대상 — 칸 이름은 판단 기록의 위치 칸과 같다. */
+    internal fun hold(t: ProposalTarget.Hold): String = Obj()
+        .num("orderVersion", t.orderVersion)
+        .str("unitId", t.unitId)
+        .num("attempt", t.attempt)
         .done()
 
     private fun step(s: ApprovedStep): String = Obj()
