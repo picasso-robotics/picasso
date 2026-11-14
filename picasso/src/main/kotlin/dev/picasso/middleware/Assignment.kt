@@ -56,7 +56,7 @@ data class AssignmentCost(val perLiveExecution: Int = 1, val whenHolding: Int = 
 }
 
 /**
- * 순위 목록 전부가 관문에서 떨어졌다 — **미배정으로 남는다.**
+ * 순위 목록 전부가 관문에서 떨어졌다(거절만 받아 가는 후보는 통과했어도 채택하지 않았다, [trialPassed]) — **미배정으로 남는다.**
  *
  * 재계산을 요청하지 않는다. 요청하면 이 층이 중재자가 되고, 배정기와 관문 사이에 «다시 해 봐» 가 오가는
  * 고리가 생긴다. 후보마다의 사유를 함께 내는 이유는, 그것이 없으면 배정기가 **무엇을 고쳐야 하는지**
@@ -70,9 +70,12 @@ data class AssignmentCost(val perLiveExecution: Int = 1, val whenHolding: Int = 
  *   대장에도 `SOURCE_MISSING` 줄로 적힌다
  * @param sourceUnobserved 출발 자리를 확인하지 못해 떨어진 후보마다 관문의 답([SourceUnobserved]). [sourceMissing] 과
  *   **접지 않는다** — 결품은 주문을 고칠 일이고 이것은 사람이 확인할 일이다. 대장에는 줄이 없다 — [Middleware.submit] 의 거절과 같다
+ * @param trialPassed 거절만 받아 가는 후보([Middleware.adopt] 의 `trialOnly`) 가운데 **관문을 통과해 채택하지 않은** 기체, 순위 차례대로.
+ *   [refusals] 에 없다 — 관문이 막지 않았고 담는 쪽의 정책이 막았다. 이 기체에는 실행도 제안도 서지 않았다(§15.317)
  */
 data class Unassigned(
     val refusals: Map<String, String>,
     val sourceMissing: Map<String, RemedyOutcome.SourceMissing> = emptyMap(),
     val sourceUnobserved: Map<String, SourceUnobserved> = emptyMap(),
+    val trialPassed: List<String> = emptyList(),
 ) : Middleware.Submission

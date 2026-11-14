@@ -136,7 +136,7 @@ internal class AdmissionGate(
      * **도는 단위가 없으면 기체 스냅숏의 손에서 출발한다**(§15.316, 계약 0.11.0). 새 접수에만 쓰고 개정에는 쓰지 않는다. 스냅숏의 손은 발신자가
      * 주기적으로 다시 읽은 값이라 C2 가 버린 «다시 볼 길 없는 종착 파지» 가 아니다. 든 채·빈손으로 답했을 때만 쓰고, 관측 불가·말하지 않음·못 물음이면 지금처럼
      * 출발점이 없다(발신자가 판정). 그 기체를 **다른 실행이 쥐고 있으면**([PhysicalState.occupiesRobot]) 거절은 하되 조치 제안은 세우지 않고
-     * ([Submission.Rejected.heldBy]), 조치 걸음을 실은 계획(승인 접수)은 위반이 없어도 받지 않는다 — 그 손에 든 것이 그 실행의 일일 수 있다.
+     * (쥔 실행은 [snapshotHolder] 가 조치 장부에 알린다), 조치 걸음을 실은 계획(승인 접수)은 위반이 없어도 받지 않는다 — 그 손에 든 것이 그 실행의 일일 수 있다.
      */
     fun chainRefusal(robotId: String, planned: List<ExecutionUnit>, revising: Execution? = null): Submission.Rejected? {
         // **사슬은 기체마다다.** 손은 기체에 달렸으므로 단위가 묶인 기체의 파지로 그 기체의 단위들을 굴린다. 묶지 않은 단위는
