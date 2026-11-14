@@ -286,11 +286,13 @@ class HandoffFixtureTest {
     }
 
     @Test
-    fun `사건과 그 뒤의 탐색 사이에 사람의 걸음이 실린다`() {
-        // ★★**빠짐으로 거짓말하지 않는다.** 이 칸이 없던 판에서는 사건과 그 뒤의 탐색 사이가 비어
-        //   보였고, 읽는 쪽이 그 사이를 «자동으로 회복했다» 로 메울 수 있었다. 안내문에 산문으로
-        //   경고를 적어 두었지만 **데이터 옆에 산문으로 들고 다녀야 하는 사실은 데이터에서 빠진
-        //   사실이다**(§15.188).
+    fun `사건과 그 뒤의 탐색 사이에 판단을 지어 싣지 않는다`() {
+        // ★★**빠짐으로 거짓말하지 않는다**(§15.188) — 그리고 **지어 넣어서도 거짓말하지 않는다.** 앞 판의 이 한 벌은 사람이 재작업을
+        //   내고 그 새 태스크의 관측으로 탐색을 세웠고, 이 시험은 사건과 탐색 사이의 `REWORK` 걸음을 댔다. 재작업하는 실행이 기체를
+        //   쥐므로 그 거절에는 이제 제안이 서지 않는다(§15.319). 그래서 사람이 보류 실행을 **취소로 닫고** 탐색이 선다. 취소는 운영자
+        //   판단(`resolve`)이 아니라 사건의 판단 칸에 실리지 않는다 — 그 빈칸은 한계 대장 §15.319 행이 연다(셋째 판단 값과 조회 버전
+        //   상승). 여기서 대는 것은 그 사이에 **하지 않은 판단이 실리지 않는 것**이다: «완료 확인» 으로 닫았다고 적으면 하지 않은 일을
+        //   했다고 적는다.
         val incidents = lines(AFTER_INCIDENT, LedgerExport.INCIDENTS).map { parse(it) }
         val searches = lines(AFTER_INCIDENT, LedgerExport.REMEDY_SEARCHES).map { parse(it) }
         val at = { row: Map<String, Value> -> Instant.parse(row.getValue("at").stringValue) }
@@ -301,27 +303,16 @@ class HandoffFixtureTest {
                 .filter { it.getValue("robotId").stringValue == robot && at(it).isBefore(at(search)) }
                 .maxByOrNull { at(it) }
                 ?: error("$robot 의 앞선 사건이 없다")
-
-            val resolution = incident.getValue("resolution").structValue.fieldsMap
-            assertTrue(resolution.isNotEmpty(), "$robot 의 사건에 사람의 걸음이 없다 — 사이가 비어 보인다")
-            assertEquals("REWORK", resolution.getValue("decision").stringValue, "$robot 의 걸음이 재작업이 아니다")
-
-            // ★**자리가 사건과 탐색 사이여야 한다.** 밖에 있으면 이 걸음이 그 탐색을 세운 걸음이라고
-            //   말할 수 없고, 읽는 쪽은 다시 순서를 지어내야 한다.
-            val step = Instant.parse(resolution.getValue("at").stringValue)
-            assertTrue(!step.isBefore(at(incident)), "사람의 걸음이 사건보다 앞이다: $step < ${at(incident)}")
-            assertTrue(step.isBefore(at(search)), "사람의 걸음이 탐색보다 뒤다: $step >= ${at(search)}")
+            assertTrue(
+                incident.getValue("resolution").hasNullValue(),
+                "$robot 의 사건에 하지 않은 판단이 실렸다: ${incident.getValue("resolution")}",
+            )
+            assertTrue(incident.getValue("approvedBy").hasNullValue(), "$robot 의 사건이 승인으로 선 실행의 것이다 — 이 한 벌의 장면이 아니다")
         }
 
-        // 짝 없는 사건은 이 칸이 비어야 한다 — 「사람이 안 왔다」와 「왔는데 안 적혔다」는 다른 답이다.
-        val paired = searches.map { it.getValue("robotId").stringValue }.toSet()
-        val lonely = incidents.filter { it.getValue("robotId").stringValue !in paired }
-        assertTrue(lonely.isNotEmpty(), "짝 없는 사건이 없다 — 이 대조가 아무것도 안 가른다")
-        lonely.forEach {
-            assertTrue(
-                it.getValue("resolution").hasNullValue(),
-                "사람이 안 온 사건에 걸음이 실렸다: ${it.getValue("incidentId").stringValue}",
-            )
+        // 이 한 벌에는 판단이 하나도 없다 — 하나라도 있으면 장면이 바뀐 것이고, 그때는 이 시험과 한계 대장 행을 함께 고친다.
+        incidents.forEach {
+            assertTrue(it.getValue("resolution").hasNullValue(), "판단이 실린 사건이 있다: ${it.getValue("incidentId").stringValue}")
         }
     }
 

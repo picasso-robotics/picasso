@@ -1,7 +1,6 @@
 package dev.picasso.middleware
 
 import dev.picasso.capability.Remedy
-import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.harness.Harness
 import java.nio.file.Path
 import java.time.Duration
@@ -40,6 +39,9 @@ class AssignmentTest {
         /**
          * 그 기체를 든 채로 만든다 — 사슬 검사가 막을 상태다.
          *
+         * **랙은 든 채 실패해 사람이 취소로 닫는다**([leaveHolding]). 든 채 도는 랙이면 그 손에 든 것이 랙의 일이라 거절은 해도
+         * 제안이 서지 않는다(§15.319). 기체를 쥔 실행 없이 손만 든 채여야 기체 스냅숏의 손으로 거절되고 제안이 선다.
+         *
          * **기체마다 자리를 따로 준다.** 같은 자리를 쓰면 둘째 기체가 점유 관문에 먼저 걸려,
          * 이 시험이 보려는 것(사슬 검사)이 아니라 다른 것을 보게 된다.
          */
@@ -50,7 +52,7 @@ class AssignmentTest {
             cell.program(bin, MATERIAL)
             val order = rack("SEQ-HOLD-$robotId", slot, bin)
             val exec = assertIs<Middleware.Submission.Accepted>(mw.submit(order, robotId)).execution
-            drive { exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
+            mw.leaveHolding(exec, harness) { drive(until = it) }
         }
 
         override fun close() = harness.close()

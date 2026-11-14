@@ -76,6 +76,9 @@ class ExportFixtureTest {
 
         private var racks = 0
 
+        /** [searchAfter] 가 사람의 취소로 닫은 실행과 그 시각 — 기체마다. */
+        val closings = mutableMapOf<String, Pair<String, Instant>>()
+
         fun drive(rounds: Int = 120, step: Duration = Duration.ofSeconds(1), until: () -> Boolean) {
             repeat(rounds) {
                 mw.pump()
@@ -97,13 +100,12 @@ class ExportFixtureTest {
         }
 
         /**
-         * 사건 **뒤에** 탐색을 세운다 — 사람이 재작업을 내고, 도는 단위가 생긴 뒤에 빈손을 요구하는
-         * 주문을 넣는다. 사슬 검사가 막고 그 거절이 제안을 세운다.
+         * 사건 **뒤에** 탐색을 세운다 — 사람이 보류 실행을 취소로 닫고, 기체를 쥔 실행 없이 손만 든 채로 남은 기체에 빈손을 요구하는
+         * 주문을 넣는다. 기체 스냅숏의 손으로 사슬 검사가 막고 그 거절이 제안을 세운다(§15.316).
          *
-         * ★★**재작업이 왜 필요한가.** `OPERATOR_HOLD` 에서는 **도는 단위가 없어 이 층이 파지를 못
-         * 본다**(§15.150). 그 상태로 주문을 넣으면 조건을 못 재서 그냥 **접수된다** — 실측으로 걸렸다.
-         * 재작업이 새 태스크를 세우면 잔여 파지가 다시 관측에 들어오고, 그때 비로소 거절이 선다.
-         * 그러니 이 한 벌이 싣는 것은 「사건 뒤의 탐색」이되 **사람이 한 걸음 개입한 뒤**의 것이다.
+         * ★★**왜 닫는가.** 앞 판은 재작업으로 새 태스크를 세워 도는 단위의 관측으로 거절을 받았다. 그 손에 든 것은 재작업하는
+         * 실행의 일이라 이제 제안이 서지 않는다(§15.319). 보류 그대로 두어도 그 실행이 기체를 쥐므로 같다. 그래서 이 한 벌의 모양은
+         * «사건 → 사람이 닫음 → 탐색» 이다 — 「사건 뒤의 탐색」이되 **사람이 한 걸음 개입한 뒤**의 것인 점은 앞 판과 같다.
          *
          * ★시계를 먼저 민다. 사건과 탐색이 같은 초에 앉으면 읽는 쪽이 앞뒤를 못 가르고, 그러면 이
          * 한 벌이 «사건 뒤의 탐색» 을 싣고도 그렇게 안 읽힌다(§15.182 와 같은 자리).
@@ -112,18 +114,23 @@ class ExportFixtureTest {
             val mark = harness.clock.now()
             drive(rounds = 10) { harness.clock.now().isAfter(mark.plusSeconds(2)) }
 
-            val firstTask = exec.units.first().taskId
-            val slot = exec.units.first().unitId
-            check(mw.resolve(exec.executionId, slot, OperatorDecision.REWORK, OPERATOR) == ResolveOutcome.Resolved) { "$robotId 재작업이 안 받아졌다" }
-            drive(rounds = 250) {
-                val task = exec.units.first().taskId
-                task.isNotBlank() && task != firstTask &&
-                    mw.view(robotId)?.tasks?.get(task) == TaskState.TASK_STATE_RUNNING
-            }
-            check(exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING) {
-                "$robotId 가 재작업 뒤에 안 들고 있다: ${exec.units.first().hold.kind}"
-            }
+            // 취소는 인시던트의 판단 칸에 안 실린다(한계 레지스터 §15.319) — 닫은 시각은 시험이 쥐고 [closings] 로 댄다.
+            closings[robotId] = exec.executionId to harness.clock.now()
+            mw.closeByCancel(exec) { drive(rounds = 250, until = it) }
             assertIs<Middleware.Submission.Rejected>(mw.submit(patrol(jobOrderId), robotId))
+        }
+
+        /**
+         * 미들웨어가 쥔 실행 없이 손만 든 채로 남은 기체([leaveHolding]) — 랙이 든 채 실패하고(사건이 열린다) 사람이 취소로 닫는다.
+         * 여기에 낸 주문만 제안을 세운다. 든 채 **도는** 랙 뒤에 내면 그 손에 든 것이 랙의 일이라 제안이 서지 않는다(§15.319).
+         *
+         * ★닫은 뒤 시계를 민다. 사건과 뒤이은 탐색이 같은 초에 앉으면 읽는 쪽이 앞뒤를 못 가른다([searchAfter] 와 같은 자리).
+         */
+        fun leftHolding(robotId: String, errorType: String = "SKILL_EXECUTION_FAILED"): Middleware.Execution {
+            val exec = mw.leaveHolding(holdingRack(robotId), harness, errorType) { drive(rounds = 250, until = it) }
+            val mark = harness.clock.now()
+            drive(rounds = 10) { harness.clock.now().isAfter(mark.plusSeconds(2)) }
+            return exec
         }
 
         fun setConnection(robotId: String, state: ConnectionState) = harness.oracle.setConnection(
@@ -173,23 +180,21 @@ class ExportFixtureTest {
         // **기체를 셋으로 가른다.** 한 기체는 태스크를 하나씩만 든다(§15.98) — 한 기체에 몰면 앞
         // 실행이 끝나기를 기다리는 동안 시나리오가 서로를 막는다.
 
-        // ① 대안 있음 — 든 채로 점검 순회를 밀어 넣는다.
-        val held = w.holdingRack(FOUND_ROBOT)
+        // ① 대안 있음 — 랙이 든 채 실패하고(사건) 사람이 취소로 닫은 기체에 점검 순회를 밀어 넣는다(§15.319).
+        w.leftHolding(FOUND_ROBOT)
         assertIs<Middleware.Submission.Rejected>(w.mw.submit(patrol("PATROL-1"), FOUND_ROBOT))
 
         // ② **든 채 그대로** 에이전트가 밖의 문으로 승인한다 — 값을 하나도 안 싣는다(ADR 44).
-        //    대상의 이름은 «지금 든 것» 의 관측에서 오므로, 그 랙을 먼저 완주시키면 출처가 사라진다.
+        //    대상의 이름은 «지금 든 것» 의 관측(기체 스냅숏의 손)에서 온다.
         val approved = assertIs<ApprovalOutcome.Approved>(
             w.mw.attemptApproval(
                 ApprovalAttempt(AGENT, FOUND_ROBOT, "PATROL-1", listOf(PrepareSequencedRack.SKILL)),
             ),
         )
         val remedied = assertNotNull(w.mw.execution(approved.executionId))
-        // 조치는 그 랙이 끝나야 자기 차례가 온다 — 기체는 태스크를 하나씩만 든다(§15.98).
         w.drive(rounds = 250) { remedied.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
         w.forceFault(FOUND_ROBOT, "PAYLOAD_LOST", remedied.units.first().taskId)
         w.drive(rounds = 250) { remedied.physicalState == PhysicalState.OPERATOR_HOLD }
-        w.drive(rounds = 250) { held.physicalState.isSettled }
 
         // ③ 대안 없음 — 든 채로는 딛을 스킬이 없는 기체다.
         val stuck = w.holdingRack(NONE_ROBOT)
@@ -200,11 +205,10 @@ class ExportFixtureTest {
         //
         //    **벤더 이름공간의 결함을 쓴다**(§15.177). 정준 분류 이름을 오류 유형 자리에 그대로 넣으면
         //    벤더 원문 칸이 통째로 비고, 읽는 쪽은 «이 벤더 코드가 이 분류로 왔다» 를 짚을 수 없다 —
-        //    칸을 만들어도 시나리오가 안 채우면 빈 칸이다.
-        val again = w.holdingRack(OTHER_ROBOT)
+        //    칸을 만들어도 시나리오가 안 채우면 빈 칸이다. 그 결함으로 든 채 실패한 랙을 사람이 닫은 뒤에 순회를 낸다(§15.319) —
+        //    그래서 이 기체에서는 사건이 탐색보다 먼저 선다.
+        w.leftHolding(OTHER_ROBOT, "X_FIXTURE_GRIPPER_SLIP")
         assertIs<Middleware.Submission.Rejected>(w.mw.submit(patrol("PATROL-3"), OTHER_ROBOT))
-        w.forceFault(OTHER_ROBOT, "X_FIXTURE_GRIPPER_SLIP", again.units.first().taskId)
-        w.drive(rounds = 250) { again.physicalState == PhysicalState.OPERATOR_HOLD }
 
         // ⑤ 안 드는 단위가 실패한다 — 파지를 바꾸지 않는 스킬의 사건도 한 벌에 있어야 한다.
         //
@@ -262,7 +266,7 @@ class ExportFixtureTest {
         // ⑩ **점유 축이 계산한 회복** — 출발 자리가 비었고 그 자재를 든 다른 자리가 있다.
         //
         //    이 거절은 실행을 만들지 않으므로 사건이 아니라 탐색 대장에 남는다(§15.164 와 같은 자리).
-        //    ★**맨 끝에 둔다.** 거절은 시계를 안 돌리고 실행도 제안도 안 만들므로, 앞선 사건 아홉의
+        //    ★**맨 끝에 둔다.** 거절은 시계를 안 돌리고 실행도 제안도 안 만들므로, 앞선 사건 열의
         //      시각과 해시가 그대로다 — 받는 쪽의 회귀가 이 변경으로 흔들리지 않는다.
         //
         //    ★**자재를 따로 쓴다.** 랙 시나리오의 자재를 그대로 쓰면 앞서 프로그램한 목적지들이 전부
@@ -492,6 +496,18 @@ class ExportFixtureTest {
                     "탐색 ${search.searchId}(${search.robotId} · ${search.at}) 앞에 그 기체의 사건이 없다: " +
                         incidents.filter { it.robotId == search.robotId }.map { it.at },
                 )
+            }
+
+            // ★**사람의 걸음은 실행 상태로 댄다.** 취소는 인시던트의 판단 칸에 안 실리므로(한계 레지스터 §15.319) 번들만으로는
+            //   사건과 탐색 사이의 사람이 안 보인다. 그 보장을 여기서 쥔다 — 짝지어진 사건의 실행이 사람의 취소로 닫혔고(`ABORTED`),
+            //   그 닫힘이 사건 뒤·탐색 앞이다.
+            searches.forEach { search ->
+                val incident = incidents.filter { it.robotId == search.robotId && it.at.isBefore(search.at) }.maxBy { it.at }
+                val (closed, at) = assertNotNull(w.closings[search.robotId], "${search.robotId} 를 닫은 걸음이 없다")
+                assertEquals(incident.executionId, closed, "${search.robotId} 에서 닫은 실행이 그 사건의 실행이 아니다")
+                assertEquals(PhysicalState.ABORTED, assertNotNull(w.mw.execution(closed)).physicalState, "${search.robotId} 의 사건 실행이 취소로 닫히지 않았다")
+                assertTrue(at.isAfter(incident.at), "${search.robotId} 의 닫힘이 사건보다 앞이다: $at <= ${incident.at}")
+                assertTrue(!at.isAfter(search.at), "${search.robotId} 의 닫힘이 탐색보다 뒤다: $at > ${search.at}")
             }
 
             // ★**짝이 없는 사건이 있어야 그 셈이 무언가를 가린다**(§15.177). 전부 짝이면 읽는 쪽은

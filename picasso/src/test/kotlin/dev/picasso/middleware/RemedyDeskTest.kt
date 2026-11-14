@@ -44,7 +44,7 @@ class RemedyDeskTest {
     }
 
     private fun desk(withholdEvery: Int = 0) =
-        RemedyDesk(Declares(SKILL), Entitlements.None, withholdEvery, { T0 }, { WALL }, { null })
+        RemedyDesk(Declares(SKILL), Entitlements.None, withholdEvery, { T0 }, { WALL }, { _, _ -> null })
 
     /** 사람의 문처럼 값을 들고 판정한다 — 자격을 안 거치고 `Go` 까지 간다. */
     private fun RemedyDesk.press(approver: Approver) =

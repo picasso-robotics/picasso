@@ -3,7 +3,6 @@ package dev.picasso.middleware
 import dev.picasso.capability.Remedy
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.harness.Harness
-import dev.picasso.mimic.control.v1.ForceFaultRequest
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
@@ -80,26 +79,17 @@ class SnapshotHoldTest {
             order.equipmentRequirements.filter { it.equipmentUse == "destination" }.forEach { cell.program(it.id, it.properties["material"]) }
         }
 
-        /** 든 채로 실패해 운영자 보류에 선 랙. 도는 단위가 없고 기체는 든 채다. 새 접수를 막지 않는 실패다. */
+        /** 든 채로 실패해 운영자 보류에 선 랙([holdOnFailure]). 도는 단위가 없고 기체는 든 채다. 새 접수를 막지 않는 실패다. */
         fun heldOnHold(): Middleware.Execution {
-            val exec = assertIs<Middleware.Submission.Accepted>(mw.submit(rack(), ROBOT)).execution
-            val first = exec.units.first()
-            drive { first.hold.kind == HoldKind.HOLD_KIND_HOLDING }
-            harness.oracle.forceFault(
-                ForceFaultRequest.newBuilder().setRobotId(ROBOT).setErrorType("SKILL_EXECUTION_FAILED").setTaskId(first.taskId).build(),
-            )
-            drive { exec.physicalState == PhysicalState.OPERATOR_HOLD }
-            assertNull(exec.active, "이 시험이 보려는 경우가 아니다 — 도는 단위가 있다")
+            val exec = mw.holdOnFailure(assertIs<Middleware.Submission.Accepted>(mw.submit(rack(), ROBOT)).execution, harness) { drive(until = it) }
             assertEquals(HoldKind.HOLD_KIND_HOLDING, raw.snapshot(ROBOT)?.hold?.kind, "이 시험이 보려는 경우가 아니다 — 발신자 스냅숏이 든 채가 아니다")
             return exec
         }
 
-        /** 보류를 사람이 닫는다 — 실행이 정착해 기체를 놓는다. 손은 그대로 든 채다. */
+        /** 보류를 사람이 취소로 닫는다([closeByCancel]) — 실행이 정착해 기체를 놓는다. 손은 그대로 든 채다. */
         fun close(exec: Middleware.Execution) {
-            val unit = exec.units.first { it.state == UnitState.OPERATOR_HOLD }
-            assertIs<ResolveOutcome.Resolved>(mw.resolve(exec.executionId, unit.unitId, OperatorDecision.CONFIRM_DONE, OPERATOR))
-            drive { exec.physicalState.isSettled }
-            assertTrue(!exec.physicalState.occupiesRobot, "닫은 실행이 아직 기체를 쥔다: ${exec.physicalState}")
+            mw.closeByCancel(exec) { drive(until = it) }
+            assertEquals(HoldKind.HOLD_KIND_HOLDING, raw.snapshot(ROBOT)?.hold?.kind, "취소가 손을 바꿨다")
         }
 
         override fun close() = harness.close()
@@ -161,6 +151,58 @@ class SnapshotHoldTest {
             val refused = assertIs<ApprovalOutcome.Refused>(w.mw.attemptApproval(attempt()))
             assertEquals(ApprovalRefusal.OBJECT_NOT_OBSERVED, refused.refusal, refused.reason)
             // 값을 든 사람의 문: 값은 채워져도 관문이 조치 열을 받지 않는다. 승인 접수가 조치 열을 붙여 다시 관문을 지나기 때문이다.
+            val person = assertIs<Middleware.Submission.Rejected>(w.mw.approveRemedy(ROBOT, "PATROL-1", listOf(place), OPERATOR))
+            assertEquals(ApprovalRefusal.REFUSED_BY_GATE, person.approvalRefusal, person.reason)
+            assertTrue(other.executionId in person.reason, person.reason)
+            assertNotNull(w.mw.proposal(ROBOT, "PATROL-1"), "승인 시점 거절이 제안을 지웠다")
+            assertTrue(w.mw.executions().none { it.order.jobOrderId == "PATROL-1" })
+        }
+    }
+
+    @Test
+    fun `남의 도는 단위가 든 채이면 그 관측으로 거절하되 제안을 세우지 않고 그 실행은 제 일로 끝난다`() {
+        World().use { w ->
+            // 다른 실행 A 가 들고 도는 중이다 — 출발점은 도는 단위의 관측이다(스냅숏이 아니다).
+            val a = assertIs<Middleware.Submission.Accepted>(w.mw.submit(w.rack(), ROBOT)).execution
+            w.drive { a.active?.hold?.kind == HoldKind.HOLD_KIND_HOLDING }
+
+            // 알고도 보내지 않는다. 그 손에 든 것은 A 의 일이라 조치 제안은 세우지 않는다(§15.319). 찾은 것은 적는다.
+            val blocked = assertIs<Middleware.Submission.Rejected>(w.mw.submit(patrol(), ROBOT))
+            assertTrue("지금 도는 단위의 관측" in blocked.reason, blocked.reason)
+            assertTrue(a.executionId in blocked.reason, blocked.reason)
+            assertNull(blocked.remedy, "남이 도는 기체에 조치 열을 실었다")
+            assertTrue(!blocked.remedyWithheld, "남이 도는 기체의 제안이 가림 차례를 셌다")
+            assertNull(w.mw.proposal(ROBOT, "PATROL-1"), "남이 도는 기체에 제안이 섰다")
+            assertIs<RemedyOutcome.Found>(w.mw.remedySearches().last().outcome, "찾은 것은 적어야 한다 — 안 찾아본 것과 같은 침묵이 된다")
+
+            // 두 승인 문 모두 승인할 제안이 없다. B 의 실행도, 승인을 든 실행도 없다.
+            assertEquals(ApprovalRefusal.NO_PROPOSAL, assertIs<ApprovalOutcome.Refused>(w.mw.attemptApproval(attempt())).refusal)
+            val person = assertIs<Middleware.Submission.Rejected>(w.mw.approveRemedy(ROBOT, "PATROL-1", listOf(place), OPERATOR))
+            assertEquals(ApprovalRefusal.NO_PROPOSAL, person.approvalRefusal, person.reason)
+            assertTrue(w.mw.executions().none { it.order.jobOrderId == "PATROL-1" })
+            assertTrue(w.mw.executions().none { it.approvedBy != null }, "승인을 든 실행이 섰다")
+
+            // A 는 제 일로 끝난다 — 아무도 그 물건을 건드리지 않았다.
+            w.drive(rounds = 400) { a.physicalState.isSettled }
+            assertEquals(PhysicalState.PHYSICALLY_DONE, a.physicalState, a.units.map { it.unitId to it.state }.toString())
+        }
+    }
+
+    @Test
+    fun `제안이 선 뒤 남의 단위가 들고 돌기 시작하면 두 승인 문 모두 받지 않고 제안은 그대로 둔다`() {
+        World().use { w ->
+            w.close(w.heldOnHold())
+            assertIs<Middleware.Submission.Rejected>(w.mw.submit(patrol(), ROBOT))
+            assertNotNull(w.mw.proposal(ROBOT, "PATROL-1"))
+
+            // 다른 일이 그 기체를 쥐고 첫 단위가 들고 돈다 — 승인 값의 출처가 도는 단위의 관측이 된다.
+            val other = assertIs<Middleware.Submission.Accepted>(w.mw.submit(w.rack(), ROBOT)).execution
+            w.drive { other.active?.hold?.kind == HoldKind.HOLD_KIND_HOLDING }
+
+            // 값 없는 문: 남이 도는 단위의 관측으로 값을 채우지 않는다(§15.319).
+            val refused = assertIs<ApprovalOutcome.Refused>(w.mw.attemptApproval(attempt()))
+            assertEquals(ApprovalRefusal.OBJECT_NOT_OBSERVED, refused.refusal, refused.reason)
+            // 값을 든 사람의 문: 관문이 조치 열을 받지 않는다 — 근거가 도는 단위의 관측이어도 같다.
             val person = assertIs<Middleware.Submission.Rejected>(w.mw.approveRemedy(ROBOT, "PATROL-1", listOf(place), OPERATOR))
             assertEquals(ApprovalRefusal.REFUSED_BY_GATE, person.approvalRefusal, person.reason)
             assertTrue(other.executionId in person.reason, person.reason)

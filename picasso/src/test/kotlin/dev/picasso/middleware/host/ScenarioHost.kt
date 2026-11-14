@@ -1,6 +1,5 @@
 package dev.picasso.middleware.host
 
-import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.harness.Harness
 import dev.picasso.host.ApprovalHost
 import dev.picasso.host.BundleWriter
@@ -16,6 +15,7 @@ import dev.picasso.middleware.MaterialRequirement
 import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.ResultExport
+import dev.picasso.middleware.leaveHolding
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
@@ -61,6 +61,12 @@ import java.time.Instant
  * | `narrator-4` | 선언됨, **철회됨** | `REVOKED` | 왜 철회됐는지 보고 **사후 검토로** 간다 |
  *
  * 뒤의 둘이 가르는 것이 «전에 허락됐다가 지금 아니다» 와 «원래 없었다» 다(ADR 45).
+ *
+ * ## 자리마다 랙이 든 채 실패하고 사람이 취소로 닫는다
+ *
+ * 제안은 **기체를 쥔 실행 없이 손만 든 채로 남은 기체**에서 선다(§15.319, `leaveHolding`). 자리마다 랙 하나가 든 채 실패해
+ * 운영자 보류에 서고(사건이 하나씩 열린다), 사람이 그 실행을 취소로 닫은 뒤 순회를 낸다. 거절의 근거는 기체 스냅숏의 손이다.
+ * 앞 판은 든 채 **도는** 랙 뒤에 순회를 냈다 — 그 손에 든 것은 그 랙의 일이라 이제 제안이 서지 않는다.
  *
  * ## 시계를 승인 전까지 세워 둔다
  *
@@ -144,7 +150,10 @@ object ScenarioHost {
         harness.close()
     }
 
-    /** 든 채로 점검 순회를 밀어 넣어 제안을 하나 세운다. 구동기와 시험이 같은 모양을 쓴다. */
+    /**
+     * 든 채로 남은 기체에 점검 순회를 밀어 넣어 제안을 하나 세운다. 구동기와 시험이 같은 모양을 쓴다. 랙은 든 채 실패해 사람이 취소로
+     * 닫는다([leaveHolding]) — 든 채 **도는** 랙 뒤에 내면 그 손에 든 것이 랙의 일이라 제안이 서지 않는다(§15.319).
+     */
     private class Arming(
         private val harness: Harness,
         private val cell: CellMimic,
@@ -167,23 +176,22 @@ object ScenarioHost {
                 ),
             )
             cell.program(slot, "ENGINE-COVER-A")
-            val accepted = middleware.submit(order, robotId)
+            val accepted = synchronized(lock) { middleware.submit(order, robotId) }
             check(accepted is Middleware.Submission.Accepted) { "$robotId 가 랙을 안 받았다: $accepted" }
+            synchronized(lock) { middleware.leaveHolding(accepted.execution, harness) { drive(it) } }
+            // 든 채로 순회를 밀어 넣으면 기체 스냅숏의 손으로 사슬 검사가 막고, 그 거절이 제안을 세운다.
+            synchronized(lock) { middleware.submit(patrol(jobOrderId), robotId) }
+        }
 
+        private fun drive(until: () -> Boolean) {
             repeat(200) {
-                synchronized(lock) {
-                    middleware.pump()
-                    harness.advance(Duration.ofSeconds(1))
-                    middleware.pump()
-                }
+                middleware.pump()
+                harness.advance(Duration.ofSeconds(1))
+                middleware.pump()
                 Thread.sleep(20)
-                if (accepted.execution.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING) {
-                    // 든 채로 순회를 밀어 넣으면 사슬 검사가 막고, 그 거절이 제안을 세운다.
-                    synchronized(lock) { middleware.submit(patrol(jobOrderId), robotId) }
-                    return
-                }
+                if (until()) return
             }
-            error("$robotId 가 끝내 들지 않았다")
+            error("조건에 못 미쳤다")
         }
 
         private fun patrol(jobOrderId: String) = JobOrder(

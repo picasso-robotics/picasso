@@ -1,7 +1,6 @@
 package dev.picasso.middleware
 
 import dev.picasso.capability.Remedy
-import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.harness.Harness
 import java.nio.file.Path
 import java.time.Duration
@@ -47,7 +46,10 @@ class WithholdingTest {
             error("조건에 못 미쳤다")
         }
 
-        /** 든 채로 도는 기체를 만들고, 빈손을 요구하는 주문을 넣어 거절을 받는다. */
+        /**
+         * 든 채로 남은 기체를 만들고, 빈손을 요구하는 주문을 넣어 거절을 받는다. 랙은 든 채 실패해 사람이 취소로 닫는다([leaveHolding]):
+         * 든 채 **도는** 랙 뒤에 내면 그 손에 든 것이 랙의 일이라 제안이 서지 않는다(§15.319).
+         */
         fun rejectedWhileHolding(jobOrderId: String = "PATROL-1"): Middleware.Submission.Rejected {
             val order = JobOrder(
                 jobOrderId = "SEQ-${++racks}",
@@ -63,10 +65,8 @@ class WithholdingTest {
             order.equipmentRequirements.filter { it.equipmentUse == "destination" }
                 .forEach { cell.program(it.id, it.properties["material"]) }
             val exec = assertIs<Middleware.Submission.Accepted>(mw.submit(order, ROBOT)).execution
-            drive { exec.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING }
-            val rejected = assertIs<Middleware.Submission.Rejected>(mw.submit(patrol(jobOrderId), ROBOT))
-            drive(rounds = 250) { exec.physicalState.isSettled }
-            return rejected
+            mw.leaveHolding(exec, harness) { drive(until = it) }
+            return assertIs<Middleware.Submission.Rejected>(mw.submit(patrol(jobOrderId), ROBOT))
         }
 
         private var racks = 0
@@ -148,7 +148,9 @@ class WithholdingTest {
         World(PRECOND, withholdEvery = 0).use { w ->
             listOf("PATROL-A", "PATROL-B").forEach { id ->
                 w.rejectedWhileHolding(id)
-                assertIs<Middleware.Submission.Accepted>(w.mw.approveRemedy(ROBOT, id, listOf(place), OPERATOR))
+                val approved = assertIs<Middleware.Submission.Accepted>(w.mw.approveRemedy(ROBOT, id, listOf(place), OPERATOR)).execution
+                // 다음 제안이 서려면 이 승인의 실행이 기체를 놓아야 한다 — 남이 쥔 기체에는 제안을 세우지 않는다(§15.319).
+                w.mw.letGo(approved) { w.drive(rounds = 400, until = it) }
             }
 
             val repeated = assertNotNull(w.mw.repeatedRemedies().singleOrNull(), "반복이 안 잡혔다: ${w.mw.repeatedRemedies()}")

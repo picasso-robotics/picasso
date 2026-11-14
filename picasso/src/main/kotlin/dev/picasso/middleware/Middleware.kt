@@ -172,7 +172,7 @@ class Middleware(
     private fun Execution.trail(kind: String, detail: String, at: Instant = now()) = with(env) { trail(kind, detail, at) }
 
     /** 제안과 승인의 장부(설계안 §6.4). 승인 뒤의 접수는 [commit] 에 남고, 승인의 기록([RemedyDesk.settle])은 접수가 된 뒤에만 한다. */
-    private val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::fillHold, retention, ::pumping, gate::snapshotHolder)
+    private val desk = RemedyDesk(robots, entitlements, withholdEvery, now, wallClock, gate::fillHold, retention, ::pumping, gate::holder)
 
     /** 사건 번들의 장부(설계안 §4). 봉인은 [pump] 가 라운드 끝에 부른다. */
     private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping)

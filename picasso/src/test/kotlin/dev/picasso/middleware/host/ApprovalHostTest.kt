@@ -17,6 +17,7 @@ import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.MaterialRequirement
 import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.PrepareSequencedRack
+import dev.picasso.middleware.leaveHolding
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -53,7 +54,10 @@ class ApprovalHostTest {
 
         private var racks = 0
 
-        /** 든 채로 점검 순회를 밀어 넣어 제안을 하나 세운다. */
+        /**
+         * 든 채로 점검 순회를 밀어 넣어 제안을 하나 세운다. 랙은 든 채 실패해 사람이 취소로 닫는다([leaveHolding]) — 든 채 **도는** 랙
+         * 뒤에 내면 그 손에 든 것이 랙의 일이라 제안이 서지 않는다(§15.319).
+         */
         fun arm(robotId: String, jobOrderId: String) {
             val slot = "RACK-204.S0${++racks}"
             val order = JobOrder(
@@ -69,17 +73,20 @@ class ApprovalHostTest {
             )
             cell.program(slot, "ENGINE-COVER-A")
             val accepted = assertIs<Middleware.Submission.Accepted>(middleware.submit(order, robotId))
+            middleware.leaveHolding(accepted.execution, harness) { drive(it) }
+            assertIs<Middleware.Submission.Rejected>(middleware.submit(patrol(jobOrderId), robotId))
+        }
+
+        private fun drive(until: () -> Boolean) {
             repeat(200) {
                 middleware.pump()
+                if (until()) return
                 harness.advance(Duration.ofSeconds(1))
                 Thread.sleep(20)
                 middleware.pump()
-                if (accepted.execution.units.first().hold.kind == HoldKind.HOLD_KIND_HOLDING) {
-                    assertIs<Middleware.Submission.Rejected>(middleware.submit(patrol(jobOrderId), robotId))
-                    return
-                }
+                if (until()) return
             }
-            error("$robotId 가 끝내 들지 않았다")
+            error("조건에 못 미쳤다")
         }
 
         override fun close() = harness.close()
