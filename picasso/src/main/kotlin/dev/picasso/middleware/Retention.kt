@@ -16,6 +16,8 @@ package dev.picasso.middleware
  *
  * 내린 기록은 되돌리지 않는다. 내린 제안을 승인하면 «제안이 없다» 로 거부되고(승인 없이 실행되는 길은 생기지 않는다), 내린
  * 소모 기록의 열쇠에 다시 온 승인도 같은 답을 받는다. 내린 수는 [RetentionEvictions] 로 센다.
+ *
+ * **담는 쪽이 사본을 선언하면([copyAck]) 확인 전의 인시던트 번들·탐색 기록도 내리지 않는다**(§15.327) — 구동 중 실행의 예외와 같은 자리다.
  */
 data class Retention(
     /** 인시던트 번들. 번들 하나가 근거 윈도우를 통째로 들어 가장 무거우므로 상한이 가장 낮다. */
@@ -40,6 +42,12 @@ data class Retention(
     val forgottenOrders: Int = 100_000,
     /** 놓은 작업 지시 표시가 [forgottenOrders] 에 찼을 때의 선언(§15.324). 기본은 거부다. */
     val forgottenOverflow: ForgottenOverflow = ForgottenOverflow.REFUSE,
+    /**
+     * 담는 쪽의 사본 선언(§15.327). 기본은 꺼짐(널) — 거동이 선언 전과 같다. 켜면 인시던트 번들·탐색 기록은 담는 쪽이 커밋을 확인할 때까지
+     * ([Middleware.ackCopiedIncidents]·[Middleware.ackCopiedSearches]) [incidents]·[remedySearches] 상한이 내리지 않는다. 확인 대기 한도와
+     * 지금 상태는 [CopyAck]·[Middleware.copyAcks] 가 말한다.
+     */
+    val copyAck: CopyAck? = null,
 ) {
     init {
         require(

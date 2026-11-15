@@ -193,12 +193,26 @@ internal class RemedyDesk(
             wallClockAt = wallClock(),
             outcome = outcome,
         )
-        // 탐색 기록은 조회만 하는 이력이라 오래된 것부터 그냥 내린다.
-        while (remedyLog.size > retention.remedySearches) {
-            remedyLog.removeAt(0)
-            searchesEvicted += 1
+        copies.opened("search-$remedySeq")
+        // 탐색 기록은 조회만 하는 이력이라 오래된 것부터 그냥 내린다. 담는 쪽이 사본을 선언했으면 확인 전의 줄은 건너뛴다(§15.327).
+        var i = 0
+        while (remedyLog.size > retention.remedySearches && i < remedyLog.size) {
+            if (copies.protects(remedyLog[i].searchId)) {
+                i += 1
+            } else {
+                copies.evicted(remedyLog.removeAt(i).searchId)
+                searchesEvicted += 1
+            }
         }
     }
+
+    /** 담는 쪽이 아직 커밋을 확인하지 않은 탐색 id(§15.327, [Retention.copyAck]). 탐색 기록은 적힌 뒤 바뀌지 않으므로 다시 올리는 자리가 없다. */
+    private val copies = CopyWatch(retention.copyAck?.let { it.pendingSearches ?: retention.remedySearches })
+
+    /** 담는 쪽의 커밋 확인 — [CopyWatch.ack]. 줄은 다음 정리(다음 탐색 기록)에서 상한대로 내린다. */
+    fun ackCopied(searchIds: Collection<String>): Int = copies.ack(searchIds)
+
+    fun copyState(): CopyLedgerState = copies.state(remedyLog.size, retention.remedySearches)
 
     /**
      * 제안이 상한을 넘으면 **가장 오래 선 것부터** 내린다 — 방금 세운 [keep] 은 빼고. 내린 제안의 가림과 진단도 같이 내린다.
