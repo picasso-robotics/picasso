@@ -336,6 +336,8 @@ class LayeringTest {
             "Workspace.kt" to Layer.FLOOR,
             "RemedyLedger.kt" to Layer.FLOOR,
             "Retention.kt" to Layer.FLOOR,
+            // 담는 쪽의 사본 선언(§15.327) — 선언·상태 값과 확인 표. 실행 상태를 모른다.
+            "CopyAcks.kt" to Layer.FLOOR,
             "Reassignment.kt" to Layer.FLOOR,
             "FloorOwnership.kt" to Layer.FLOOR,
             "LogicalCapability.kt" to Layer.FLOOR,

@@ -446,6 +446,49 @@ class LedgerExportTest {
         }
     }
 
+    // ── 줄 단위 공개(§15.327) — 담는 쪽이 줄을 그대로 적는다
+
+    private fun lineFixtures(): Pair<List<IncidentBundle>, List<RemedySearchRecord>> {
+        val bundles = listOf(bundle(), bundle(review = IncidentReview(ReviewVerdict.DISPUTED, "패드 마모", AT), fault = FAULT))
+        val step = RemedyStep("pick_place", emptyList(), HoldKind.HOLD_KIND_EMPTY, HoldKind.HOLD_KIND_HOLDING)
+        val records = listOf(
+            record(RemedyOutcome.Found(listOf(step))),
+            record(RemedyOutcome.Withheld),
+            record(RemedyOutcome.SourceMissing("ENGINE-COVER-B", "SEQ-IN-03.BIN-A", null, null)),
+        )
+        return bundles to records
+    }
+
+    @Test
+    fun `줄 단위 인코딩이 목록 인코딩의 한 줄과 바이트가 같다`() {
+        val (bundles, records) = lineFixtures()
+
+        assertEquals(LedgerExport.incidents(bundles), bundles.joinToString("") { LedgerExport.incidentLine(it) + "\n" })
+        assertEquals(LedgerExport.remedySearches(records), records.joinToString("") { LedgerExport.remedySearchLine(it) + "\n" })
+        (bundles.map { LedgerExport.incidentLine(it) } + records.map { LedgerExport.remedySearchLine(it) }).forEach {
+            assertFalse('\n' in it, "줄 하나에 줄바꿈이 들었다: $it")
+        }
+        assertEquals(LedgerExport.SCHEMA_VERSION, LedgerExport.LINE_SCHEMA_VERSION, "줄의 판이 한 벌의 판과 갈렸다")
+    }
+
+    @Test
+    fun `목록 인코딩의 바이트가 줄 공개 전과 같다`() {
+        // 줄 공개 전 인코더가 같은 재료로 낸 바이트의 해시다. 바뀌면 읽는 쪽 사본과 이미 적힌 줄의 모양이 갈린다 — 판을 올리는 일이다.
+        val (bundles, records) = lineFixtures()
+        fun sha(text: String) = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+        assertEquals(INCIDENTS_SHA, sha(LedgerExport.incidents(bundles)))
+        assertEquals(SEARCHES_SHA, sha(LedgerExport.remedySearches(records)))
+    }
+
+    @Test
+    fun `가린 탐색 줄은 줄 단위로도 걸음 칸이 없다`() {
+        val line = parse(LedgerExport.remedySearchLine(record(RemedyOutcome.Withheld)))
+
+        assertEquals("WITHHELD", line.getValue("outcome").stringValue)
+        assertFalse("steps" in line, "가려 둔 제안의 걸음이 줄 단위 공개로 샜다: $line")
+    }
+
     // ── 재료
 
     private fun record(outcome: RemedyOutcome) =
@@ -577,6 +620,8 @@ class LedgerExportTest {
     companion object {
         const val ROBOT = "hum-02"
         private val AT: Instant = Instant.parse("2026-09-05T00:03:21Z")
+        private const val INCIDENTS_SHA = "2ff24fb121148dd82f86fa6c0a7f4cd85be99233d11713437aa7d1be142078d8"
+        private const val SEARCHES_SHA = "3ce61e4936c2c8d24c49680236578151d9521c59c2e255c3e1cfc24177a955d3"
         private val PRECOND: Path = Path.of("..", "profile", "fixtures", "precondition.json").normalize()
     }
 }

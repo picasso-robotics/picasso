@@ -177,7 +177,7 @@ class Middleware(
     }
 
     /** 사건 번들의 장부(설계안 §4). 봉인은 [pump] 가 라운드 끝에 부른다. */
-    private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping, instanceId) { it in executions }
+    private val incidentLog = IncidentLog(robots, now, wallClock, retention.incidents, ::pumping, instanceId, retention.copyAck) { it in executions }
 
     /** 발신자 거부 뒤 제자리 회복(§15.320). 재확인은 [pump] 가 실행마다 라운드 끝에, 미발행 판정은 [pumpRound] 가 다음 단위를 고를 때 부른다. */
     private val recovery = HoldRecovery(env, gate, desk, incidentLog, executions, ::noteAttention)
@@ -1193,6 +1193,19 @@ class Middleware(
 
     /** 놓은 작업 지시 표시가 얼마나 찼는지와 그 때문에 거부한 놓기의 수(§15.324). 실제로 내린 수는 [retentionEvictions] 가 센다. */
     fun forgottenOrders(): ForgottenOrdersState = forgotten.state()
+
+    /**
+     * 담는 쪽이 인시던트 줄의 커밋을 확인한다(§15.327, [Retention.copyAck]). 멱등이고 모르는 id 는 무시하며, 새로 확인한 수를 돌려준다. 선언이
+     * 꺼져 있으면 늘 0 이다. 확인한 번들은 다음 정리에서 상한대로 내린다. 확인 뒤 검토·판단으로 줄이 바뀌면 다시 확인을 기다린다. 탐색 id 는
+     * [ackCopiedSearches] 로 따로 확인한다. 다른 입구처럼 [pump] 와 같은 스레드에서 부른다 — 이 층은 잠그지 않는다.
+     */
+    fun ackCopiedIncidents(incidentIds: Collection<String>): Int = incidentLog.ackCopied(incidentIds)
+
+    /** 담는 쪽이 탐색 줄의 커밋을 확인한다 — [ackCopiedIncidents] 와 같은 규칙, 탐색 id 로. */
+    fun ackCopiedSearches(searchIds: Collection<String>): Int = desk.ackCopied(searchIds)
+
+    /** 사본 선언의 지금 상태 — 대장마다 확인 대기 수, 상한을 넘은 정도, 보호가 풀린 수, 확인 전 내림 수(§15.327). */
+    fun copyAcks(): CopyAckState = CopyAckState(caps.copyAck, incidentLog.copyState(), desk.copyState())
 
     /**
      * 사람이 사건을 읽고 판정을 남긴다 — [IncidentLog.reviewIncident].

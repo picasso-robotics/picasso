@@ -95,6 +95,25 @@ object LedgerExport {
         records.joinToString("") { line(it) + "\n" }
 
     /**
+     * 줄 하나의 규약 판(§15.327) — [incidentLine]·[remedySearchLine] 이 내는 줄의 모양. 한 벌의 [SCHEMA_VERSION] 과 같은 값이고 함께 오른다 —
+     * 목록 인코딩은 이 줄을 줄바꿈으로 이은 것이다. **줄은 판을 싣지 않으므로** 줄을 따로 적는 담는 쪽이 이 값을 줄 곁에 적는다.
+     */
+    const val LINE_SCHEMA_VERSION: String = SCHEMA_VERSION
+
+    /**
+     * 인시던트 번들 한 줄 — 줄바꿈 없이(§15.327). [incidents] 의 한 줄과 바이트가 같다. 담는 쪽(mission-ops)이 사본 표에 **그대로** 적는 값이다 —
+     * 검토·판단이 바뀌면 같은 인시던트 id 의 줄을 다시 받아 적는다. **줄에는 인스턴스가 없다** — 인시던트 id 는 인스턴스 안의 셈이라 담는 쪽이
+     * [Middleware.instanceId] 를 줄 곁에 적는다.
+     */
+    fun incidentLine(bundle: IncidentBundle): String = line(bundle)
+
+    /**
+     * 탐색 기록 한 줄 — 줄바꿈 없이(§15.327). [remedySearches] 의 한 줄과 바이트가 같다. **`WITHHELD` 줄에는 `steps` 키가 없다** — 담는 쪽은
+     * 이 줄을 그대로 적고 제안 표에서 걸음을 꺼내 조립하지 않는다(가림, §15.164). 인스턴스는 [incidentLine] 처럼 곁에 적는다.
+     */
+    fun remedySearchLine(record: RemedySearchRecord): String = line(record)
+
+    /**
      * 한 벌의 안내. [instanceId] 는 이 벌을 낸 인스턴스([Middleware.instanceId])다(판 8) — 인시던트 id 와 실행 id 는 그 인스턴스 안의 셈이라
      * 이것과 함께여야 한 사본을 가리킨다. 재기동을 넘어 같은 사건을 잇는 것은 줄의 `incidentKey` 다.
      */

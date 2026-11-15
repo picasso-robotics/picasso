@@ -20,6 +20,8 @@ internal class IncidentLog(
     private val live: (String) -> Boolean = { false },
     /** 이 인스턴스([Middleware.instanceId]). 새로 선 인시던트의 정체성 열쇠([IncidentOrigin.key])가 이것과 인시던트 id 로 선다. 기본값을 두지 않는다 — 고정하면 열쇠가 인스턴스 사이에 겹친다. */
     private val instanceId: String,
+    /** 담는 쪽의 사본 선언([Retention.copyAck]). 널이면 꺼짐이고 거동이 선언 전과 같다. */
+    copyAck: CopyAck?,
     /** 이 실행이 아직 실행 표(장부)에 있는가. 정체성 표([origins])는 그동안만 든다 — 놓은 실행의 줄은 다음 봉인에서 내린다. */
     private val known: (String) -> Boolean,
 ) {
@@ -27,6 +29,14 @@ internal class IncidentLog(
     /** 상한으로 내린 번들의 수([RetentionEvictions.incidents]). */
     var evicted = 0L
         private set
+
+    /** 담는 쪽이 아직 커밋을 확인하지 않은 인시던트 id(§15.327). 그 번들은 상한을 넘어도 내리지 않는다. */
+    private val copies = CopyWatch(copyAck?.let { it.pendingIncidents ?: cap })
+
+    /** 담는 쪽의 커밋 확인 — [CopyWatch.ack]. 번들은 다음 정리(봉인 끝)에서 상한대로 내린다. */
+    fun ackCopied(incidentIds: Collection<String>): Int = copies.ack(incidentIds)
+
+    fun copyState(): CopyLedgerState = copies.state(bundles.size, cap)
 
     /**
      * (실행, 단위)마다 가장 최근 인시던트의 **정체성**(§15.322). 무거운 번들과 따로 둔다 — 번들은 보존 상한([cap])으로 내려가도 그 실행이
@@ -52,6 +62,8 @@ internal class IncidentLog(
         val at = bundles.indexOfFirst { it.incidentId == incidentId }
         if (at < 0) return false
         bundles[at] = bundles[at].copy(review = IncidentReview(verdict, cause, wallClock()))
+        // 줄이 바뀌었다 — 담는 쪽이 개정 줄을 다시 적고 확인할 때까지 상한이 내리지 않는다(§15.327).
+        copies.revised(incidentId)
         return true
     }
 
@@ -183,6 +195,7 @@ internal class IncidentLog(
                 contractSemver = ContractIdentity.semver,
                 approvedBy = execution.approvedBy,
             )
+            copies.opened(incidentId)
         }
         execution.pendingIncidents.clear()
         origins.keys.removeAll { !known(it.first) }
@@ -210,14 +223,14 @@ internal class IncidentLog(
     fun awaitsDecision(executionId: String, unitId: String): Boolean =
         bundles.any { it.executionId == executionId && it.unitId == unitId && it.resolution == null }
 
-    /** 상한을 넘은 만큼 **가장 오래된 것부터** 내린다. 구동이 돌리는 실행의 번들은 건너뛴다([Retention]). */
+    /** 상한을 넘은 만큼 **가장 오래된 것부터** 내린다. 구동이 돌리는 실행의 번들과 사본 확인 전의 번들은 건너뛴다([Retention]). */
     private fun trim() {
         var i = 0
         while (bundles.size > cap && i < bundles.size) {
-            if (live(bundles[i].executionId)) {
+            if (live(bundles[i].executionId) || copies.protects(bundles[i].incidentId)) {
                 i += 1
             } else {
-                bundles.removeAt(i)
+                copies.evicted(bundles.removeAt(i).incidentId)
                 evicted += 1
             }
         }
@@ -258,6 +271,7 @@ internal class IncidentLog(
         if (opened >= 0) {
             bundles[opened] = bundles[opened]
                 .copy(resolution = IncidentResolution(decision, now(), wallClock(), decidedBy, reworkBasis))
+            copies.revised(bundles[opened].incidentId)
         }
     }
 }
