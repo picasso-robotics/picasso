@@ -42,7 +42,7 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
 
     init {
         // **선언 없는 신원 대조를 기본값으로 메우지 않는다.** 메우면 검증기가 없앤 암묵이 이 길로 돌아온다.
-        definition.steps.filterIsInstance<UnitStep>().forEach { step ->
+        MissionValidator.unitNodes(definition).forEach { step ->
             require(!MissionValidator.needsSourceObservation(step) || step.sourceObservation != null) {
                 "검증을 거치지 않은 정의다: ${step.id} 가 출발 자리의 식별 정보를 대는데 출발 관측 선언이 없다"
             }
@@ -50,12 +50,47 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
                 "검증을 거치지 않은 정의다: ${step.id} 가 목적지에 둘 것의 식별 정보를 대는데 목적지 관측 선언이 없다"
             }
         }
+        // 선행이 끊기면 엔진은 그 단위를 그냥 낸다(참조한 단위가 없으면 기다릴 것이 없다) — 조용히 순서가 사라진다.
+        definition.steps.forEach { step ->
+            val (nodes, whenMissing) = when (step) {
+                is WaitStep -> return@forEach
+                is UnitStep -> listOf(step) to step.whenMissing
+                is EachStep -> step.steps to step.whenMissing
+            }
+            nodes.forEachIndexed { at, node ->
+                require(node.after == null || (step is EachStep && node.after in nodes.take(at).map { it.id })) {
+                    "검증을 거치지 않은 정의다: ${node.id} 의 선행 ${node.after} 가 같은 그룹의 앞 노드가 아니다"
+                }
+            }
+            val requires = when (step) {
+                is UnitStep -> step.requires
+                is EachStep -> step.requires
+                is WaitStep -> emptyList()
+            }
+            require(requires.isEmpty() || whenMissing != null) {
+                "검증을 거치지 않은 정의다: ${step.id} 에 조건(requires)이 있는데 접힘(whenMissing)이 없다"
+            }
+            require(whenMissing == null || kept(nodes, whenMissing) != null) {
+                "검증을 거치지 않은 정의다: ${step.id} 의 접힘이 남길 노드(${whenMissing?.unit})를 모른다"
+            }
+        }
     }
 
     override fun plan(order: JobOrder): List<ExecutionUnit> = definition.steps.flatMap { step ->
         when (step) {
             is WaitStep -> listOf(waitUnit(step))
-            is UnitStep -> units(step, order)
+            is UnitStep -> {
+                val index = partners(listOf(step), order)
+                if (step.once) {
+                    expand(listOf(step), step.requires, step.whenMissing, order, item = null, index)
+                } else {
+                    items(order, step.forEach).flatMap { expand(listOf(step), step.requires, step.whenMissing, order, it, index) }
+                }
+            }
+            is EachStep -> {
+                val index = partners(step.steps, order)
+                items(order, step.forEach).flatMap { expand(step.steps, step.requires, step.whenMissing, order, it, index) }
+            }
         }
     }
 
@@ -84,50 +119,105 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
         )
     }
 
+    /** 반복할 설비 — 작업 지시의 설비 순서대로. */
+    private fun items(order: JobOrder, use: String?): List<EquipmentRequirement> =
+        order.equipmentRequirements.filter { it.equipmentUse == use }
+
+    /** 접힘이 남길 노드 — 그룹이면 [WhenMissing.unit] 이 가리키는 것, 아니면 그 노드 하나. */
+    private fun kept(nodes: List<UnitStep>, whenMissing: WhenMissing): UnitStep? =
+        if (whenMissing.unit != null) nodes.firstOrNull { it.id == whenMissing.unit } else nodes.singleOrNull()
+
     /**
-     * 단위 노드 하나 = [UnitStep.forEach] 쓰임의 설비마다 로봇 단위 하나, 작업 지시의 설비 순서대로.
+     * 항목 하나(once 면 작업 지시 하나)에서 노드들을 차례로 펼친다. 단위 노드 하나도 «노드 하나짜리 그룹» 으로 여기서 펼친다.
+     *
+     * [requires] 가 하나라도 값을 못 내면 [WhenMissing] 대로 단위 하나로 접는다 — 남는 단위의 칸은 정상 해석 그대로이고 파라미터만
+     * 목록에 든 것이며 선행은 없다. 아니면 노드마다 단위 하나이고, 선행(`after`)은 **같은 항목에서** 그 노드가 낸 단위 id 다
+     * (대상끼리 묶지 않는다 — 한 대상의 이동이 실패해도 다음 대상은 간다).
      *
      * 짝 규칙은 코드 `PrepareSequencedRack` 과 같다. 후보는 짝 쓰임의 설비 중 맞출 속성이 있는 것이고, 같은 값이 여럿이면
      * **목록에서 뒤엣것**이다(`associateBy`). 반복 중인 설비에 그 속성이 없으면 짝이 없다.
      */
-    private fun units(step: UnitStep, order: JobOrder): List<ExecutionUnit> {
-        val pairing = step.pairWith
-        val partners: Map<String, EquipmentRequirement> = pairing?.let { p ->
-            order.equipmentRequirements
-                .filter { it.equipmentUse == p.equipmentUse && p.property in it.properties }
-                .associateBy { it.properties.getValue(p.property) }
-        }.orEmpty()
-
-        return order.equipmentRequirements
-            .filter { it.equipmentUse == step.forEach }
-            .map { item ->
-                val paired = pairing?.let { p -> item.properties[p.property]?.let { partners[it] } }
-                val unpaired = pairing != null && paired == null
-                val value = { source: ValueSource -> resolve(source, item, paired) }
-                ExecutionUnit(
-                    unitId = value(step.unitId)!!,
-                    route = Route.ROBOT,
-                    skillType = step.skill,
-                    parameters = step.parameters.mapNotNull { (name, source) -> value(source)?.let { name to it } }.toMap(),
-                    expectedIdentity = step.expectedIdentity?.let(value),
-                    source = step.source?.let(value),
-                    destination = step.destination?.let(value),
-                    // 신원을 안 대는 노드는 선언이 없어도 된다 — 그때는 코드 케이퍼빌리티와 같은 기본값이다.
-                    sourceObservation = step.sourceObservation ?: SourceObservation.OPTIONAL,
-                    // 목적지도 같다 — 식별 정보를 안 대는 목적지는 선언이 없어도 되고, 그때는 보지 않는다.
-                    destinationObservation = step.destinationObservation ?: DestinationObservation.OPTIONAL,
-                    // 짝이 없으면 시작도 못 한다 — 부족은 계획에서 드러난다(코드 케이퍼빌리티와 같은 자리).
-                    state = if (unpaired) UnitState.FAILED else UnitState.PENDING,
-                    failureClass = if (unpaired) step.whenUnpaired else null,
-                )
-            }
+    private fun expand(
+        nodes: List<UnitStep>,
+        requires: List<ValueSource>,
+        whenMissing: WhenMissing?,
+        order: JobOrder,
+        item: EquipmentRequirement?,
+        index: Map<String, Map<String, EquipmentRequirement>>,
+    ): List<ExecutionUnit> {
+        val scopes = nodes.associateWith { node ->
+            val paired = node.pairWith?.let { p -> item?.properties?.get(p.property)?.let { index[node.id]?.get(it) } }
+            Scope(order, item, paired)
+        }
+        val missing = whenMissing != null && requires.any { resolve(it, scopes.getValue(nodes.first())) == null }
+        if (missing) {
+            val node = checkNotNull(kept(nodes, whenMissing))
+            val scope = scopes.getValue(node)
+            return listOf(
+                unit(node, scope, UnitState.FAILED, whenMissing.failureClass) { name -> name in whenMissing.parameters },
+            )
+        }
+        val produced = mutableMapOf<String, String>()
+        return nodes.map { node ->
+            val scope = scopes.getValue(node)
+            // 짝이 없으면 시작도 못 한다 — 부족은 계획에서 드러난다(코드 케이퍼빌리티와 같은 자리).
+            val unpaired = node.pairWith != null && scope.paired == null
+            unit(node, scope, if (unpaired) UnitState.FAILED else UnitState.PENDING, if (unpaired) node.whenUnpaired else null) { true }
+                .apply { after = node.after?.let { produced.getValue(it) } }
+                .also { produced[node.id] = it.unitId }
+        }
     }
 
-    /** 값 출처 하나를 푼다. 출처가 값을 못 내면 대체값, 그것도 없으면 `null`. */
-    private fun resolve(source: ValueSource, item: EquipmentRequirement, paired: EquipmentRequirement?): String? =
-        when (source.from) {
-            ValueFrom.ITEM_ID -> item.id
-            ValueFrom.ITEM_PROPERTY -> source.property?.let { item.properties[it] }
-            ValueFrom.PAIRED_ID -> paired?.id
-        } ?: source.otherwise
+    private fun unit(node: UnitStep, scope: Scope, state: UnitState, failureClass: String?, keep: (String) -> Boolean): ExecutionUnit {
+        val value = { source: ValueSource -> resolve(source, scope) }
+        return ExecutionUnit(
+            unitId = checkNotNull(value(node.unitId)) { "검증을 거치지 않은 정의다: ${node.id} 의 단위 id 가 값을 못 냈다" },
+            route = node.route,
+            skillType = node.skill,
+            parameters = node.parameters.filterKeys(keep).mapNotNull { (name, source) -> value(source)?.let { name to it } }.toMap(),
+            expectedIdentity = node.expectedIdentity?.let(value),
+            source = node.source?.let(value),
+            destination = node.destination?.let(value),
+            // 신원을 안 대는 노드는 선언이 없어도 된다 — 그때는 코드 케이퍼빌리티와 같은 기본값이다.
+            sourceObservation = node.sourceObservation ?: SourceObservation.OPTIONAL,
+            // 목적지도 같다 — 식별 정보를 안 대는 목적지는 선언이 없어도 되고, 그때는 보지 않는다.
+            destinationObservation = node.destinationObservation ?: DestinationObservation.OPTIONAL,
+            state = state,
+            failureClass = failureClass,
+        )
+    }
+
+    /**
+     * 짝 색인 — 짝 규칙이 있는 노드마다 «맞출 속성 값 → 짝 설비». 작업 지시마다 노드당 **한 번** 짓고 설비마다 다시 쓴다(옛 `units()` 와
+     * 같다). 후보는 짝 쓰임의 설비 중 맞출 속성이 있는 것이고, 같은 값이 여럿이면 목록에서 뒤엣것이다(`associateBy`).
+     */
+    private fun partners(nodes: List<UnitStep>, order: JobOrder): Map<String, Map<String, EquipmentRequirement>> =
+        nodes.mapNotNull { node ->
+            node.pairWith?.let { p ->
+                node.id to order.equipmentRequirements
+                    .filter { it.equipmentUse == p.equipmentUse && p.property in it.properties }
+                    .associateBy { it.properties.getValue(p.property) }
+            }
+        }.toMap()
+
+    /** 값을 푸는 자리 — 작업 지시, 반복 중인 설비(once 면 널), 그 짝. */
+    private class Scope(val order: JobOrder, val item: EquipmentRequirement?, val paired: EquipmentRequirement?)
+
+    /**
+     * 값 출처 하나를 푼다. 출처가 값을 못 내면 대체값, 그다음 `else` 출처, 그것도 없으면 `null`. 접미사는 출처가 낸 값에만 붙는다.
+     * `FIRST_*` 는 그 쓰임의 **첫 설비**를 본다 — 첫 설비에 속성이 없으면 다음 설비를 찾지 않는다(코드 `DeliverContainer` 와 같다).
+     */
+    private fun resolve(source: ValueSource, scope: Scope): String? {
+        val first = { scope.order.equipmentRequirements.firstOrNull { it.equipmentUse == source.equipmentUse } }
+        val value = when (source.from) {
+            ValueFrom.ITEM_ID -> scope.item?.id
+            ValueFrom.ITEM_PROPERTY -> source.property?.let { scope.item?.properties?.get(it) }
+            ValueFrom.PAIRED_ID -> scope.paired?.id
+            ValueFrom.ORDER_ID -> scope.order.jobOrderId
+            ValueFrom.ORDER_PARAMETER -> source.parameter?.let { scope.order.parameters[it] }
+            ValueFrom.FIRST_ID -> first()?.id
+            ValueFrom.FIRST_PROPERTY -> source.property?.let { first()?.properties?.get(it) }
+        }
+        return value?.let { it + source.suffix.orEmpty() } ?: source.otherwise ?: source.orElse?.let { resolve(it, scope) }
+    }
 }

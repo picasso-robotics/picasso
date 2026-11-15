@@ -5,6 +5,8 @@ import dev.picasso.middleware.FloorOwnership
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -42,6 +44,10 @@ class MissionValidatorTest {
         assertEquals(emptyList(), refusals(MissionFixtures.withArrivalWait()))
         // 텍스트 신호는 어떤 값이든 기다릴 수 있다.
         assertEquals(emptyList(), refusals(MissionFixtures.withArrivalWait(signal = "lot_code", expect = "LOT-7")))
+        // §15.325 의 칸으로 옮긴 두 정의와 mission-ops 예제 모양. 운반의 transport 는 로봇 스킬이 아니라 현장 스킬 목록에 없어도 된다.
+        assertEquals(emptyList(), refusals(MissionFixtures.INSPECT_ASSET))
+        assertEquals(emptyList(), refusals(MissionFixtures.DELIVER_CONTAINER))
+        assertEquals(emptyList(), refusals(MissionFixtures.MANUFACTURING_INSPECTION))
     }
 
     @Test
@@ -221,6 +227,99 @@ class MissionValidatorTest {
         assertEquals("2 번 나온다", refusal.observed)
     }
 
+    // ── §15.325 의 칸에만 걸리는 검사
+
+    @Test
+    fun `노드 id 는 그룹과 그 안쪽 노드가 한 이름 공간이다`() {
+        val text = MissionFixtures.INSPECT_ASSET.replace("\"id\": \"visit\"", "\"id\": \"travel\"")
+        val refusal = only(MissionRefusalKind.DUPLICATE_NODE_ID, refusals(text))
+        assertEquals("travel", refusal.nodeId)
+    }
+
+    @Test
+    fun `스킬과 관측 선언 검사는 그룹 안쪽 노드에도 걸린다`() {
+        val skill = MissionFixtures.INSPECT_ASSET.replace("\"skill\": \"navigate_to\"", "\"skill\": \"fly_to\"")
+        assertEquals("travel", only(MissionRefusalKind.SKILL_NOT_IN_CONTRACT, refusals(skill)).nodeId)
+        val identity = MissionFixtures.INSPECT_ASSET.replace("\"skill\": \"navigate_to\",", "\"skill\": \"navigate_to\", \"expectedIdentity\": { \"from\": \"ITEM_ID\" },")
+        assertEquals("travel", only(MissionRefusalKind.DESTINATION_OBSERVATION_UNDECLARED, refusals(identity)).nodeId)
+    }
+
+    @Test
+    fun `선행 검사 — after 는 같은 그룹의 앞 단위 노드만 가리킨다`() {
+        fun after(to: String) = MissionFixtures.INSPECT_ASSET.replace("\"after\": \"travel\"", "\"after\": \"$to\"")
+        val later = only(MissionRefusalKind.AFTER_INVALID, refusals(after("inspect")))
+        assertEquals("inspect", later.nodeId)
+        assertEquals("after=inspect", later.observed)
+        assertEquals("같은 그룹의 앞 단위 노드 id(travel)", later.expected)
+        assertEquals("after=visit", only(MissionRefusalKind.AFTER_INVALID, refusals(after("visit"))).observed)
+        assertEquals("after=nowhere", only(MissionRefusalKind.AFTER_INVALID, refusals(after("nowhere"))).observed)
+        // 앞 형제가 아니라 뒤 형제에서 앞을 가리키는 것 — 첫 노드에는 앞이 없다.
+        val first = MissionFixtures.INSPECT_ASSET.replace("\"id\": \"travel\",", "\"id\": \"travel\", \"after\": \"inspect\",")
+        assertEquals("travel", only(MissionRefusalKind.AFTER_INVALID, refusals(first)).nodeId)
+        // 최상위 노드와 대기 노드에는 같은 항목의 앞 노드가 없다.
+        val top = MissionFixtures.withArrivalWait().replace("\"id\": \"place\",", "\"id\": \"place\", \"after\": \"${MissionFixtures.WAIT_NODE}\",")
+        val refusal = only(MissionRefusalKind.AFTER_INVALID, refusals(top))
+        assertEquals("place" to "같은 그룹의 앞 단위 노드 id(없음)", refusal.nodeId to refusal.expected)
+    }
+
+    @Test
+    fun `단위 id 모양 검사 — 같은 그룹의 두 노드가 같은 모양의 단위 id 를 내면 거부한다`() {
+        val text = MissionFixtures.INSPECT_ASSET.replace(", \"suffix\": \".travel\"", "")
+        val refusal = only(MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, refusals(text))
+        assertEquals("inspect", refusal.nodeId)
+        assertEquals("travel, inspect: ITEM_ID", refusal.observed)
+        // 대체값만 다른 것도 같은 모양이다 — ITEM_ID 는 언제나 값을 내므로 대체가 쓰이지 않는다.
+        val fallback = text.replace("\"unitId\": { \"from\": \"ITEM_ID\" },\n\"parameters\": { \"target\"", "\"unitId\": { \"from\": \"ITEM_ID\", \"otherwise\": \"x\" },\n\"parameters\": { \"target\"")
+        assertTrue(fallback != text, "시험 문서가 안 바뀌었다")
+        only(MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, refusals(fallback))
+    }
+
+    @Test
+    fun `플릿 경로 검사 — 운반의 모양이 아니면 거부하고 로봇 스킬 검사에 걸지 않는다`() {
+        val skill = only(MissionRefusalKind.FLEET_UNIT_INVALID, refusals(MissionFixtures.DELIVER_CONTAINER.replace("\"skill\": \"transport\"", "\"skill\": \"pick_place\"")))
+        assertEquals("deliver" to "skill=pick_place", skill.nodeId to skill.observed)
+        val missing = MissionFixtures.DELIVER_CONTAINER.replace(",\n\"destination\": { \"from\": \"FIRST_ID\", \"equipmentUse\": \"destination\" }\n}", "\n}")
+        assertTrue(missing != MissionFixtures.DELIVER_CONTAINER, "시험 문서가 안 바뀌었다")
+        assertEquals("destination=없음", only(MissionRefusalKind.FLEET_UNIT_INVALID, refusals(missing)).observed)
+        // 로봇 경로였다면 운반 이름은 계약에 없는 스킬이다 — 플릿 노드라서 그 검사에 안 걸린다.
+        val robot = MissionFixtures.DELIVER_CONTAINER.replace("\"route\": \"FLEET\",", "")
+        assertTrue(refusals(robot).any { it.kind == MissionRefusalKind.SKILL_NOT_IN_CONTRACT }, "${refusals(robot)}")
+    }
+
+    @Test
+    fun `플릿 경로 검사 — 관측 선언을 거부하고 출발·목적지 관측 검사에 걸지 않는다`() {
+        // 배정 관문은 로봇 단위의 출발·목적지만 읽는다 — 플릿 노드의 선언은 쓰이지 않는 선언이다(§15.227 의 기준).
+        val declared = MissionFixtures.DELIVER_CONTAINER.replace(
+            "\"skill\": \"transport\",",
+            "\"skill\": \"transport\", \"sourceObservation\": \"REQUIRED\", \"destinationObservation\": \"OPTIONAL\",",
+        )
+        val refusal = only(MissionRefusalKind.FLEET_UNIT_INVALID, refusals(declared))
+        assertEquals("sourceObservation=REQUIRED, destinationObservation=OPTIONAL", refusal.observed)
+        // 선언이 없는 플릿 노드는 출발·목적지·기대 식별 정보를 다 대도 선언을 요구받지 않는다.
+        val unit = assertIs<UnitStep>(MissionFixtures.parsed(MissionFixtures.DELIVER_CONTAINER).steps.single())
+        assertFalse(MissionValidator.needsSourceObservation(unit) || MissionValidator.needsDestinationObservation(unit))
+    }
+
+    @Test
+    fun `조건부 포함 검사 — 남길 노드와 남길 파라미터를 그 그룹에서 찾는다`() {
+        val noUnit = MissionFixtures.INSPECT_ASSET.replace("\"unit\": \"inspect\", ", "")
+        val refusal = only(MissionRefusalKind.WHEN_MISSING_INVALID, refusals(noUnit))
+        assertEquals("visit" to "unit=없음", refusal.nodeId to refusal.observed)
+        assertEquals("남길 안쪽 노드 id(travel, inspect)", refusal.expected)
+        val unknown = MissionFixtures.INSPECT_ASSET.replace("\"unit\": \"inspect\"", "\"unit\": \"nowhere\"")
+        assertEquals("unit=nowhere", only(MissionRefusalKind.WHEN_MISSING_INVALID, refusals(unknown)).observed)
+        val parameter = MissionFixtures.INSPECT_ASSET.replace("\"parameters\": [\"target\"]", "\"parameters\": [\"target\", \"location\"]")
+        val stray = only(MissionRefusalKind.WHEN_MISSING_INVALID, refusals(parameter))
+        assertEquals("parameters=location" to "inspect 의 파라미터 이름(target, mode)", stray.observed to stray.expected)
+        // 노드 하나짜리 그룹은 unit 이 없어도 그 노드가 남는다.
+        val single = MissionFixtures.MANUFACTURING_INSPECTION.replace(
+            "{\"kind\": \"unit\", \"id\": \"inspect\", \"skill\": \"inspect\", \"forEach\": \"mission_target\", ",
+            "{\"kind\": \"each\", \"id\": \"visit\", \"forEach\": \"mission_target\", \"requires\": [{\"from\": \"ITEM_PROPERTY\", \"property\": \"location\"}], " +
+                "\"whenMissing\": {\"failureClass\": \"NO_LOCATION\", \"parameters\": []}, \"steps\": [{\"kind\": \"unit\", \"id\": \"inspect\", \"skill\": \"inspect\", ",
+        ).replace("\"property\": \"location\"}}\n]", "\"property\": \"location\"}}]}\n]")
+        assertEquals(emptyList(), refusals(single))
+    }
+
     @Test
     fun `거부를 전부 모으고 각 거부가 여섯 칸과 노드를 든다`() {
         val text = MissionFixtures.withArrivalWait(deadlineSeconds = -1, signal = "rack_ready")
@@ -243,5 +342,22 @@ class MissionValidatorTest {
         // 종류를 가르는 기준이 후속 행동이다 — 같은 행동을 가진 두 종류는 하나로 접혀야 한다.
         val actions = MissionRefusalKind.entries.map { it.nextAction }
         assertEquals(actions.size, actions.toSet().size, "후속 행동이 같은 종류가 있다: $actions")
+    }
+
+    @Test
+    fun `단위 id 모양 검사 — else 의 끝값과 최상위 once 노드끼리도 본다`() {
+        // 위치가 없는 대상에서 이동의 단위 id 가 점검의 단위 id(ITEM_ID)와 같아진다.
+        val fallback = MissionFixtures.INSPECT_ASSET.replace(
+            "\"unitId\": { \"from\": \"ITEM_ID\", \"suffix\": \".travel\" }",
+            "\"unitId\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"location\", \"else\": { \"from\": \"ITEM_ID\" } }",
+        )
+        val refusal = only(MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, refusals(fallback))
+        assertEquals("inspect" to "travel, inspect: ITEM_ID", refusal.nodeId to refusal.observed)
+
+        // 작업 지시마다 한 번인 노드 둘이 같은 모양이면 작업 지시마다 겹친다. 속성 이름까지 보인다.
+        val node = MissionFixtures.DELIVER_CONTAINER.substringAfter("\"steps\": [\n").substringBeforeLast("\n]")
+        val twice = MissionFixtures.DELIVER_CONTAINER.replace(node, node + ",\n" + node.replace("\"id\": \"deliver\"", "\"id\": \"deliver2\""))
+        val once = only(MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, refusals(twice))
+        assertEquals("deliver2" to "deliver, deliver2: FIRST_PROPERTY(source.container)", once.nodeId to once.observed)
     }
 }
