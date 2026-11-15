@@ -329,7 +329,7 @@ class PumpIsolationTest {
             val cell = CellMimic(now = { harness.clock.now() }, live = { loc -> fleet.containersAt[loc]?.let { it to fleet.placedAt[loc] } })
             val flaky = FlakyCancelFleet(fleet, failures = 1)
             val mw = Middleware(ClientRobotPort(harness.client()), cell, flaky, now = { harness.clock.now() })
-            fleet.containersAt[SOURCE] = CONTAINER
+            fleet.place(SOURCE, CONTAINER)
 
             fun drive(until: () -> Boolean) {
                 repeat(40) {

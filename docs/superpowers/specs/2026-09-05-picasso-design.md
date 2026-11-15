@@ -159,6 +159,7 @@ picasso/
   mimic/              프로파일 주도 가상화 에뮬레이터 + 제어 채널 C-2
   client/             계약 소비자 — 완료 기준 증명용
   picasso/            미들웨어 코어 — 정준 모델 및 공통 실행 엔진. 기종 무의존 (ADR 38)
+  fleet-mimic/        프로젝트용 플릿 계약의 인프로세스 더블 — 담는 쪽의 모의 실행용. picasso 공개 API 만 (§15.326)
   adapter-core/       어댑터 공유 계약 어휘 및 RobotAdapter. 기종 무의존 (ADR 33)
   adapter-host/       개별 어댑터를 gRPC 계약 서비스로 노출하는 서버. 기종 무의존 (ADR 39)
   adapter-<vendor>-<model>/
@@ -185,9 +186,9 @@ picasso/
 - `mimic`: 투영 및 협상 판정 로직은 `capability`로, 메시지 발행 및 레지스트리 적재는 `uplink`로 위임 분리되었다(2026-09-10).
 - `client` 및 `adapter-<vendor>-<model>`: 하위 격리 원칙을 준수한다.
 
-**`adapter-*`는 기종마다 모듈 하나다(ADR 33).** 게이트 7번이 보는 열하나 (`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit`) **밖**에 두는 것이 요점이며, 기종 지식이 갈 곳이 정확히 거기라서 나머지가 기종을 모를 수 있다. 로봇 어댑터 셋(`adapter-agility-digit`·`adapter-boston-dynamics-spot`·`adapter-unitree-g1`)의 의존성이 `adapter-core`·`contracts`뿐인 이유도 동일하다: 어댑터가 `registry`를 알면 순환 회피 규칙이 위반되고, `profile-model`을 알면 구현과 선언의 원천이 결합되기 때문이다. 반면 `adapter-boston-dynamics-orbit`는 플릿 단위 연동 및 배치 런처 특성상 `adapter-core`, `adapter-host`, `contracts`, `profile-model`, `uplink`를 참조한다(ADR 37, 39).
+**`adapter-*`는 기종마다 모듈 하나다(ADR 33).** 게이트 7번이 보는 열둘 (`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit` · `fleet-mimic`) **밖**에 두는 것이 요점이며, 기종 지식이 갈 곳이 정확히 거기라서 나머지가 기종을 모를 수 있다. 로봇 어댑터 셋(`adapter-agility-digit`·`adapter-boston-dynamics-spot`·`adapter-unitree-g1`)의 의존성이 `adapter-core`·`contracts`뿐인 이유도 동일하다: 어댑터가 `registry`를 알면 순환 회피 규칙이 위반되고, `profile-model`을 알면 구현과 선언의 원천이 결합되기 때문이다. 반면 `adapter-boston-dynamics-orbit`는 플릿 단위 연동 및 배치 런처 특성상 `adapter-core`, `adapter-host`, `contracts`, `profile-model`, `uplink`를 참조한다(ADR 37, 39).
 
-**`adapter-core`의 태동**: ADR 33에서 예고한 바와 같이, 다수 어댑터 간의 공통 어휘 추출 요구에 따라 신설되었다. 추출된 공통 모듈은 기종 무의존성을 유지해야 하므로 게이트 7번 검사 목록에 편입되었다. 검사 7번 대상 모듈은 현재 총 11개이다 — `client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit`. 기종별 어댑터 모듈 자체는 기종 지식을 캡슐화하는 목적을 가지므로 이 목록에서 제외된다. 정본 목록은 코드(`Check07ModelBranching.MODULES`)에 선언되어 있으며 `DocumentClaimsTest`에 의해 지속 검증된다.
+**`adapter-core`의 태동**: ADR 33에서 예고한 바와 같이, 다수 어댑터 간의 공통 어휘 추출 요구에 따라 신설되었다. 추출된 공통 모듈은 기종 무의존성을 유지해야 하므로 게이트 7번 검사 목록에 편입되었다. 검사 7번 대상 모듈은 현재 총 12개이다 — `client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit` · `fleet-mimic`. 기종별 어댑터 모듈 자체는 기종 지식을 캡슐화하는 목적을 가지므로 이 목록에서 제외된다. 정본 목록은 코드(`Check07ModelBranching.MODULES`)에 선언되어 있으며 `DocumentClaimsTest`에 의해 지속 검증된다.
 
 **`profile-model` 신설 (ADR 29)**: 프로파일 문서 파싱 로직이 `gate`와 `mimic` 양쪽에 필요함에 따라, `mimic`이 `gate`의 buf 실행기 및 9개 검사 규칙에 불필요하게 결합되는 것을 차단하기 위해 공통 모듈로 분리하였다.
 
@@ -982,7 +983,7 @@ mimic/
 
 **검사 4 양방향 교차 검증**: 프로파일이 참조하는 스킬이 Protobuf에 실재하는지 검증할 뿐만 아니라, 반대로 계약 카탈로그에 선언된 `since_minor ≤ 선언 minor`인 필수 파라미터(`is_optional=false`)가 프로파일에 누락 없이 존재하는지를 엄격히 검증한다.
 
-**검사 7 기종 분기 차단**: 공통 계층 모듈(`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit`)의 소스 코드 내에 특정 벤더명이나 모델 식별자 문자열이 하드코딩되는 것을 원천 차단한다. 정본 목록은 코드베이스의 `Check07ModelBranching.MODULES`에 정의되어 있으며 기계적으로 검증된다.
+**검사 7 기종 분기 차단**: 공통 계층 모듈(`client` · `mimic` · `harness` · `adapter-core` · `picasso` · `capability` · `adapter-host` · `uplink` · `registry` · `profile-model` · `host-kit` · `fleet-mimic`)의 소스 코드 내에 특정 벤더명이나 모델 식별자 문자열이 하드코딩되는 것을 원천 차단한다. 정본 목록은 코드베이스의 `Check07ModelBranching.MODULES`에 정의되어 있으며 기계적으로 검증된다.
 
 **검사 9 결속 경계**: 자리 이름이 어느 기종의 무엇에 묶이는지는 어댑터 경계의 지식이다(ADR 34 · 35). 검사 7이 기종 *좌표*를 막는다면 이 검사는 기종 *결속*을 막는다. **탐색어는 결속 선언 파일이 대는 최상위 타입명에서 유도**하므로 타입이 늘면 금지도 함께 는다 — 훑는 모듈 목록은 코드가 정본이다(`Check09BindingScope.MODULES`).
 
@@ -1111,7 +1112,7 @@ mimic/
 
 기록은 `docs/adr/`에 있고 번호가 이 표의 행 번호다. **이미 내려서 코드에 박힌 것만 쓴다** — 3a·3b가 만들 것(11~21)은 그때 쓴다. 결정하지 않은 것을 미리 적어 두면 그것이 결정처럼 보인다.
 
-> 마지막 대조: 2026-11-15 · sha256:c9b9f3de9cfa · 열림: C-3, §15.7, §15.126, ADR 32 · 시나리오 5, §15.4, §15.5, §15.6 · §15.11 · §15.28, §15.8, §15.9, §15.10, §15.1, §15.2, §15.33, §15.87
+> 마지막 대조: 2026-11-15 · sha256:ced0cef54b75 · 열림: C-3, §15.7, §15.126, ADR 32 · 시나리오 5, §15.4, §15.5, §15.6 · §15.11 · §15.28, §15.8, §15.9, §15.10, §15.1, §15.2, §15.33, §15.87
 
 ## 15. 알려진 한계
 
@@ -3139,6 +3140,26 @@ mimic/
     **검사 9번이 결속을 어댑터 경계 안에 가둔다.** 탐색어는 결속 파일이 선언한 최상위 이름에서 유도하므로 타입을 더하면 금지도 저절로 는다. 훑는 모듈에 `registry` 와 `profile-model` 을 넣었다 — 검사 7의 목록에 그 둘이 없어서, 없다는 이유로 결속까지 새면 같은 구멍이 두 번째로 열린다.
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
+
+326. **플릿 미믹을 시험 소스에서 출하 모듈 `fleet-mimic` 으로 옮기고, 스레드 안전·모르는 핸들의 정의된 결과·선택적 시계 구동·세계 채우기 면을 더했다** (mission-ops 플릿 포트 1·2단계의 picasso 몫. 한계 대장에 행 «§15.326 · 기체 묶임» 을 새로 열었다).
+
+    ★**옮긴 까닭.** mission-ops 가 플릿 경로 계획을 실 플릿 없이 돌려야 한다 — 1단계는 모의 실행 하네스가 인프로세스 플릿 미믹으로 용기 속성 표본과 이상적 셀의 플릿 목적지를 보고, 2단계는 플릿 세계를 site 프로세스에 두고 실행 호스트가 루프백 HTTP 로 소비한다. `AmrFleetMimic` 이 picasso 시험 소스에 있으면 복합 빌드 치환으로 가져갈 수 없다. 자문 세 라운드의 합의로 새 출하 모듈 `fleet-mimic`(패키지 `dev.picasso.fleetmimic`, `api(:picasso)`)을 세웠다. picasso 는 `testImplementation(:fleet-mimic)` 으로만 쓰므로 순환이 없다. `host-kit`(§15.314)과 같은 모양이다 — picasso 의 공개 API(`AmrFleetPort` 와 그 값 타입)만 쓴다.
+
+    ★**공개 범위.** 생성(`now`, 선택 `stepEvery`), 세계 채우기(`place`·`clear`·`block`·`unblock`), 진행(`tick`), 관측(권하는 읽기는 자물쇠 한 번에 뜬 사본 `snapshot(): Map<자리, Placed(용기, 놓인 시각?)>` 와 자리 하나의 짝을 한 번에 읽는 `observe`. 그 밖에 `containerAt`·`placedAtOf`·`placedAt`·`blocked`·`dispatches`·`orderOf`)과 플릿 계약 넷(`dispatch`·`find`·`status`·`cancel`)만 연다. 내부 가변 맵은 내주지 않는다. `containersAt` 은 옛 표기 호환용 창이다 — 호출마다 따로 자물쇠를 지나므로 그 위의 `toMap()` 은 원자 사본이 아니다(크기를 읽은 뒤 비면 순회가 던질 수 있다, 검토 반영). 그 창은 옛 쓰기 표기 `containersAt[자리] = 용기` 하나를 `set` 으로 받는다(놓인 시각을 건드리지 않는 옛 뜻 그대로, 새 소비자는 `place`) — 이 변경에서 고치지 않는 기존 시험 하나가 그 표기를 써서 이름과 표기를 함께 이었다. 같은 까닭으로 picasso 시험 소스 `dev.picasso.middleware` 에 `typealias AmrFleetMimic` 한 줄(`FleetMimicAlias.kt`)을 두어 같은 패키지 시험이 import 없이 이름을 그대로 쓴다.
+
+    ★**보강.** ① 스레드 안전 — 잠금 밖에서 보내고 읽는 데코레이터(`IssuingFleetPort`·`PrefetchingFleetPort`, §15.237)가 다른 스레드에서 부르므로 모든 공개 호출이 한 자물쇠를 지난다. 바깥 코드는 주입된 시계 `now` 하나이고 **자물쇠를 잡기 전에 읽어** 그 값을 안에 넘긴다(걸음·따라잡기·놓인 시각 모두). 첫 판은 자물쇠를 쥔 채 시계를 불러, 시계가 다른 잠금을 잡거나 미믹을 다시 부르면 교착할 수 있었다(검토 반영). 시계 구동에서 시계 안에서 부를 수 있는 관측은 시계를 안 읽는 `blocked`·`dispatches`·`orderOf` 다. ② 모르는 핸들 — `status` 는 `FAILED` 와 «모르는 운반» 사유, `cancel` 은 `false` 를 준다(옛 미믹은 `getValue` 로 던졌다). ③ 진행 — 수동 `tick` 이 기본이라 picasso 시험의 결정성이 그대로다. `stepEvery` 를 주면 공개 호출마다 `now` 를 읽어 지난 걸음을 따라잡는다. 스레드를 띄우지 않으므로 가짜 시계면 여전히 결정적이고, 따라잡는 걸음이 놓는 용기의 시각은 묻는 순간이 아니라 그 걸음의 시각이며, 더 바뀔 것이 없으면 따라잡기를 거기서 그친다(막힌 목적지 앞에서 긴 공백이 걸음을 끝없이 돌지 않는다). ④ 기존 동작 — 참조 멱등 `dispatch`, 찾기만 하는 `find`(§15.254), 계약 기본 `executionLookup`(`CLIENT_REFERENCE`), 이미 거둔 운반의 재취소 `true`, 인수 때 출발지의 놓인 시각을 남기는 것, 취소의 되돌림이 출발지를 조건 없이 덮어쓰는 것(인수 뒤 그 자리에 둔 다른 용기가 사라진다 — KDoc)까지 그대로 두었다.
+
+    ★**미믹의 약속과 실 플릿의 차이.** 취소가 싣고 있던 용기를 출발지로 되돌려 놓는 것은 **이 미믹의 약속이지 실 플릿의 보장이 아니다**(`cancel` 의 KDoc). 실 플릿은 거둔 용기를 다른 자리에 내려놓거나 실은 채 멈출 수 있고, 그때 세계가 어디인지는 플릿 어댑터와 그 자리의 설비가 말해야 한다. 접수 시점의 출발지 확인, 막힌 목적지 앞의 인계 대기, 한 걸음에 한 단계라는 진행도 이 미믹의 모델이다. mission-ops 의 모의 실행 보고와 guarantees 는 «모의 실행의 범위» 를 이 차이와 함께 적는다(인계 노트).
+
+    ★**플릿 proto 를 만들지 않은 까닭(ADR 9).** 플릿 포트는 보고서 4.1 의 프로젝트용 계약이고, 2단계의 루프백 HTTP 는 mission-ops 가 제 프로세스 둘 사이에 둔다. 계약(④)에 플릿 메시지를 선언하면 그 선언을 소비하는 쪽이 정의되지 않은 선언이 된다 — ADR 9 가 막는 그것이다. 계약에 들일 때는 실 플릿 어댑터가 그 메시지를 소비하는 날이다. §15.219 의 «플릿 경로 게이트 미적용» 행도 그대로 둔다 — 플릿이 기체를 정하는 사정은 이 이동으로 바뀌지 않았다.
+
+    ★**드러난 한계 — 플릿 전용 계획의 기체 묶임.** 로봇 단위 없이 플릿 운반만 든 계획도 접수(`submit(order, robotId)`)가 기체 하나를 요구해 등록·점유·제한 검사를 그 기체에 걸고, 그 기체가 실행과 인시던트·조치 탐색 기록의 `robotId` 에 실린다. 담는 쪽이 출하된 미믹으로 플릿 전용 계획을 돌리게 되면서 이것이 운영 화면에 드러난다(mission-ops 2단계는 «묶인 기체(실행 주체 아님)» 으로 표기하고 요청 후보가 정확히 하나일 때만 받는다). 해소 조건은 picasso 의 접수 모델이 로봇 단위 없는 계획에 기체를 요구하지 않는 것이고, 실행·인시던트·판단 기록·내보내기의 `robotId` 가 비는 모양을 계약 문장·판단 기록 버전·내보내기 버전과 함께 정해야 해서 이 변경에 넣지 않았다. 한계 대장 내부 행으로 열었다.
+
+    ★**게이트와 문서.** 게이트 7번(기종 분기 금지) 대상에 `fleet-mimic` 을 더해 열둘이 되었고, 게이트 9번(결속 경계)에도 더했다 — 자리를 글자로만 다루는 플릿 더블이라 결속을 몰라야 한다. 모듈은 열여덟이고 구성도를 다시 뽑았다(`fleet-mimic` 칸을 가운데 열 맨 위에 두고 `orbit>adapter-host` 의 길을 옮겼다). `LayeringTest`·`SourceSizeBudgetTest` 는 picasso 출하 소스만 보므로 바뀌지 않는다. `architecture.md` §4·§4b, `seams.md`, `verification.md` 11행, `picasso/README.md` §5, 루트 README 의 모듈 목록, 이 문서 §3 의 모듈 나무를 고쳤고, 모듈의 문 `fleet-mimic/README.md` 를 새로 두어 주장의 자리가 일흔하나가 되었다(`CompletionCriterionTest`).
+
+    ★**시험.** 새 모듈의 `AmrFleetMimicTest` 열둘 — 세계 채우기와 관측이 사본·창인 것, 수동 걸음과 참조 멱등, 출발지 거절과 취소 복귀(재취소 멱등), 모르는 핸들, 시계 구동의 따라잡기와 걸음 시각, 막힌 목적지 앞의 긴 공백과 풀림, 걸음 간격 검사, 여러 스레드의 같은 참조 재전송·걸음·읽기 겹침, 사본과 자리 관측의 짝, 취소 되돌림의 덮어쓰기, 시계가 바깥 잠금을 잡고 미믹을 다시 불러도 교착 없음(수동·시계 구동 둘, 다른 스레드가 같은 잠금을 쥔 채 미믹을 부름). 결함 주입 일곱이 모두 이름 있는 시험에 잡혔다 — 모르는 핸들에 던짐, 걸음 시각 대신 묻는 시각, 시계 구동에서 걸음을 안 냄, 같은 참조의 동시 재전송이 새 운반, 시계를 자물쇠 안에서 읽음(교착으로 시간 초과), 사본이 놓인 시각을 버림, 잠금 전에 읽은 이른 시각을 그대로 걸음 시각으로 씀(재검토 반영 — 놓인 시각이 거꾸로 가던 것을 이미 걸은 가장 늦은 시각으로 막음). 기존 picasso 플릿 시험(`DeliverContainerTest`·`InDoubtTest`·`OffLockFleetTest`·`OffLockFleetReadTest`·`ExportFixtureTest`·`IncidentBundleTest`·`PumpIsolationTest`·`ScenarioChainTest` 등)은 별칭으로 이름을 잇고 세계 쓰기만 `place`·`block`·`unblock` 으로 고쳐 그대로 통과한다. 시험 수 2,566 → 2,578.
+
+    ★**인계 노트** `handoff/mission-ops/fleet-mimic.md` — 모듈 좌표와 복합 빌드 치환 한 줄, 공개 API, 1·2단계 합의 요지, 보장 아님 항목.
 
 325. **임무 정의 버전 1 에 반복 그룹·조건부 포함·플릿 경로·선행·작업 지시 값을 선택 칸으로 더해 `DeliverContainer`·`InspectAsset` 을 데이터 정의로 옮기고, 코드 정의와의 동등성 시험을 붙였다** (한계 레지스터 다음 작업 ④. 행 «§15.209 · 정의 둘» 닫힘).
 

@@ -13,6 +13,7 @@
   <!-- edge: adapter-host -> capability -->
   <!-- edge: adapter-host -> uplink -->
   <!-- edge: adapter-unitree-g1 -> adapter-core -->
+  <!-- edge: fleet-mimic -> picasso -->
   <!-- edge: harness -> capability -->
   <!-- edge: harness -> client -->
   <!-- edge: harness -> mimic -->
@@ -26,7 +27,7 @@
   <!-- hidden-edges: 20 -->
   <g font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif" fill="#262626">
     <text x="20" y="36" font-size="17" font-weight="700">모듈 의존 관계</text>
-    <text x="20" y="56" font-size="12" fill="#6f6f6f">모듈 17 개 사이의 프로덕션 의존 관계</text>
+    <text x="20" y="56" font-size="12" fill="#6f6f6f">모듈 18 개 사이의 프로덕션 의존 관계</text>
 
     <!-- role zones -->
     <rect x="24" y="84" width="144" height="328" fill="none" stroke="#bdbdbd"/>
@@ -47,6 +48,9 @@
     <rect x="192" y="112" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
     <text x="202" y="135" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">harness</text>
     <text x="202" y="151" font-size="11" fill="#6f6f6f">통합 시험 러너</text>
+    <rect x="352" y="112" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="362" y="135" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">fleet-mimic</text>
+    <text x="362" y="151" font-size="11" fill="#6f6f6f">플릿 계약 더블</text>
     <rect x="512" y="112" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
     <text x="522" y="135" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">orbit</text>
     <text x="522" y="151" font-size="11" fill="#6f6f6f">플릿 연동 런처</text>
@@ -96,6 +100,7 @@
     <!-- edges: shipping dependencies -->
     <g fill="none" stroke="#262626" stroke-width="1.2">
       <path d="M96,164 V214" marker-end="url(#data)"/>
+      <path d="M384,112 V76 H16 V242 H30" marker-end="url(#data)"/>
       <path d="M96,268 V350" marker-end="url(#data)"/>
       <path d="M128,268 V292 H224 V350" marker-end="url(#data)"/>
       <path d="M256,268 V350" marker-end="url(#data)"/>
@@ -109,7 +114,7 @@
       <path d="M192,160 H172 V378 H162" marker-end="url(#data)"/>
       <path d="M192,148 H176 V392 H190" marker-end="url(#data)"/>
       <path d="M320,148 H340 V384 H350" marker-end="url(#data)"/>
-      <path d="M512,132 H432 V214" marker-end="url(#data)"/>
+      <path d="M544,164 V192 H432 V214" marker-end="url(#data)"/>
       <path d="M512,156 H496 V392 H482" marker-end="url(#data)"/>
       <path d="M640,140 H656 V378 H642" marker-end="url(#data)"/>
     </g>
