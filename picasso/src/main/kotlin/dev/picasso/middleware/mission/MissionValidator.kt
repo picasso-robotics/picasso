@@ -102,13 +102,15 @@ enum class MissionRefusalKind(val owner: RefusalOwner, val nextAction: String) {
 
     /**
      * 선행 검사 — 단위 노드의 `after` 가 같은 반복 그룹의 **앞 형제** 단위 노드를 가리키지 않는다(자기·뒤·그룹 밖·없는 노드·
-     * 최상위 노드의 선행, §15.325). 엔진은 참조한 단위가 없으면 기다리지 않고 내므로 끊긴 선행은 조용히 순서를 잃는다.
+     * 최상위 노드의 선행, §15.325, 갈래를 넘는 선행, §15.328). 엔진은 참조한 단위가 없으면 기다리지 않고 내므로 끊긴 선행은 조용히
+     * 순서를 잃는다.
      */
     AFTER_INVALID(RefusalOwner.ENGINEER, "after 를 같은 그룹의 앞 단위 노드 id 로 고치거나 지운다"),
 
     /**
      * 단위 id 모양 검사 — 같은 그룹의 두 단위 노드가 같은 모양(출처·접미사)의 단위 id 를 낸다. 항목마다 단위 id 가 겹쳐
      * 작업 수락이 늘 거부한다(`DUPLICATE_UNIT_ID`). 설비 id 가 우연히 겹치는 것은 작업 지시가 와야 알므로 실행 때 막는다.
+     * 한 분기의 다른 갈래 두 노드가 같은 모양이어도 막는다(§15.328).
      */
     UNIT_ID_SHAPE_COLLISION(RefusalOwner.ENGINEER, "한쪽 단위 id 에 다른 접미사를 붙인다"),
 
@@ -120,7 +122,7 @@ enum class MissionRefusalKind(val owner: RefusalOwner, val nextAction: String) {
 
     /**
      * 조건부 포함 검사 — `whenMissing` 이 남길 노드를 모르거나(노드가 둘 이상인 그룹에 `unit` 이 없다, 없는 노드다) 남길 파라미터
-     * 이름이 그 노드의 파라미터가 아니다.
+     * 이름이 그 노드의 파라미터가 아니다. 분기의 접힘이 남길 노드의 단위 id 가 조건 값 없이 값을 내지 못한다(§15.328).
      */
     WHEN_MISSING_INVALID(RefusalOwner.ENGINEER, "whenMissing 의 unit 과 parameters 를 그 그룹의 노드와 파라미터 이름으로 고친다"),
 }
@@ -129,7 +131,9 @@ enum class MissionRefusalKind(val owner: RefusalOwner, val nextAction: String) {
  * 검증기 — 임무 정의가 활성화될 수 있는가. **라이브러리다** — 같은 규칙으로 화면이 저장 전에 막고 활성화가 막는다.
  *
  * 검사는 열하나이고(기한·신호·자원·스킬·안전·출발 관측·목적지 관측, §15.325 의 선행·단위 id 모양·플릿 경로·조건부 포함) 그 앞에
- * 노드 id 중복을 본다. §15.325 의 네 검사는 버전 1 에 더한 칸에만 걸린다 — 그 칸을 안 쓰는 문서의 결과는 그대로다. **모든 거부를 모아 낸다** — 하나만 알리면
+ * 노드 id 중복을 본다. §15.325 의 네 검사는 버전 1 에 더한 칸에만 걸린다 — 그 칸을 안 쓰는 문서의 결과는 그대로다. 접수 시점
+ * 분기(§15.328)는 새 거부 종류 없이 기존 검사를 넓혔다 — 정적 검사는 모든 갈래에, 선행은 갈래를 넘지 않게, 단위 id 모양은 갈래
+ * 사이에도, 접힘은 남길 노드의 단위 id 까지. 분기 중첩·갈래 안 그룹·조건 출처는 파서가 막는다(`UNREADABLE`). **모든 거부를 모아 낸다** — 하나만 알리면
  * 고치고 다시 내고 또 거부되는 왕복이 생긴다.
  *
  * 함수 이름은 관문의 판정 이름과 겹치지 않게 둔다 — 자리 대조 시험이 이름으로 판정의 자리를 찾는다.
@@ -171,12 +175,50 @@ object MissionValidator {
             whenMissingRefusals(definition, at)
     }
 
-    /** 단위 노드 전부 — 최상위의 것과 반복 그룹 안쪽의 것, 정의 순서대로. 해석기도 같은 목록을 본다. */
-    fun unitNodes(definition: MissionDefinition): List<UnitStep> = definition.steps.flatMap { step ->
+    /**
+     * 단위 노드 전부 — 최상위의 것, 반복 그룹 안쪽의 것, 분기의 **모든 갈래**의 것(§15.328), 정의 순서대로. 해석기도 같은 목록을
+     * 본다. 고르지 않을 갈래도 든다 — 정적 검사(스킬·관측 선언·플릿)는 어느 갈래가 골릴지 모르는 활성화 때 모두에 건다.
+     */
+    fun unitNodes(definition: MissionDefinition): List<UnitStep> = definition.steps.flatMap(::unitsOf)
+
+    /** 대기 노드 전부 — 최상위의 것과 최상위 분기의 모든 갈래의 것(§15.328). 그룹 안에는 대기 노드가 없다. */
+    fun waitNodes(definition: MissionDefinition): List<WaitStep> = definition.steps.flatMap { step ->
         when (step) {
-            is UnitStep -> listOf(step)
-            is EachStep -> step.steps
+            is WaitStep -> listOf(step)
+            is ChoiceStep -> step.branches.flatten().filterIsInstance<WaitStep>()
+            is UnitStep, is EachStep -> emptyList()
+        }
+    }
+
+    /** 노드 하나가 든 단위 노드 — 그룹은 안쪽, 분기는 모든 갈래. */
+    internal fun unitsOf(step: MissionStep): List<UnitStep> = when (step) {
+        is UnitStep -> listOf(step)
+        is EachStep -> step.steps.flatMap(::unitsOf)
+        is ChoiceStep -> step.branches.flatten().flatMap(::unitsOf)
+        is WaitStep -> emptyList()
+    }
+
+    /**
+     * 단위 노드마다 `after` 로 가리킬 수 있는 노드 id — 같은 그룹의 앞 형제 단위 노드(§15.325). 그룹 안 분기의 갈래 노드는 그 분기
+     * 앞의 형제 단위 노드와 **같은 갈래의** 앞 노드다(§15.328) — 다른 갈래의 노드는 그 항목에서 펼쳐지지 않을 수 있고, 분기 밖에서
+     * 갈래 안을 가리키면 그 갈래가 안 골릴 때 선행이 끊긴다. 최상위 노드(최상위 분기의 갈래 노드 포함)는 비었다. 해석기도 같은 표를 본다.
+     */
+    internal fun predecessors(definition: MissionDefinition): List<Pair<UnitStep, List<String>>> = definition.steps.flatMap { step ->
+        when (step) {
             is WaitStep -> emptyList()
+            is UnitStep, is ChoiceStep -> unitsOf(step).map { it to emptyList() }
+            is EachStep -> {
+                val before = mutableListOf<String>()
+                step.steps.flatMap { inner ->
+                    when (inner) {
+                        is UnitStep -> listOf(inner to before.toList()).also { before += inner.id }
+                        is ChoiceStep -> inner.branches.flatMap { branch ->
+                            val units = branch.filterIsInstance<UnitStep>()
+                            units.mapIndexed { at, node -> node to before + units.take(at).map { it.id } }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -206,13 +248,20 @@ object MissionValidator {
             .toSet()
     }
 
-    /** 노드 id 중복 — 그룹과 그 안쪽 노드도 한 이름 공간이다. */
+    /** 노드 id 중복 — 그룹과 그 안쪽 노드, 분기와 그 갈래의 노드도 한 이름 공간이다. */
     private fun duplicateNodeIds(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
-        definition.steps.flatMap { if (it is EachStep) listOf(it) + it.steps else listOf(it) }.groupingBy { it.id }.eachCount().filterValues { it > 1 }.map { (id, n) ->
+        definition.steps.flatMap(::nodesOf).groupingBy { it.id }.eachCount().filterValues { it > 1 }.map { (id, n) ->
             MissionRefusal(MissionRefusalKind.DUPLICATE_NODE_ID, id, "$n 번 나온다", "정의 안에서 한 번", at)
         }
 
-    private fun waits(definition: MissionDefinition) = definition.steps.filterIsInstance<WaitStep>()
+    /** 노드 자신과 그 안의 노드 전부. */
+    private fun nodesOf(step: MissionStep): List<MissionStep> = listOf(step) + when (step) {
+        is EachStep -> step.steps.flatMap(::nodesOf)
+        is ChoiceStep -> step.branches.flatten().flatMap(::nodesOf)
+        is UnitStep, is WaitStep -> emptyList()
+    }
+
+    private fun waits(definition: MissionDefinition) = waitNodes(definition)
 
     /** 기한 — 대기 노드마다 양의 기한과 허용된 기한 뒤 상태. 파서가 아니라 여기서 본다. */
     private fun deadlineRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
@@ -337,48 +386,58 @@ object MissionValidator {
     /** 로봇 경로 단위 노드. 플릿 노드의 스킬·관측 선언은 [fleetRefusals] 가 본다 — 한 문제에 거부 하나다. */
     private fun robotUnits(definition: MissionDefinition) = unitNodes(definition).filter { it.route == Route.ROBOT }
 
-    /** 노드 묶음 — 최상위 단위 노드는 노드 하나짜리 묶음이고 반복 그룹은 그 안쪽 노드들이다. */
-    private fun groups(definition: MissionDefinition): List<Pair<MissionStep, List<UnitStep>>> = definition.steps.mapNotNull { step ->
+    /** 노드 묶음 — 최상위 단위 노드는 노드 하나짜리 묶음이고 반복 그룹은 그 안쪽 단위 노드들(분기의 모든 갈래 포함)이다. */
+    private fun groups(definition: MissionDefinition): List<Pair<MissionStep, List<UnitStep>>> = definition.steps.flatMap { step ->
         when (step) {
-            is UnitStep -> step to listOf(step)
-            is EachStep -> step to step.steps
-            is WaitStep -> null
+            is UnitStep -> listOf(step to listOf(step))
+            is EachStep -> listOf(step to unitsOf(step))
+            // 최상위 분기의 갈래 안 단위 노드는 최상위 단위 노드다 — 제 조건부 포함(requires·whenMissing)을 가질 수 있다(§15.328).
+            is ChoiceStep -> step.branches.flatten().filterIsInstance<UnitStep>().map { it to listOf(it) }
+            is WaitStep -> emptyList()
         }
     }
 
-    /** 선행 — `after` 는 같은 반복 그룹의 앞 형제 단위 노드만 가리킨다. 해석기도 같은 조건을 생성 때 본다. */
+    /**
+     * 선행 — `after` 는 같은 반복 그룹의 앞 형제 단위 노드만 가리키고, 갈래를 넘지 않는다([predecessors]). 해석기도 같은 조건을
+     * 생성 때 본다.
+     */
     private fun afterRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
-        groups(definition).flatMap { (step, nodes) ->
-            nodes.mapIndexedNotNull { index, node ->
-                val after = node.after ?: return@mapIndexedNotNull null
-                if (step is EachStep && after in nodes.take(index).map { it.id }) return@mapIndexedNotNull null
-                val siblings = if (step is EachStep) nodes.take(index).map { it.id } else emptyList()
-                MissionRefusal(
-                    MissionRefusalKind.AFTER_INVALID, node.id, "after=$after",
-                    "같은 그룹의 앞 단위 노드 id(${siblings.joinToString().ifEmpty { "없음" }})", at,
-                )
-            }
+        predecessors(definition).mapNotNull { (node, allowed) ->
+            val after = node.after ?: return@mapNotNull null
+            if (after in allowed) return@mapNotNull null
+            MissionRefusal(
+                MissionRefusalKind.AFTER_INVALID, node.id, "after=$after",
+                "같은 그룹의 앞 단위 노드 id(${allowed.joinToString().ifEmpty { "없음" }})", at,
+            )
         }
 
     /**
-     * 단위 id 모양 — 같은 그룹의 두 노드가, 또는 최상위 `once` 노드 둘이 낼 수 있는 단위 id 모양(출처·인자·접미사, `else` 의 끝값까지)이
-     * 하나라도 같으면 겹친다. 그룹은 항목마다, `once` 노드는 작업 지시마다 겹친다. 기존 문서에는 그룹도 `once` 도 없어 걸리지 않는다.
+     * 단위 id 모양 — 같은 그룹의 두 노드가, 최상위 `once` 노드 둘이, 또는 한 분기의 **다른 갈래** 두 노드가 낼 수 있는 단위 id
+     * 모양(출처·인자·접미사, `else` 의 끝값까지)이 하나라도 같으면 겹친다. 그룹은 항목마다, `once` 노드는 작업 지시마다 겹친다. 갈래
+     * 사이는 한 계획에 함께 나지 않지만 막는다(§15.328) — 리비전·작업 응답·인시던트가 단위 id 로 접으므로, 같은 id 가 갈래마다 다른
+     * 노드면 «어느 갈래의 단위였나» 가 id 로 안 갈린다. 접힘(`whenMissing`)이 남기는 단위는 갈래 안 노드의 것이라 여기 든다.
+     * 그룹 안 분기의 갈래 노드는 그룹의 노드로 함께 세고, 최상위 분기의 `once` 노드는 최상위 `once` 노드로 함께 센다.
+     * 기존 문서에는 그룹도 `once` 도 분기도 없어 걸리지 않는다.
      */
     private fun unitIdShapeRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> {
-        val sets = definition.steps.filterIsInstance<EachStep>().map { it.steps } +
-            listOf(definition.steps.filterIsInstance<UnitStep>().filter { it.once })
-        return sets.flatMap { nodes ->
-            nodes.indices.flatMap { j ->
-                (0 until j).mapNotNull { i ->
-                    val shared = shapes(nodes[i].unitId).intersect(shapes(nodes[j].unitId).toSet()).firstOrNull() ?: return@mapNotNull null
-                    MissionRefusal(
-                        MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, nodes[j].id,
-                        "${nodes[i].id}, ${nodes[j].id}: ${shapeName(shared)}", "노드마다 다른 단위 id 모양", at,
-                    )
-                }
+        val pairs = definition.steps.filterIsInstance<EachStep>().map { unitsOf(it) }.flatMap(::allPairs) +
+            allPairs(definition.steps.flatMap { step -> if (step is EachStep) emptyList() else unitsOf(step).filter { it.once } }) +
+            definition.steps.filterIsInstance<ChoiceStep>().flatMap { choice ->
+                val branches = choice.branches.map { it.filterIsInstance<UnitStep>() }
+                branches.indices.flatMap { b -> (0 until b).flatMap { a -> branches[a].flatMap { x -> branches[b].map { y -> x to y } } } }
             }
-        }
+        return pairs.mapNotNull { (first, second) ->
+            val shared = shapes(first.unitId).intersect(shapes(second.unitId).toSet()).firstOrNull() ?: return@mapNotNull null
+            MissionRefusal(
+                MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, second.id,
+                "${first.id}, ${second.id}: ${shapeName(shared)}", "노드마다 다른 단위 id 모양", at,
+            )
+        }.distinct()
     }
+
+    /** 앞뒤 순서가 있는 모든 쌍 — (앞, 뒤). */
+    private fun allPairs(nodes: List<UnitStep>): List<Pair<UnitStep, UnitStep>> =
+        nodes.indices.flatMap { j -> (0 until j).map { i -> nodes[i] to nodes[j] } }
 
     /** 단위 id 가 낼 수 있는 모양 — 출처 자신과 `else` 의 끝값. 대체값(`otherwise`)은 단위 id 의 모양을 정하지 않는다. */
     private fun shapes(unitId: ValueSource): List<ValueSource> =
@@ -410,33 +469,86 @@ object MissionValidator {
             )
         }
 
-    /** 조건부 포함 — 남길 노드를 알고, 남길 파라미터가 그 노드의 것이다. */
+    /**
+     * 조건부 포함 — 남길 노드를 알고, 남길 파라미터가 그 노드의 것이다. 분기의 접힘(§15.328)은 그 분기의 갈래 안 단위 노드 하나를
+     * 남기고, 그 노드의 단위 id 가 **조건 값 없이** 값을 내야 한다 — 최상위 분기는 반복 중인 설비가 없어 `ORDER_ID`(또는 `else`
+     * 가 그것)여야 하고, 그룹 안 분기는 `ITEM_ID`·`ORDER_ID` 다. 못 내면 해석기가 계획 때 넘어진다.
+     */
     private fun whenMissingRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
         groups(definition).flatMap { (step, nodes) ->
             val whenMissing = when (step) {
                 is UnitStep -> step.whenMissing
                 is EachStep -> step.whenMissing
-                is WaitStep -> null
+                is WaitStep, is ChoiceStep -> null
             } ?: return@flatMap emptyList()
-            val kept = (if (whenMissing.unit != null) nodes.firstOrNull { it.id == whenMissing.unit } else nodes.singleOrNull())
-                ?: return@flatMap listOf(
-                    MissionRefusal(
-                        MissionRefusalKind.WHEN_MISSING_INVALID, step.id, "unit=${whenMissing.unit ?: "없음"}",
-                        "남길 안쪽 노드 id(${nodes.joinToString { it.id }})", at,
-                    ),
-                )
-            val unknown = whenMissing.parameters.filterNot { it in kept.parameters }
-            if (unknown.isEmpty()) {
-                emptyList()
-            } else {
-                listOf(
-                    MissionRefusal(
-                        MissionRefusalKind.WHEN_MISSING_INVALID, step.id, "parameters=${unknown.joinToString()}",
-                        "${kept.id} 의 파라미터 이름(${kept.parameters.keys.joinToString()})", at,
-                    ),
-                )
-            }
+            val kept = (if (whenMissing.unit != null) nodes.firstOrNull { it.id == whenMissing.unit } else keptAlone(step))
+            foldRefusals(step.id, whenMissing, kept, nodes, item = null, at)
+        } + choices(definition).flatMap { (choice, item) ->
+            val nodes = unitsOf(choice)
+            foldRefusals(choice.id, choice.whenMissing, nodes.firstOrNull { it.id == choice.whenMissing.unit }, nodes, item, at)
         }
+
+    /** `whenMissing.unit` 이 없을 때 남길 노드 — 그 노드 자신, 그룹이면 안쪽 노드가 단위 노드 하나일 때 그것. */
+    private fun keptAlone(step: MissionStep): UnitStep? = when (step) {
+        is UnitStep -> step
+        is EachStep -> step.steps.singleOrNull() as? UnitStep
+        else -> null
+    }
+
+    /** 분기 전부와 그 분기가 반복 중인 설비를 보는가(그룹 안인가). */
+    private fun choices(definition: MissionDefinition): List<Pair<ChoiceStep, Boolean>> = definition.steps.flatMap { step ->
+        when (step) {
+            is ChoiceStep -> listOf(step to false)
+            is EachStep -> step.steps.filterIsInstance<ChoiceStep>().map { it to true }
+            is UnitStep, is WaitStep -> emptyList()
+        }
+    }
+
+    /**
+     * 접힘 하나의 거부. [item] 은 분기의 접힘에만 온다 — 반복 중인 설비를 보는가(그룹 안 분기면 참). 널이면 단위 id 검사를 하지
+     * 않는다 — §15.325 의 접힘은 파서가 단위 id 를 «반드시 값을 냄» 으로 막아 두었고, 새 검사는 새 칸에만 건다.
+     */
+    private fun foldRefusals(
+        stepId: String,
+        whenMissing: WhenMissing,
+        kept: UnitStep?,
+        nodes: List<UnitStep>,
+        item: Boolean?,
+        at: Instant,
+    ): List<MissionRefusal> {
+        if (kept == null) {
+            return listOf(
+                MissionRefusal(
+                    MissionRefusalKind.WHEN_MISSING_INVALID, stepId, "unit=${whenMissing.unit ?: "없음"}",
+                    "남길 안쪽 노드 id(${nodes.joinToString { it.id }})", at,
+                ),
+            )
+        }
+        val unknown = whenMissing.parameters.filterNot { it in kept.parameters }
+        return listOfNotNull(
+            MissionRefusal(
+                MissionRefusalKind.WHEN_MISSING_INVALID, stepId, "parameters=${unknown.joinToString()}",
+                "${kept.id} 의 파라미터 이름(${kept.parameters.keys.joinToString()})", at,
+            ).takeIf { unknown.isNotEmpty() },
+            MissionRefusal(
+                MissionRefusalKind.WHEN_MISSING_INVALID, stepId, "${kept.id}.unitId=${shapes(kept.unitId).joinToString(" 또는 ") { shapeName(it) }}",
+                if (item == true) "조건 값 없이 값을 내는 단위 id(ITEM_ID·ORDER_ID)" else "조건 값 없이 값을 내는 단위 id(ORDER_ID 또는 else: ORDER_ID)", at,
+            ).takeIf { item != null && !yieldsAlone(kept.unitId, item) },
+            // 최상위 분기는 작업 지시마다 한 번 고르므로 접힘도 작업 지시마다 하나다 — 반복 노드를 남기면 그 단위 id 모양이 once 노드들과
+            // 맞대지지 않는다(대체값으로 값을 내는 반복 노드). 그래서 once 노드만 남긴다.
+            MissionRefusal(
+                MissionRefusalKind.WHEN_MISSING_INVALID, stepId, "unit=${kept.id}(forEach)", "작업 지시마다 한 번인 노드(once)", at,
+            ).takeIf { item == false && !kept.once },
+        )
+    }
+
+    /**
+     * 이 단위 id 출처가 조건 값과 무관하게 **반드시** 값을 내는가 — `ORDER_ID`, 반복 중인 설비가 있으면 `ITEM_ID`, 대체값, 또는
+     * `else` 가 그런 것. 다른 출처(속성·작업 지시 파라미터)는 조건이 읽는 값과 같은 부재를 겪을 수 있어 보장이 아니다. 해석기도 본다.
+     */
+    internal fun yieldsAlone(unitId: ValueSource, item: Boolean): Boolean =
+        unitId.from == ValueFrom.ORDER_ID || (item && unitId.from == ValueFrom.ITEM_ID) || unitId.otherwise != null ||
+            unitId.orElse?.let { yieldsAlone(it, item) } == true
 
     /** 플릿 계약의 운반 이름 — 계약 카탈로그의 스킬이 아니다. */
     private const val FLEET_SKILL = DeliverContainer.TRANSPORT

@@ -31,8 +31,8 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
 
     override val preferredOptionals: Map<String, String> = definition.preferredOptionals
 
-    /** 대기 노드마다 엔진의 대기 사양. 생성 때 한 번 바꾼다. */
-    private val waits: Map<String, WaitSpec> = definition.steps.filterIsInstance<WaitStep>().associate { step ->
+    /** 대기 노드마다 엔진의 대기 사양 — 최상위 분기의 갈래 안 대기 노드까지. 생성 때 한 번 바꾼다. */
+    private val waits: Map<String, WaitSpec> = MissionValidator.waitNodes(definition).associate { step ->
         val seconds = requireNotNull(step.deadlineSeconds) { "검증을 거치지 않은 정의다: ${step.id} 에 기한이 없다" }
         require(seconds > 0) { "검증을 거치지 않은 정의다: ${step.id} 의 기한이 양수가 아니다($seconds)" }
         val outcome = DeadlineOutcome.entries.firstOrNull { it.name == step.onDeadline }
@@ -51,21 +51,22 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
             }
         }
         // 선행이 끊기면 엔진은 그 단위를 그냥 낸다(참조한 단위가 없으면 기다릴 것이 없다) — 조용히 순서가 사라진다.
+        MissionValidator.predecessors(definition).forEach { (node, allowed) ->
+            require(node.after == null || node.after in allowed) {
+                "검증을 거치지 않은 정의다: ${node.id} 의 선행 ${node.after} 가 같은 그룹의 앞 노드가 아니다"
+            }
+        }
         definition.steps.forEach { step ->
             val (nodes, whenMissing) = when (step) {
                 is WaitStep -> return@forEach
                 is UnitStep -> listOf(step) to step.whenMissing
                 is EachStep -> step.steps to step.whenMissing
-            }
-            nodes.forEachIndexed { at, node ->
-                require(node.after == null || (step is EachStep && node.after in nodes.take(at).map { it.id })) {
-                    "검증을 거치지 않은 정의다: ${node.id} 의 선행 ${node.after} 가 같은 그룹의 앞 노드가 아니다"
-                }
+                is ChoiceStep -> listOf(step) to null
             }
             val requires = when (step) {
                 is UnitStep -> step.requires
                 is EachStep -> step.requires
-                is WaitStep -> emptyList()
+                is WaitStep, is ChoiceStep -> emptyList()
             }
             require(requires.isEmpty() || whenMissing != null) {
                 "검증을 거치지 않은 정의다: ${step.id} 에 조건(requires)이 있는데 접힘(whenMissing)이 없다"
@@ -73,25 +74,80 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
             require(whenMissing == null || kept(nodes, whenMissing) != null) {
                 "검증을 거치지 않은 정의다: ${step.id} 의 접힘이 남길 노드(${whenMissing?.unit})를 모른다"
             }
+            // 분기의 접힘(§15.328) — 남길 노드가 갈래 안에 있고 그 단위 id 가 조건 값 없이 값을 낸다. 못 내면 계획 때 넘어진다.
+            nodes.filterIsInstance<ChoiceStep>().forEach { choice ->
+                val kept = kept(listOf(choice), choice.whenMissing)
+                require(kept != null && MissionValidator.yieldsAlone(kept.unitId, item = step is EachStep) && (step is EachStep || kept.once)) {
+                    "검증을 거치지 않은 정의다: ${choice.id} 의 접힘이 남길 노드(${choice.whenMissing.unit})를 모르거나 그 단위 id 가 조건 값 없이 값을 못 낸다"
+                }
+            }
         }
     }
 
-    override fun plan(order: JobOrder): List<ExecutionUnit> = definition.steps.flatMap { step ->
-        when (step) {
-            is WaitStep -> listOf(waitUnit(step))
-            is UnitStep -> {
-                val index = partners(listOf(step), order)
-                if (step.once) {
-                    expand(listOf(step), step.requires, step.whenMissing, order, item = null, index)
-                } else {
-                    items(order, step.forEach).flatMap { expand(listOf(step), step.requires, step.whenMissing, order, it, index) }
-                }
-            }
-            is EachStep -> {
-                val index = partners(step.steps, order)
-                items(order, step.forEach).flatMap { expand(step.steps, step.requires, step.whenMissing, order, it, index) }
+    override fun plan(order: JobOrder): List<ExecutionUnit> = planned(order).first
+
+    /**
+     * 접수 시점 분기의 선택(§15.328) — 분기 자리마다 고른 갈래(`arms[i]`·`otherwise`·`whenMissing`). 최상위 분기는 분기 id, 그룹
+     * 안 분기는 `분기 id[설비 id]` 가 자리다(항목마다 고른다). 그룹이 조건부 포함으로 접힌 항목의 분기는 고르지 않아 자리가 없다.
+     * [plan] 과 같은 펼침에서 나온다 — 따로 셈하면 둘이 갈릴 날이 온다.
+     */
+    override fun choices(order: JobOrder): Map<String, String> = planned(order).second.choices
+
+    /** 분기 자리마다 그 자리가 낸 단위 id(고른 갈래의 단위, 접혔으면 접힌 단위 하나). 리비전이 남은 자리의 단위 id 를 바꾸는지의 판정이 쓴다(§15.328). */
+    override fun choiceUnits(order: JobOrder): Map<String, List<String>> = planned(order).second.units
+
+    /**
+     * 분기 자리가 겹치는 작업 지시는 받지 않는다(§15.328) — 분기가 든 그룹의 쓰임에 같은 설비 id 가 둘이면 `분기 id[설비 id]` 가 한
+     * 자리에 둘이 되어, 한쪽의 선택이 가려지고 리비전 대조가 엉뚱한 쪽을 본다.
+     */
+    override fun planRefusal(order: JobOrder): String? = planned(order).second.clashes.takeIf { it.isNotEmpty() }?.let {
+        "분기 자리가 겹쳐 받지 않는다: ${it.joinToString()} — 분기가 든 반복 그룹의 설비 id 가 같은 쓰임 안에서 겹친다"
+    }
+
+    private fun planned(order: JobOrder): Pair<List<ExecutionUnit>, Picks> {
+        val picked = Picks()
+        return definition.steps.flatMap { step -> top(step, order, picked) } to picked
+    }
+
+    /** 계획 한 번이 고른 갈래 — 자리마다 갈래 이름과 낸 단위 id, 그리고 두 번 나온 자리. */
+    private class Picks {
+        val choices = linkedMapOf<String, String>()
+        val units = linkedMapOf<String, List<String>>()
+        val clashes = linkedSetOf<String>()
+
+        fun pick(at: String, choice: String, made: List<ExecutionUnit>): List<ExecutionUnit> {
+            if (at in choices) clashes += at
+            choices[at] = choice
+            units[at] = units[at].orEmpty() + made.map { it.unitId }
+            return made
+        }
+    }
+
+    /** 최상위 노드 하나를 펼친다. 최상위 분기는 작업 지시마다 한 번 고르고 고른 갈래의 노드를 최상위 노드처럼 펼친다. */
+    private fun top(step: MissionStep, order: JobOrder, picked: Picks): List<ExecutionUnit> = when (step) {
+        is WaitStep -> listOf(waitUnit(step))
+        is UnitStep -> {
+            val index = partners(listOf(step), order)
+            if (step.once) {
+                expand(listOf(step), step.requires, step.whenMissing, order, item = null, index, picked)
+            } else {
+                items(order, step.forEach).flatMap { expand(listOf(step), step.requires, step.whenMissing, order, it, index, picked) }
             }
         }
+        is EachStep -> {
+            val index = partners(MissionValidator.unitsOf(step), order)
+            items(order, step.forEach).flatMap { expand(step.steps, step.requires, step.whenMissing, order, it, index, picked) }
+        }
+        is ChoiceStep -> {
+            val choice = step.pick(resolve(step.on, Scope(order, null, null)))
+            picked.pick(step.id, choice, step.steps(choice)?.flatMap { top(it, order, picked) } ?: listOf(folded(step, Scope(order, null, null))))
+        }
+    }
+
+    /** 분기의 접힘 — 조건 값이 없으면 `whenMissing.unit` 의 단위 하나를 `FAILED` 로 남긴다. 칸은 조건부 포함의 접힘과 같다. */
+    private fun folded(choice: ChoiceStep, scope: Scope): ExecutionUnit {
+        val node = checkNotNull(kept(listOf(choice), choice.whenMissing))
+        return unit(node, scope, UnitState.FAILED, choice.whenMissing.failureClass) { name -> name in choice.whenMissing.parameters }
     }
 
     /**
@@ -123,9 +179,16 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
     private fun items(order: JobOrder, use: String?): List<EquipmentRequirement> =
         order.equipmentRequirements.filter { it.equipmentUse == use }
 
-    /** 접힘이 남길 노드 — 그룹이면 [WhenMissing.unit] 이 가리키는 것, 아니면 그 노드 하나. */
-    private fun kept(nodes: List<UnitStep>, whenMissing: WhenMissing): UnitStep? =
-        if (whenMissing.unit != null) nodes.firstOrNull { it.id == whenMissing.unit } else nodes.singleOrNull()
+    /**
+     * 접힘이 남길 노드 — [WhenMissing.unit] 이 있으면 그 id 의 단위 노드(그룹 안 분기의 갈래까지 찾는다), 없으면 노드가 단위 노드
+     * 하나일 때 그것.
+     */
+    private fun kept(nodes: List<MissionStep>, whenMissing: WhenMissing): UnitStep? =
+        if (whenMissing.unit != null) {
+            nodes.flatMap(MissionValidator::unitsOf).firstOrNull { it.id == whenMissing.unit }
+        } else {
+            nodes.singleOrNull() as? UnitStep
+        }
 
     /**
      * 항목 하나(once 면 작업 지시 하나)에서 노드들을 차례로 펼친다. 단위 노드 하나도 «노드 하나짜리 그룹» 으로 여기서 펼친다.
@@ -134,37 +197,52 @@ class DefinedCapability(val definition: MissionDefinition) : LogicalCapability {
      * 목록에 든 것이며 선행은 없다. 아니면 노드마다 단위 하나이고, 선행(`after`)은 **같은 항목에서** 그 노드가 낸 단위 id 다
      * (대상끼리 묶지 않는다 — 한 대상의 이동이 실패해도 다음 대상은 간다).
      *
+     * 그룹 안 분기(§15.328)는 **이 항목의** 조건 값으로 갈래 하나를 골라 그 노드만 펼치고([picked] 에 `분기 id[설비 id]` 로 적는다),
+     * 값이 없으면 분기의 접힘대로 단위 하나를 `FAILED` 로 남긴다(선행 없음). 갈래 노드의 선행은 그 분기 앞 형제나 같은 갈래의 앞
+     * 노드가 이 항목에서 낸 단위 id 다.
+     *
      * 짝 규칙은 코드 `PrepareSequencedRack` 과 같다. 후보는 짝 쓰임의 설비 중 맞출 속성이 있는 것이고, 같은 값이 여럿이면
      * **목록에서 뒤엣것**이다(`associateBy`). 반복 중인 설비에 그 속성이 없으면 짝이 없다.
      */
     private fun expand(
-        nodes: List<UnitStep>,
+        nodes: List<GroupStep>,
         requires: List<ValueSource>,
         whenMissing: WhenMissing?,
         order: JobOrder,
         item: EquipmentRequirement?,
         index: Map<String, Map<String, EquipmentRequirement>>,
+        picked: Picks,
     ): List<ExecutionUnit> {
-        val scopes = nodes.associateWith { node ->
+        val scope = { node: UnitStep ->
             val paired = node.pairWith?.let { p -> item?.properties?.get(p.property)?.let { index[node.id]?.get(it) } }
             Scope(order, item, paired)
         }
-        val missing = whenMissing != null && requires.any { resolve(it, scopes.getValue(nodes.first())) == null }
+        val plain = Scope(order, item, null)
+        val head = (nodes.first() as? UnitStep)?.let(scope) ?: plain
+        val missing = whenMissing != null && requires.any { resolve(it, head) == null }
         if (missing) {
             val node = checkNotNull(kept(nodes, whenMissing))
-            val scope = scopes.getValue(node)
             return listOf(
-                unit(node, scope, UnitState.FAILED, whenMissing.failureClass) { name -> name in whenMissing.parameters },
+                unit(node, scope(node), UnitState.FAILED, whenMissing.failureClass) { name -> name in whenMissing.parameters },
             )
         }
         val produced = mutableMapOf<String, String>()
-        return nodes.map { node ->
-            val scope = scopes.getValue(node)
+        val emit = { node: UnitStep ->
+            val at = scope(node)
             // 짝이 없으면 시작도 못 한다 — 부족은 계획에서 드러난다(코드 케이퍼빌리티와 같은 자리).
-            val unpaired = node.pairWith != null && scope.paired == null
-            unit(node, scope, if (unpaired) UnitState.FAILED else UnitState.PENDING, if (unpaired) node.whenUnpaired else null) { true }
+            val unpaired = node.pairWith != null && at.paired == null
+            unit(node, at, if (unpaired) UnitState.FAILED else UnitState.PENDING, if (unpaired) node.whenUnpaired else null) { true }
                 .apply { after = node.after?.let { produced.getValue(it) } }
                 .also { produced[node.id] = it.unitId }
+        }
+        return nodes.flatMap { node ->
+            when (node) {
+                is UnitStep -> listOf(emit(node))
+                is ChoiceStep -> {
+                    val choice = node.pick(resolve(node.on, plain))
+                    picked.pick("${node.id}[${item?.id}]", choice, node.steps(choice)?.map { emit(it as UnitStep) } ?: listOf(folded(node, plain)))
+                }
+            }
         }
     }
 

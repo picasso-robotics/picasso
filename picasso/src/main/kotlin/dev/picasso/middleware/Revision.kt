@@ -49,6 +49,8 @@ internal fun CommandEnv.revise(
     if (execution.physicalState == PhysicalState.ABORTED || execution.physicalState == PhysicalState.PHYSICALLY_DONE) {
         return Submission.Rejected("종료한 실행에는 새 버전이 붙지 않는다 — 재작업은 새 주문이다(보고서 14.1)")
     }
+    // 분기 자리를 없애거나 가지·단위 id 를 바꾸는 리비전은 받지 않는다(§15.328) — 아래 교체는 새 계획에 없는 옛 단위를 남긴다.
+    choiceRefusal(execution.capability, execution.order, order)?.let { return Submission.Rejected(it) }
 
     // 개정판도 사슬 검사를 받는다 — 단, 이 개정이 실제로 교체·추가할 단위만(리뷰 C3). 이미 끝났거나 도는 단위를
     // 다시 재단하면 끝난 일을 되돌리라는 말이 된다.
@@ -162,6 +164,8 @@ internal fun CommandEnv.revise(
     }
     execution.mutableUnits.clear()
     execution.mutableUnits.addAll(units)
+    // 리비전이 더한 분기 자리의 가지도 한 줄로 남긴다(§15.328) — 기록만 더한다.
+    choiceTrail(addedChoices(execution.capability, execution.order, order), order, execution.missionVersion)?.let { execution.trail(MiddlewareCodes.BRANCH_CHOSEN, it) }
     execution.order = order
     if (execution.physicalState == PhysicalState.PARTIAL || execution.physicalState == PhysicalState.UNVERIFIED ||
         execution.physicalState == PhysicalState.FAILED
