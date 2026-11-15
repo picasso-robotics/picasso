@@ -74,6 +74,7 @@ registry/                 개정판·어댑터 수명주기, 바인딩, 의존 �
 picasso/                  미들웨어의 가운데 — 정준 모델(실행 상태 두 축·근거 등급·논리적 능력·취소 응답)과
                           공통 실행 구조. 접수 → 조합 → 실행 → 근거 결합 → 결과 통보. 기종을 모른다 (ADR 38)
 host-kit/                 미들웨어를 담는 쪽의 부품 — 승인 호스트·자격 선언 파일·번들 쓰기. picasso 의 공개 API 만 쓴다
+fleet-mimic/              프로젝트용 플릿 계약의 인프로세스 더블 — 담는 쪽의 모의 실행용. picasso 의 공개 API 만 쓴다
 adapter-core/             어댑터들이 공유하는 계약 쪽 어휘와 RobotAdapter. 기종을 모른다
 adapter-host/             어댑터 하나를 계약의 gRPC 서비스 뒤에 세우는 서버. 기종을 모른다(ADR 39)
 adapter-unitree-g1/       실물 어댑터 — 기종을 아는 유일한 자리 (기종마다 모듈 하나)
@@ -123,7 +124,7 @@ CLI 옵션과 프로파일 입력은 [mimic](mimic/README.md), [client](client/R
 
 실물 어댑터가 넷 있다: 기체용 셋과 플릿용 하나입니다. **어댑터 넷 중 어느 것도 실물에 붙여 보지 못했다**는 한계(C-3)가 있습니다. 실물 넷이 계약에 얼마나 닿나 조사한 결과는 [어휘 거리 측정](profile/distance/)에 있습니다. 벤더 표면 조사와 대역 시험은 실제 SDK 연결·현장 성능·산업 안전 검증을 대신하지 않습니다.
 
-한계 레지스터에 등록된 미결 항목은 **69개**입니다. 내부 37개 · 외부 32개이며 의도적 제외 21개는 이 합계에 넣지 않습니다. [미결 한계 항목 69개](docs/limits.md)의 해결 조건을 추적합니다. 경로 계획·교통 제어·안전 인증의 제공 여부도 이 범위 안에서 해석해야 합니다.
+한계 레지스터에 등록된 미결 항목은 **70개**입니다. 내부 38개 · 외부 32개이며 의도적 제외 21개는 이 합계에 넣지 않습니다. [미결 한계 항목 70개](docs/limits.md)의 해결 조건을 추적합니다. 경로 계획·교통 제어·안전 인증의 제공 여부도 이 범위 안에서 해석해야 합니다.
 
 ## 문서 체계 가이드
 
@@ -147,10 +148,10 @@ CLI 옵션과 프로파일 입력은 [mimic](mimic/README.md), [client](client/R
 | **벤더 인터페이스** | [`profile/vendors/`](profile/vendors) · [`docs/vendors/orbit.md`](docs/vendors/orbit.md) | 벤더 API 표면 분석 및 플릿 관리 인터페이스 측정 노트 |
 | **현장 전제조건** | [`docs/environment-preconditions.md`](docs/environment-preconditions.md) | 로봇 도입 현장의 인프라(도어, 바닥, 조명 등) 엔지니어링 전제조건 |
 | **벤더 매니페스트** | [`tools/vendor-manifest/README.md`](tools/vendor-manifest/README.md) | 어댑터의 사우스바운드 포트 벤더 심볼 인용 대조 검증 도구 |
-| **오픈 항목 과제 레지스터** | [`docs/limits.md`](docs/limits.md) | 미결 한계 항목 69개(내부·외부) 및 해결 조건 관리 레지스터 |
+| **오픈 항목 과제 레지스터** | [`docs/limits.md`](docs/limits.md) | 미결 한계 항목 70개(내부·외부) 및 해결 조건 관리 레지스터 |
 
 ## 라이선스
 
 [Apache License 2.0](LICENSE). 벤더 독점 SDK는 포함하지 않습니다. 어댑터의 벤더 API 인용은 심볼명과 해시 매니페스트로 관리합니다.
 
-> 마지막 대조: 2026-11-15 · sha256:66ea5611695c · 열림: C-3, §15.81
+> 마지막 대조: 2026-11-15 · sha256:ddbda0dbc37d · 열림: C-3, §15.81

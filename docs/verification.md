@@ -1,6 +1,6 @@
 # 시스템 검증 충실도 및 환경 신뢰도 매트릭스 (Verification & Fidelity Matrix)
 
-본 문서는 `picasso` 미들웨어 시스템의 2,566개 자동화 테스트가 **어느 구간에서 실제 외부 시스템/하드웨어와 연동되고, 어느 구간에서 모의 대역(Mock/In-process)에 의존하는지**를 명확히 구분하여 기술적 검증 신뢰도(Verification Fidelity)를 투명하게 공개하기 위해 작성되었습니다.
+본 문서는 `picasso` 미들웨어 시스템의 2,578개 자동화 테스트가 **어느 구간에서 실제 외부 시스템/하드웨어와 연동되고, 어느 구간에서 모의 대역(Mock/In-process)에 의존하는지**를 명확히 구분하여 기술적 검증 신뢰도(Verification Fidelity)를 투명하게 공개하기 위해 작성되었습니다.
 
 ---
 
@@ -33,7 +33,7 @@
 | 8 | 레지스트리 HTTP API | **실제 하드웨어** | 자체 REST API | Spring Boot 임의 포트(`RANDOM_PORT`)에 실제 구동하여 `TestRestTemplate` 기반 HTTP 통합 검증 | `*EndpointTest` 여덟 |
 | 9 | 레지스트리 ↔ DB | **실제 하드웨어** | 자체 DB 스키마 | Testcontainers 기반 PostgreSQL 16 컨테이너에 대해 Flyway 마이그레이션 및 외래키/CHECK 제약조건 검증 | `registry` 테스트 스위트 전체 |
 | 10 | 설비(PLC/WCS) ↔ `picasso` | **대역** | **자체 정의** | `CellMimic`을 통해 시간 윈도우 δ 기반 신호 수신 로직을 검증하나, 신호 스펙은 공장 표준 사례 기반의 자체 모델링임 | `EvidenceWindowTest` |
-| 11 | AMR 플릿 ↔ `picasso` | **대역** | **자체 정의** | `AmrFleetMimic` 기반 멱등 이송 작업 지시(Dispatch) 및 취소 정리를 검증하나, 상용 플릿 규격(VDA5050 등)과의 직접 연동은 미수행 | `DeliverContainerTest` |
+| 11 | AMR 플릿 ↔ `picasso` | **대역** | **자체 정의** | `AmrFleetMimic`(출하 모듈 `fleet-mimic`, §15.326) 기반 멱등 이송 작업 지시(Dispatch) 및 취소 정리를 검증하나(취소 시 출발지 복귀는 미믹의 약속이며 실 플릿의 보장이 아님), 상용 플릿 규격(VDA5050 등)과의 직접 연동은 미수행 | `DeliverContainerTest` |
 | 12 | 게이트 ↔ `buf` | **실제 하드웨어** | 벤더 개발 도구 | Docker 환경의 공식 `buf` 도구 및 `protoc` 빌드 아티팩트를 통한 Proto 린트 및 호환성 검증 | `gate` 테스트 전체 |
 | 13 | 벤더 판정 (거리·조사) | **문서** | 벤더 1차 자료 | 벤더 공식 문서 및 스펙 기준 정적 적합성 분석 결과이며, 물리적 실기체 구동 확인은 오픈 항목 상태(C-3) | `VocabularyDistanceTest` · `VendorSurveyTest` · `ProfileProvenanceTest` |
 
@@ -45,4 +45,4 @@
 2. **로봇 인터페이스 계층의 격리성**: 어댑터 계층은 벤더 SDK 격리 원칙에 따라 매니페스트 대조를 통해 정합성을 검증하며, 실기체 직접 연동(C-3)은 환경적 제약으로 인해 오픈 항목 상태로 명시 관리됩니다.
 3. **상위 및 설비 연계 계층의 가정 기반성**: 설비(PLC) 및 AMR 플릿과의 연동 규격은 시스템적 일관성을 입증하기 위한 자체 설계 모델이며, 실제 현장 도입 시 대상 설비에 맞춘 Seam 어댑터 구현이 요구됩니다.
 
-> 마지막 대조: 2026-11-15 · sha256:55e2abb022af · 열림: C-3
+> 마지막 대조: 2026-11-15 · sha256:8505f18daa7e · 열림: C-3

@@ -106,10 +106,11 @@ class Check09BindingScope : GateCheck {
          *
          * **어댑터 모듈과 `adapter-core`·`adapter-host` 는 여기 없다** — 결속을 읽는 것이 그들의 일이다.
          * `registry` 와 `profile-model` 이 들어온 것은 검사 7이 그 둘을 안 보기 때문이다: 검사 7의
-         * 목록에 없다는 이유로 결속까지 새면 같은 구멍이 두 번째로 열린다.
+         * 목록에 없다는 이유로 결속까지 새면 같은 구멍이 두 번째로 열린다. `fleet-mimic` 은 자리를 글자로만 다루는 플릿 더블이라
+         * 결속을 몰라야 해서 출하 모듈이 되면서 들어왔다(§15.326).
          */
         val MODULES = listOf(
-            "client", "mimic", "harness", "picasso", "capability", "uplink", "registry", "profile-model", "contracts",
+            "client", "mimic", "harness", "picasso", "capability", "uplink", "registry", "profile-model", "contracts", "fleet-mimic",
         )
 
         const val MAIN = "src/main"

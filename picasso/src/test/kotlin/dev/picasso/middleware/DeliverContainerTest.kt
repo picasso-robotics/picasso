@@ -48,7 +48,7 @@ class DeliverContainerTest {
         val mw = Middleware(ClientRobotPort(harness.client()), cell, fleet, now = { harness.clock.now() })
 
         init {
-            fleet.containersAt[SOURCE] = CONTAINER
+            fleet.place(SOURCE, CONTAINER)
         }
 
         /** 플릿 틱 하나를 세계 시간 10초로 친다 — 시간창(뒤쪽 15초)은 시계가 가야 닫힌다. */
@@ -128,7 +128,7 @@ class DeliverContainerTest {
     @Test
     fun `목적지에 이전 용기가 남아 있으면 인계를 기다리고 지연을 보고한다 — 다른 자리에 내려놓지 않는다`() {
         World().use { w ->
-            w.fleet.blocked += DEST
+            w.fleet.block(DEST)
             val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(order(), ROBOT)).execution
 
             w.drive { exec.units.single().note == Middleware.WAITING_HANDOVER }
@@ -146,7 +146,7 @@ class DeliverContainerTest {
             assertEquals(1, w.mw.pending().size, "지연 보고가 매번 나간다")
 
             // 상류가 대기 유지를 택했고 목적지가 비었다.
-            w.fleet.blocked -= DEST
+            w.fleet.unblock(DEST)
             w.drive { exec.settled() }
             assertEquals(PhysicalState.PHYSICALLY_DONE, exec.physicalState)
             assertEquals(CONTAINER, w.fleet.containersAt[DEST])
@@ -157,7 +157,7 @@ class DeliverContainerTest {
     @Test
     fun `출발 위치의 용기가 요청과 다르면 인수하지 않고 불일치를 보고한다`() {
         World().use { w ->
-            w.fleet.containersAt[SOURCE] = "HU-9999"
+            w.fleet.place(SOURCE, "HU-9999")
             val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(order(), ROBOT)).execution
             w.drive { exec.settled() }
 

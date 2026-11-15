@@ -23,6 +23,8 @@ dependencies {
     // 참조 실행기(`ScenarioHost`)와 내보내기 시험이 담는 쪽의 부품을 쓴다. 출하 의존이 아니다 — picasso 는 여전히 파일도 소켓도 모른다.
     testImplementation(project(":host-kit"))
     testImplementation(project(":mimic"))
+    // 플릿 위임 시험이 출하된 플릿 미믹을 쓴다(§15.326). 시험 의존이라 순환이 아니다 — fleet-mimic 이 picasso 를 api 로 든다.
+    testImplementation(project(":fleet-mimic"))
     // 답하지 않는 하위를 시험 안에 세운다(`PortBreakerTest`). 미믹은 늘 답한다.
     testImplementation(libs.grpc.inprocess)
     testImplementation(kotlin("test"))

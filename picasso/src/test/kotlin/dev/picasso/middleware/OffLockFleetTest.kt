@@ -69,7 +69,7 @@ class OffLockFleetTest {
         val mw = Middleware(ClientRobotPort(harness.client()), cell, port, now = { harness.clock.now() })
 
         init {
-            fleet.containersAt[SOURCE] = CONTAINER
+            fleet.place(SOURCE, CONTAINER)
         }
 
         fun submit(version: Int = 1): Middleware.Execution = assertIs<Middleware.Submission.Accepted>(mw.submit(order(version), ROBOT)).execution

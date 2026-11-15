@@ -49,7 +49,7 @@ class ScenarioChainTest {
         val mw = Middleware(ClientRobotPort(harness.client()), cell, fleet, now = { harness.clock.now() })
 
         init {
-            fleet.containersAt[OUT] = CONTAINER
+            fleet.place(OUT, CONTAINER)
         }
 
         fun drive(rounds: Int = 40, until: () -> Boolean) {

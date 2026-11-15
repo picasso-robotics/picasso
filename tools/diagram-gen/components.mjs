@@ -36,6 +36,7 @@ const col = i => 32 + 160 * i;
 const BOX = {
   'host-kit': [col(0), 112, 'host-kit', T.COMP_ROLE_HOSTKIT],
   harness: [col(1), 112, 'harness', T.COMP_ROLE_HARNESS],
+  'fleet-mimic': [col(2), 112, 'fleet-mimic', T.COMP_ROLE_FLEETMIMIC],
   orbit: [col(3), 112, 'orbit', T.COMP_ROLE_ORBIT],
   picasso: [col(0), 216, 'picasso', T.COMP_ROLE_PICASSO],
   mimic: [col(1), 216, 'mimic', T.COMP_ROLE_MIMIC],
@@ -67,6 +68,8 @@ const cell = m => CELL[m] || m;
 // ── 경로. 표시 칸 쌍마다 하나. 행 사이 가로 구간은 영역 밖(y 284~316)에 둔다
 const ROUTES = {
   'host-kit>picasso': 'M96,164 V214',
+  // 영역 위 빈 띠(y 76)로 넘어가 그림 바깥 왼쪽(x 16)으로 내려와 picasso 의 왼쪽 변에 닿는다. 엇갈리는 선이 없다.
+  'fleet-mimic>picasso': 'M384,112 V76 H16 V242 H30',
   'picasso>client': 'M96,268 V350',
   'picasso>capability': 'M128,268 V292 H224 V350',
   'mimic>capability': 'M256,268 V350',
@@ -82,7 +85,8 @@ const ROUTES = {
   // 통로(x 168~184)의 한가운데로 내려간다. picasso>capability 의 가로 구간(y 292)과 한 번 직각으로 엇갈린다.
   'harness>capability': 'M192,148 H176 V392 H190',
   'harness>uplink': 'M320,148 H340 V384 H350',
-  'orbit>adapter-host': 'M512,132 H432 V214',
+  // 가운데 열 맨 위에 fleet-mimic 이 서서 옆으로 들어가던 길을 orbit 의 아랫변에서 내려 꺾는다. orbit>uplink 의 세로 구간(x 496)과 한 번 직각으로 엇갈린다.
+  'orbit>adapter-host': 'M544,164 V192 H432 V214',
   'orbit>uplink': 'M512,156 H496 V392 H482',
   'orbit>adapter-core': 'M640,140 H656 V378 H642',
 };

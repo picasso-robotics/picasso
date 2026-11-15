@@ -14,7 +14,7 @@
 ## 교체 가능성의 아키텍처적 보증
 
 - **포트와 대역의 모듈 레벨 분리**:
-  - `CellSignals`, `AmrFleetPort`, `RobotPort` 등의 인터페이스(포트)는 `picasso/src/main`에 정의되어 있으며, 이를 구현하는 테스트 더블(`CellMimic`, `AmrFleetMimic` 등)은 `picasso/src/test`에 완전히 격리되어 있습니다.
+  - `CellSignals`, `AmrFleetPort`, `RobotPort` 등의 인터페이스(포트)는 `picasso/src/main`에 정의되어 있으며, 이를 구현하는 테스트 더블 중 `CellMimic` 등은 `picasso/src/test`에 격리되어 있습니다. 플릿 더블 `AmrFleetMimic` 만은 담는 쪽의 모의 실행이 쓰도록 출하 모듈 `fleet-mimic`(`fleet-mimic/src/main`, 패키지 `dev.picasso.fleetmimic`)에 있으며, picasso 는 그것을 시험 의존으로만 씁니다(§15.326). 실 플릿 연동은 여전히 `AmrFleetPort` 의 새 구현으로 들어옵니다.
   - 코어 엔진은 모의 대역의 존재를 전혀 참조하지 않으며, 테스트 대역을 삭제하더라도 본체 코드는 정상 컴파일됩니다.
 - **접합부 간의 완전한 독립성**:
   - 9개 접합부는 상호 결합되어 있지 않으므로, 특정 지점(예: PLC 설비 신호)을 실제 하드웨어로 교체할 때 다른 지점(로봇 어댑터, 상위 MES 연계 등)의 코드를 수정할 필요가 없습니다.
@@ -201,4 +201,4 @@
 
 > **검증 보증:** 본 색인 테이블의 인터페이스명 및 파일 경로는 `DocumentClaimsTest`를 통해 실제 소스 코드와 상시 대조 검증됩니다.
 
-> 마지막 대조: 2026-11-11 · sha256:8067e4a49429 · 열림: C-3, §15.5, §15.156
+> 마지막 대조: 2026-11-15 · sha256:66298bafc32c · 열림: C-3, §15.5, §15.156

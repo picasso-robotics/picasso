@@ -585,7 +585,7 @@ class InDoubtTest {
         val mw = Middleware(ClientRobotPort(harness.client()), cell, LossyFleet(fleet, drop, lookup), now = { harness.clock.now() })
 
         init {
-            fleet.containersAt[SOURCE] = CONTAINER
+            fleet.place(SOURCE, CONTAINER)
         }
 
         fun drive(rounds: Int = 12, until: () -> Boolean) {
