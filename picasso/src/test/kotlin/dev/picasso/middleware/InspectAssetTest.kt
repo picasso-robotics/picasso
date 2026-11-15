@@ -5,6 +5,9 @@ import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.contracts.v1.WatchTaskResponse
 import dev.picasso.harness.Harness
+import dev.picasso.middleware.mission.Activation
+import dev.picasso.middleware.mission.InMemoryMissionCatalog
+import dev.picasso.middleware.mission.MissionFixtures
 import dev.picasso.mimic.control.v1.DumpInternalStateRequest
 import dev.picasso.mimic.control.v1.ForceFaultRequest
 import java.nio.file.Path
@@ -49,9 +52,9 @@ class InspectAssetTest {
         },
     )
 
-    private class World(port: (RobotPort) -> RobotPort = { it }) : AutoCloseable {
+    private class World(port: (RobotPort) -> RobotPort = { it }, missions: MissionCatalog? = null) : AutoCloseable {
         val harness = Harness(mapOf(ROBOT to Path.of("..", "profile", "profiles", "quadruped-b.json").normalize()))
-        val mw = Middleware(port(ClientRobotPort(harness.client())), now = { harness.clock.now() })
+        val mw = Middleware(port(ClientRobotPort(harness.client())), now = { harness.clock.now() }, missions = missions)
 
         fun tasks() = harness.oracle.dumpInternalState(DumpInternalStateRequest.newBuilder().setRobotId(ROBOT).build()).tasksList
         fun state(taskId: String) = tasks().firstOrNull { it.taskId == taskId }?.taskState
@@ -357,6 +360,49 @@ class InspectAssetTest {
             assertEquals(UnitState.FAILED to "", skipped.state to skipped.taskId)
             assertEquals(SKIPPED, skipped.failureClass)
             assertEquals(PhysicalState.PARTIAL, exec.physicalState)
+        }
+    }
+
+    @Test
+    fun `데이터로 옮긴 점검도 이동이 결함 없이 실패하면 그 대상의 점검만 건너뛰고 다음 대상의 이동이 나간다`() {
+        // §15.325 — 코드 InspectAsset 의 데이터판을 카탈로그로 활성화해 위 장면을 돌린다. 선행이 정의에서 와도 엔진은 같은 길을 탄다.
+        val catalog = InMemoryMissionCatalog()
+        val activated = catalog.activate(MissionFixtures.INSPECT_ASSET, MissionFixtures.SIGNALS, FloorOwnership.None, MissionFixtures.SITE_SKILLS)
+        assertIs<Activation.Activated>(activated, "$activated")
+        val travel = "PUMP-01${InspectAsset.TRAVEL_SUFFIX}"
+        World(port = { FailingWithoutFaultPort(it, setOf(taskOf(travel))) }, missions = catalog).use { w ->
+            val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(order(), ROBOT)).execution
+            assertEquals(1, exec.missionVersion, "데이터 정의가 아니라 코드 정의로 계획했다")
+            w.drive { exec.settled() }
+
+            assertEquals(UnitState.FAILED, exec.units.single { it.unitId == travel }.state)
+            val expected = points.flatMap { listOf("${it.target}${InspectAsset.TRAVEL_SUFFIX}", it.target) } - "PUMP-01"
+            assertEquals(expected.map(::taskOf), w.tasks().map { it.taskId }, "이동이 실패한 대상의 점검이 나갔거나 다음 대상이 안 나갔다")
+            val skipped = exec.units.single { it.unitId == "PUMP-01" }
+            assertEquals(UnitState.FAILED to "", skipped.state to skipped.taskId)
+            assertEquals(SKIPPED, skipped.failureClass)
+            assertEquals(PhysicalState.PARTIAL, exec.physicalState)
+        }
+    }
+
+    @Test
+    fun `데이터로 옮긴 점검에 대상 X 와 X 의 이동 이름을 함께 넣으면 수락도 리비전도 겹친 단위 id 로 받지 않는다`() {
+        // §15.325 — 정의는 설비 id 를 모르므로 이 겹침은 활성화가 아니라 작업 지시를 받을 때 드러난다(DUPLICATE_UNIT_ID).
+        val catalog = InMemoryMissionCatalog()
+        assertIs<Activation.Activated>(catalog.activate(MissionFixtures.INSPECT_ASSET, MissionFixtures.SIGNALS, FloorOwnership.None, MissionFixtures.SITE_SKILLS))
+        val shadow = EquipmentRequirement("PUMP-01${InspectAsset.TRAVEL_SUFFIX}", EquipmentUse.INSPECTION_TARGET, mapOf(EquipmentUse.PROP_LOCATION to "DOCK"))
+        World(missions = catalog).use { w ->
+            val clash = order().let { it.copy(equipmentRequirements = it.equipmentRequirements + shadow) }
+            val refused = assertIs<Middleware.Submission.Rejected>(w.mw.submit(clash, ROBOT))
+            assertTrue(refused.reason.startsWith(Middleware.DUPLICATE_UNIT_ID), refused.reason)
+            assertTrue(w.mw.executions().isEmpty(), "겹친 단위 id 로 실행이 섰다")
+
+            val exec = assertIs<Middleware.Submission.Accepted>(w.mw.submit(order(), ROBOT)).execution
+            val planned = exec.units.map { it.unitId }
+            val revised = assertIs<Middleware.Submission.Rejected>(w.mw.submit(clash.copy(version = 2), ROBOT))
+            assertTrue(revised.reason.startsWith(Middleware.DUPLICATE_UNIT_ID), revised.reason)
+            assertEquals(1, exec.version)
+            assertEquals(planned, exec.units.map { it.unitId }, "거부된 리비전이 단위를 바꿨다")
         }
     }
 

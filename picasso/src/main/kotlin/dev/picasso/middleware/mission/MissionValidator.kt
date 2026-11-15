@@ -2,8 +2,10 @@ package dev.picasso.middleware.mission
 
 import dev.picasso.contracts.v1.SkillCatalog
 import dev.picasso.middleware.DeadlineOutcome
+import dev.picasso.middleware.DeliverContainer
 import dev.picasso.middleware.FloorOwner
 import dev.picasso.middleware.FloorOwnership
+import dev.picasso.middleware.Route
 import java.time.Instant
 
 /**
@@ -97,12 +99,37 @@ enum class MissionRefusalKind(val owner: RefusalOwner, val nextAction: String) {
      * 어느 쪽이든 적은 뜻과 실제 동작이 다르다. 출발 관측의 [SOURCE_OBSERVATION_UNUSED] 와 같은 기준이다.
      */
     DESTINATION_OBSERVATION_UNUSED(RefusalOwner.ENGINEER, "목적지 관측 선언을 지우거나 목적지와 기대 식별 정보를 함께 적는다"),
+
+    /**
+     * 선행 검사 — 단위 노드의 `after` 가 같은 반복 그룹의 **앞 형제** 단위 노드를 가리키지 않는다(자기·뒤·그룹 밖·없는 노드·
+     * 최상위 노드의 선행, §15.325). 엔진은 참조한 단위가 없으면 기다리지 않고 내므로 끊긴 선행은 조용히 순서를 잃는다.
+     */
+    AFTER_INVALID(RefusalOwner.ENGINEER, "after 를 같은 그룹의 앞 단위 노드 id 로 고치거나 지운다"),
+
+    /**
+     * 단위 id 모양 검사 — 같은 그룹의 두 단위 노드가 같은 모양(출처·접미사)의 단위 id 를 낸다. 항목마다 단위 id 가 겹쳐
+     * 작업 수락이 늘 거부한다(`DUPLICATE_UNIT_ID`). 설비 id 가 우연히 겹치는 것은 작업 지시가 와야 알므로 실행 때 막는다.
+     */
+    UNIT_ID_SHAPE_COLLISION(RefusalOwner.ENGINEER, "한쪽 단위 id 에 다른 접미사를 붙인다"),
+
+    /**
+     * 플릿 경로 검사 — `route: FLEET` 단위 노드의 모양이 운반이 아니다. 스킬은 `transport` 뿐이고 출발·목적지·기대 식별 정보가
+     * 다 있어야 하며, 관측 선언은 오지 않는다(배정 관문이 플릿 단위의 선언을 읽지 않는다).
+     */
+    FLEET_UNIT_INVALID(RefusalOwner.ENGINEER, "플릿 노드를 transport 와 출발·목적지·기대 식별 정보로 적고 관측 선언을 지운다"),
+
+    /**
+     * 조건부 포함 검사 — `whenMissing` 이 남길 노드를 모르거나(노드가 둘 이상인 그룹에 `unit` 이 없다, 없는 노드다) 남길 파라미터
+     * 이름이 그 노드의 파라미터가 아니다.
+     */
+    WHEN_MISSING_INVALID(RefusalOwner.ENGINEER, "whenMissing 의 unit 과 parameters 를 그 그룹의 노드와 파라미터 이름으로 고친다"),
 }
 
 /**
  * 검증기 — 임무 정의가 활성화될 수 있는가. **라이브러리다** — 같은 규칙으로 화면이 저장 전에 막고 활성화가 막는다.
  *
- * 검사는 일곱이고(기한·신호·자원·스킬·안전·출발 관측·목적지 관측) 그 앞에 노드 id 중복을 본다. **모든 거부를 모아 낸다** — 하나만 알리면
+ * 검사는 열하나이고(기한·신호·자원·스킬·안전·출발 관측·목적지 관측, §15.325 의 선행·단위 id 모양·플릿 경로·조건부 포함) 그 앞에
+ * 노드 id 중복을 본다. §15.325 의 네 검사는 버전 1 에 더한 칸에만 걸린다 — 그 칸을 안 쓰는 문서의 결과는 그대로다. **모든 거부를 모아 낸다** — 하나만 알리면
  * 고치고 다시 내고 또 거부되는 왕복이 생긴다.
  *
  * 함수 이름은 관문의 판정 이름과 겹치지 않게 둔다 — 자리 대조 시험이 이름으로 판정의 자리를 찾는다.
@@ -137,22 +164,40 @@ object MissionValidator {
             skillRefusals(definition, siteSkills, at) +
             safetyRefusals(definition, byName, at) +
             sourceObservationRefusals(definition, at) +
-            destinationObservationRefusals(definition, at)
+            destinationObservationRefusals(definition, at) +
+            afterRefusals(definition, at) +
+            unitIdShapeRefusals(definition, at) +
+            fleetRefusals(definition, at) +
+            whenMissingRefusals(definition, at)
+    }
+
+    /** 단위 노드 전부 — 최상위의 것과 반복 그룹 안쪽의 것, 정의 순서대로. 해석기도 같은 목록을 본다. */
+    fun unitNodes(definition: MissionDefinition): List<UnitStep> = definition.steps.flatMap { step ->
+        when (step) {
+            is UnitStep -> listOf(step)
+            is EachStep -> step.steps
+            is WaitStep -> emptyList()
+        }
     }
 
     /**
      * 이 단위 노드가 출발 관측 선언을 **요구하는가** — 출발 자리(`source`)와 거기서 읽을 신원(`expectedIdentity`)을
      * 둘 다 댈 때다. 관문은 그런 단위의 출발 자리를 하달 전에 설비 관측으로 대조하고, 설비가 말이 없을 때 보낼지가 이
      * 선언이다. 해석기([DefinedCapability])도 같은 함수로 본다 — 두 벌로 두면 한쪽만 기준이 바뀌는 날이 온다.
+     *
+     * **로봇 경로 노드만이다.** 관문은 로봇 단위의 출발 자리만 읽는다(`AdmissionGate`) — 플릿 노드에 선언을 요구하면 쓰이지 않는
+     * 선언이 선다(§15.227 의 기준). 관문이 플릿 단위를 읽게 되면 이 조건을 함께 푼다(§15.325).
      */
-    fun needsSourceObservation(step: UnitStep): Boolean = step.source != null && step.expectedIdentity != null
+    fun needsSourceObservation(step: UnitStep): Boolean =
+        step.route == Route.ROBOT && step.source != null && step.expectedIdentity != null
 
     /**
      * 이 단위 노드가 목적지 관측 선언을 **요구하는가** — 목적지(`destination`)와 거기 둘 것의 식별 정보(`expectedIdentity`)를
      * 둘 다 댈 때다. 게이트가 예약으로 세는 자리(자재를 둘 자리)와 같은 기준이다. 식별 정보가 없는 목적지는 갈 자리라 점유가 아니다.
-     * 해석기([DefinedCapability])도 같은 함수로 본다.
+     * 해석기([DefinedCapability])도 같은 함수로 본다. 출발 관측과 같은 까닭으로 로봇 경로 노드만이다.
      */
-    fun needsDestinationObservation(step: UnitStep): Boolean = step.destination != null && step.expectedIdentity != null
+    fun needsDestinationObservation(step: UnitStep): Boolean =
+        step.route == Route.ROBOT && step.destination != null && step.expectedIdentity != null
 
     /** 계약 카탈로그의 스킬 이름 전부 — 기술자의 `skill_type_name` 옵션에서 읽는다. */
     val contractSkills: Set<String> by lazy {
@@ -161,8 +206,9 @@ object MissionValidator {
             .toSet()
     }
 
+    /** 노드 id 중복 — 그룹과 그 안쪽 노드도 한 이름 공간이다. */
     private fun duplicateNodeIds(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
-        definition.steps.groupingBy { it.id }.eachCount().filterValues { it > 1 }.map { (id, n) ->
+        definition.steps.flatMap { if (it is EachStep) listOf(it) + it.steps else listOf(it) }.groupingBy { it.id }.eachCount().filterValues { it > 1 }.map { (id, n) ->
             MissionRefusal(MissionRefusalKind.DUPLICATE_NODE_ID, id, "$n 번 나온다", "정의 안에서 한 번", at)
         }
 
@@ -224,9 +270,9 @@ object MissionValidator {
         MissionRefusal(MissionRefusalKind.FLOOR_UNOWNED, wait.id, "$where: 소유자 없음", "$where: 소유자 선언", at)
     }
 
-    /** 스킬 — 계약에 있는 스킬인가, 현장 기체가 제공하는가. 둘은 다른 물음이다. */
+    /** 스킬 — 계약에 있는 스킬인가, 현장 기체가 제공하는가. 둘은 다른 물음이다. 플릿 노드의 운반은 로봇 스킬이 아니다([fleetRefusals]). */
     private fun skillRefusals(definition: MissionDefinition, siteSkills: Set<String>, at: Instant): List<MissionRefusal> =
-        definition.steps.filterIsInstance<UnitStep>().mapNotNull { unit ->
+        robotUnits(definition).mapNotNull { unit ->
             when {
                 unit.skill !in contractSkills -> MissionRefusal(
                     MissionRefusalKind.SKILL_NOT_IN_CONTRACT, unit.id, unit.skill, "계약 카탈로그의 스킬 이름", at,
@@ -253,7 +299,7 @@ object MissionValidator {
      * 해석기([DefinedCapability])는 적지 않아야 할 선언을 막지 않는다. 이미 활성화된 버전을 다시 지을 때 넘어지지 않게 한다.
      */
     private fun sourceObservationRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
-        definition.steps.filterIsInstance<UnitStep>().mapNotNull { unit ->
+        robotUnits(definition).mapNotNull { unit ->
             val declared = unit.sourceObservation
             when {
                 needsSourceObservation(unit) && declared == null -> MissionRefusal(
@@ -273,7 +319,7 @@ object MissionValidator {
      * 선언은 거부하지 않는다.
      */
     private fun destinationObservationRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
-        definition.steps.filterIsInstance<UnitStep>().mapNotNull { unit ->
+        robotUnits(definition).mapNotNull { unit ->
             val declared = unit.destinationObservation
             when {
                 needsDestinationObservation(unit) && declared == null -> MissionRefusal(
@@ -287,6 +333,113 @@ object MissionValidator {
                 else -> null
             }
         }
+
+    /** 로봇 경로 단위 노드. 플릿 노드의 스킬·관측 선언은 [fleetRefusals] 가 본다 — 한 문제에 거부 하나다. */
+    private fun robotUnits(definition: MissionDefinition) = unitNodes(definition).filter { it.route == Route.ROBOT }
+
+    /** 노드 묶음 — 최상위 단위 노드는 노드 하나짜리 묶음이고 반복 그룹은 그 안쪽 노드들이다. */
+    private fun groups(definition: MissionDefinition): List<Pair<MissionStep, List<UnitStep>>> = definition.steps.mapNotNull { step ->
+        when (step) {
+            is UnitStep -> step to listOf(step)
+            is EachStep -> step to step.steps
+            is WaitStep -> null
+        }
+    }
+
+    /** 선행 — `after` 는 같은 반복 그룹의 앞 형제 단위 노드만 가리킨다. 해석기도 같은 조건을 생성 때 본다. */
+    private fun afterRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
+        groups(definition).flatMap { (step, nodes) ->
+            nodes.mapIndexedNotNull { index, node ->
+                val after = node.after ?: return@mapIndexedNotNull null
+                if (step is EachStep && after in nodes.take(index).map { it.id }) return@mapIndexedNotNull null
+                val siblings = if (step is EachStep) nodes.take(index).map { it.id } else emptyList()
+                MissionRefusal(
+                    MissionRefusalKind.AFTER_INVALID, node.id, "after=$after",
+                    "같은 그룹의 앞 단위 노드 id(${siblings.joinToString().ifEmpty { "없음" }})", at,
+                )
+            }
+        }
+
+    /**
+     * 단위 id 모양 — 같은 그룹의 두 노드가, 또는 최상위 `once` 노드 둘이 낼 수 있는 단위 id 모양(출처·인자·접미사, `else` 의 끝값까지)이
+     * 하나라도 같으면 겹친다. 그룹은 항목마다, `once` 노드는 작업 지시마다 겹친다. 기존 문서에는 그룹도 `once` 도 없어 걸리지 않는다.
+     */
+    private fun unitIdShapeRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> {
+        val sets = definition.steps.filterIsInstance<EachStep>().map { it.steps } +
+            listOf(definition.steps.filterIsInstance<UnitStep>().filter { it.once })
+        return sets.flatMap { nodes ->
+            nodes.indices.flatMap { j ->
+                (0 until j).mapNotNull { i ->
+                    val shared = shapes(nodes[i].unitId).intersect(shapes(nodes[j].unitId).toSet()).firstOrNull() ?: return@mapNotNull null
+                    MissionRefusal(
+                        MissionRefusalKind.UNIT_ID_SHAPE_COLLISION, nodes[j].id,
+                        "${nodes[i].id}, ${nodes[j].id}: ${shapeName(shared)}", "노드마다 다른 단위 id 모양", at,
+                    )
+                }
+            }
+        }
+    }
+
+    /** 단위 id 가 낼 수 있는 모양 — 출처 자신과 `else` 의 끝값. 대체값(`otherwise`)은 단위 id 의 모양을 정하지 않는다. */
+    private fun shapes(unitId: ValueSource): List<ValueSource> =
+        listOfNotNull(unitId, unitId.orElse).map { it.copy(otherwise = null, orElse = null) }
+
+    private fun shapeName(shape: ValueSource): String =
+        shape.from.name + listOfNotNull(shape.equipmentUse, shape.property, shape.parameter).joinToString(".").let { if (it.isEmpty()) "" else "($it)" } +
+            shape.suffix.orEmpty()
+
+    /** 플릿 경로 — 운반 하나의 모양(`transport`, 출발·목적지·기대 식별 정보)이고 관측 선언이 없다. */
+    private fun fleetRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
+        unitNodes(definition).filter { it.route == Route.FLEET }.flatMap { unit ->
+            val missing = listOfNotNull(
+                "expectedIdentity".takeIf { unit.expectedIdentity == null },
+                "source".takeIf { unit.source == null },
+                "destination".takeIf { unit.destination == null },
+            )
+            val declared = listOfNotNull(
+                unit.sourceObservation?.let { "sourceObservation=${it.name}" },
+                unit.destinationObservation?.let { "destinationObservation=${it.name}" },
+            )
+            listOfNotNull(
+                MissionRefusal(MissionRefusalKind.FLEET_UNIT_INVALID, unit.id, "skill=${unit.skill}", "skill=$FLEET_SKILL", at)
+                    .takeIf { unit.skill != FLEET_SKILL },
+                MissionRefusal(MissionRefusalKind.FLEET_UNIT_INVALID, unit.id, "${missing.joinToString()}=없음", "출발·목적지·기대 식별 정보", at)
+                    .takeIf { missing.isNotEmpty() },
+                MissionRefusal(MissionRefusalKind.FLEET_UNIT_INVALID, unit.id, declared.joinToString(), "관측 선언 없음", at)
+                    .takeIf { declared.isNotEmpty() },
+            )
+        }
+
+    /** 조건부 포함 — 남길 노드를 알고, 남길 파라미터가 그 노드의 것이다. */
+    private fun whenMissingRefusals(definition: MissionDefinition, at: Instant): List<MissionRefusal> =
+        groups(definition).flatMap { (step, nodes) ->
+            val whenMissing = when (step) {
+                is UnitStep -> step.whenMissing
+                is EachStep -> step.whenMissing
+                is WaitStep -> null
+            } ?: return@flatMap emptyList()
+            val kept = (if (whenMissing.unit != null) nodes.firstOrNull { it.id == whenMissing.unit } else nodes.singleOrNull())
+                ?: return@flatMap listOf(
+                    MissionRefusal(
+                        MissionRefusalKind.WHEN_MISSING_INVALID, step.id, "unit=${whenMissing.unit ?: "없음"}",
+                        "남길 안쪽 노드 id(${nodes.joinToString { it.id }})", at,
+                    ),
+                )
+            val unknown = whenMissing.parameters.filterNot { it in kept.parameters }
+            if (unknown.isEmpty()) {
+                emptyList()
+            } else {
+                listOf(
+                    MissionRefusal(
+                        MissionRefusalKind.WHEN_MISSING_INVALID, step.id, "parameters=${unknown.joinToString()}",
+                        "${kept.id} 의 파라미터 이름(${kept.parameters.keys.joinToString()})", at,
+                    ),
+                )
+            }
+        }
+
+    /** 플릿 계약의 운반 이름 — 계약 카탈로그의 스킬이 아니다. */
+    private const val FLEET_SKILL = DeliverContainer.TRANSPORT
 
     private val BOOLEAN_VALUES = listOf("true", "false")
 }

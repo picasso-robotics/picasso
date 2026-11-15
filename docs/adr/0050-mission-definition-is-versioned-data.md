@@ -14,17 +14,17 @@
 
 ## 결정
 
-**임무 정의는 노드형 JSON 이다.** 최상위 5칸(`schemaVersion` 1, `workMasterId`, `maxEvidence` E0~E2, `preferredOptionals`, `steps` 1개 이상)은 모두 필수다. 노드는 `kind` 로 `unit`·`wait` 를 나눈다. 단위 노드는 `id`·`skill`·`forEach`·`unitId`·`parameters` 가 필수이고 `expectedIdentity`·`source`·`destination`·`sourceObservation`(`REQUIRED`·`OPTIONAL`)·`destinationObservation`(`REQUIRED`·`OPTIONAL`) 과 `pairWith`+`whenUnpaired`(둘이 함께)가 선택이다. 값 출처는 `{"from":"ITEM_ID"}`·`{"from":"ITEM_PROPERTY","property":…}`·`{"from":"PAIRED_ID"}` 셋이고 선택 대체값 `otherwise` 를 둘 수 있다. `unitId` 는 `ITEM_ID` 만 받는다. 속성이 없으면 null 이고(코드의 `expectedIdentity` 와 같다) 값이 없는 파라미터는 빠진다. 대기 노드는 `id`·`signal`·`expect`·`deadlineSeconds`·`onDeadline` 이다. 표기는 `MissionDefinitionParser` 의 KDoc 과 시험 `MissionFixtures` 에 있다.
+**임무 정의는 노드형 JSON 이다.** 최상위 5칸(`schemaVersion` 1, `workMasterId`, `maxEvidence` E0~E2, `preferredOptionals`, `steps` 1개 이상)은 모두 필수다. 노드는 `kind` 로 `unit`·`wait` 를 나눈다. 단위 노드는 `id`·`skill`·`forEach`·`unitId`·`parameters` 가 필수이고 `expectedIdentity`·`source`·`destination`·`sourceObservation`(`REQUIRED`·`OPTIONAL`)·`destinationObservation`(`REQUIRED`·`OPTIONAL`) 과 `pairWith`+`whenUnpaired`(둘이 함께)가 선택이다. 값 출처는 `{"from":"ITEM_ID"}`·`{"from":"ITEM_PROPERTY","property":…}`·`{"from":"PAIRED_ID"}` 셋이고 선택 대체값 `otherwise` 를 둘 수 있다. `unitId` 는 `ITEM_ID` 만 받는다. 속성이 없으면 null 이고(코드의 `expectedIdentity` 와 같다) 값이 없는 파라미터는 빠진다. 대기 노드는 `id`·`signal`·`expect`·`deadlineSeconds`·`onDeadline` 이다. 표기는 `MissionDefinitionParser` 의 KDoc 과 시험 `MissionFixtures` 에 있다. (갱신, §15.325) 버전 1 에 선택 칸을 더했다 — 반복 그룹 노드 `kind: "each"`(설비마다 안쪽 단위 노드를 차례로 펼침, 중첩·그룹 안 대기 없음), 단위 노드의 `once`·`route`(`ROBOT`·`FLEET`)·`after`(같은 그룹의 앞 노드)·`requires`+`whenMissing`(입력이 없으면 단위 하나를 `FAILED` 로 접음), 값 출처 `ORDER_ID`·`ORDER_PARAMETER`·`FIRST_ID`·`FIRST_PROPERTY`, `unitId` 전용 `suffix`·`else`. 값 출처는 일곱이 됐고, `unitId` 는 «`ITEM_ID` 만» 에서 «반드시 값을 냄»(`ITEM_ID`±`suffix`, `ORDER_ID`, 또는 `else` 가 그 둘)으로 넓혔다. 반복 노드의 단위 id 는 `ITEM_ID`·`ITEM_PROPERTY` 로 시작하고(`else` 는 `ITEM_ID`), 늘 값이 있는 출처는 `requires` 에 오지 않는다. 그 칸을 안 쓰는 문서의 뜻과 검증 결과는 그대로다.
 
 **파서는 모양과 형만 본다.** 모르는 키, 빠진 칸, 형 틀림, 중복 키, 문법 오류를 모두 모아 한 번에 낸다. 새 의존은 없다. protobuf-java-util 의 `JsonFormat` 으로 `Struct` 를 만들고 엄격 매핑은 손으로 한다. `StrictJson` 이 문법과 중복 키를 본다(`JsonFormat` 은 중복 키에 말없이 뒤엣것을 쓴다). 기한 값과 기한 뒤 상태의 판정은 검증기의 일이다.
 
-**해석기 `DefinedCapability` 가 정의를 `LogicalCapability` 로 바꾼다.** 실행·리비전·인시던트는 지금 경로를 그대로 탄다. 데이터로 옮긴 것은 `PrepareSequencedRack` 하나이고 코드와 같은 계획을 칸마다 낸다(동등성 시험). 코드 클래스는 동등성 기준으로 남는다. `DeliverContainer`·`InspectAsset` 은 코드 정의로 남아 같은 카탈로그에 함께 선다.
+**해석기 `DefinedCapability` 가 정의를 `LogicalCapability` 로 바꾼다.** 실행·리비전·인시던트는 지금 경로를 그대로 탄다. 데이터로 옮긴 것은 `PrepareSequencedRack` 하나이고 코드와 같은 계획을 칸마다 낸다(동등성 시험). 코드 클래스는 동등성 기준으로 남는다. `DeliverContainer`·`InspectAsset` 은 코드 정의로 남아 같은 카탈로그에 함께 선다. (갱신, §15.325) 둘도 데이터로 옮겼다 — 데이터 버전은 시험 고정물(`MissionFixtures.INSPECT_ASSET`·`DELIVER_CONTAINER`)이고 동등성 시험이 칸마다 댄다. 코드 클래스는 그대로 기본 카탈로그이자 동등성 기준이다.
 
 **설비 대기는 셋째 경로 `Route.SIGNAL` 이다.** 판정은 신호의 지금 값이다. 기대 값이면 `DONE`·E2 로 끝나고 못 읽으면 계속 기다린다. 기한을 넘으면 인시던트(`SIGNAL_DEADLINE`)를 내고 `onDeadline` 대로 간다. `OPERATOR_HOLD` 는 대기 단위가 운영자 보류로 서서 라인이 멈추고 확인(`CONFIRM_DONE`)·재작업(`REWORK`)·취소로 풀린다. `ABORTED` 는 대기 단위가 `FAILED` 로 남고 남은 단위를 `ABORTED` 로 적은 뒤 실행을 중단하며 취소 응답은 남기지 않는다. 두 경우 모두 인시던트다. 진행 루프의 경로 분기를 «로봇이 아니면 플릿» 에서 경로별 `when` 으로 바꿨다.
 
 **셀 신호 포트에 `signal(name): NamedSignal?` 을 더한다.** 기본 구현은 null 이라 기존 구현체는 깨지지 않는다. 어느 주소가 어느 신호인지는 드라이버의 일이다.
 
-**검증기는 라이브러리다.** 화면과 활성화가 같은 규칙으로 막는다. 노드 id 중복과 기한·신호·자원·스킬·안전·출발 관측·목적지 관측 일곱 검사다. 거부는 운영 관리 화면 설계 제안 §8.4 의 6칸(부족한 조건은 종류로, 관측값·기대값, 마지막 확인 시각은 활성화 시도 시각, 근거 버전은 해당 없음, 해결 담당, 바로 갈 작업)에 노드 id 를 더한 것이다. 종류는 `UNREADABLE`·`DUPLICATE_NODE_ID`·`DEADLINE_INVALID`·`SIGNAL_NOT_IN_SPEC`·`SIGNAL_VALUE_INVALID`·`FLOOR_UNOWNED`·`SKILL_NOT_IN_CONTRACT`·`SKILL_NOT_ON_SITE`·`SAFETY_SIGNAL_WAIT`·`SOURCE_OBSERVATION_UNDECLARED`·`SOURCE_OBSERVATION_UNUSED`·`DESTINATION_OBSERVATION_UNDECLARED`·`DESTINATION_OBSERVATION_UNUSED` 열셋이고, 해결 담당은 바닥 소유만 화면 밖(`OUTSIDE_CONSOLE`), 출발 관측과 목적지 관측의 각 두 종류(미선언, 쓰이지 않는 선언)는 엔지니어(`ENGINEER`)다.
+**검증기는 라이브러리다.** 화면과 활성화가 같은 규칙으로 막는다. 노드 id 중복과 기한·신호·자원·스킬·안전·출발 관측·목적지 관측 일곱 검사다. 거부는 운영 관리 화면 설계 제안 §8.4 의 6칸(부족한 조건은 종류로, 관측값·기대값, 마지막 확인 시각은 활성화 시도 시각, 근거 버전은 해당 없음, 해결 담당, 바로 갈 작업)에 노드 id 를 더한 것이다. 종류는 `UNREADABLE`·`DUPLICATE_NODE_ID`·`DEADLINE_INVALID`·`SIGNAL_NOT_IN_SPEC`·`SIGNAL_VALUE_INVALID`·`FLOOR_UNOWNED`·`SKILL_NOT_IN_CONTRACT`·`SKILL_NOT_ON_SITE`·`SAFETY_SIGNAL_WAIT`·`SOURCE_OBSERVATION_UNDECLARED`·`SOURCE_OBSERVATION_UNUSED`·`DESTINATION_OBSERVATION_UNDECLARED`·`DESTINATION_OBSERVATION_UNUSED` 열셋이고, 해결 담당은 바닥 소유만 화면 밖(`OUTSIDE_CONSOLE`), 출발 관측과 목적지 관측의 각 두 종류(미선언, 쓰이지 않는 선언)는 엔지니어(`ENGINEER`)다. (갱신, §15.325) 새 칸에만 걸리는 검사 넷(선행·단위 id 모양·플릿 경로·조건부 포함)을 더해 검사는 열하나, 종류는 `AFTER_INVALID`·`UNIT_ID_SHAPE_COLLISION`·`FLEET_UNIT_INVALID`·`WHEN_MISSING_INVALID` 를 더한 열일곱이다. 넷 다 엔지니어다. 출발·목적지 관측 선언의 요구는 로봇 경로 노드만이다(배정 게이트가 로봇 단위만 읽는다).
 
 **포트 `MissionCatalog` 와 메모리 구현을 둔다.** 포트는 middleware 패키지에, `InMemoryMissionCatalog` 는 mission 패키지에 있어 의존은 한 방향이다. 활성화는 검증을 통과하면 그 WorkMaster 의 다음 버전(1부터)이 되고 거부면 활성 버전이 그대로이며 거부된 시도는 번호를 쓰지 않는다. 검증기 입력(신호 사양·바닥 소유·현장 기체 스킬)은 활성화 호출의 인자다. 구현은 `synchronized` 로 스레드 안전하다. `Middleware` 생성자 맨 뒤에 `missions` 를 두었다. 기본은 코드 케이퍼빌리티 셋이고 버전이 없다. `capabilities` 와 함께 주면 생성이 실패한다.
 
@@ -45,7 +45,7 @@
 
 ## 고르지 않은 것
 
-- 세 정의를 다 데이터로 옮기는 길. 반복 한 번에 노드 여럿, 단위 id 접미사, 작업 지시 파라미터 값, 조건부 포함, 플릿 경로가 스키마에 더 있어야 한다.
+- 세 정의를 다 데이터로 옮기는 길. 반복 한 번에 노드 여럿, 단위 id 접미사, 작업 지시 파라미터 값, 조건부 포함, 플릿 경로가 스키마에 더 있어야 한다. (닫힘, §15.325) 그 칸을 버전 1 의 선택 칸으로 더해 옮겼다.
 - 분기·병렬. 운영 관리 화면 설계 제안 §6 이 5가지 의미(동시 전이 우선순위, 반복 횟수, 자원 획득·반납, 취소·재시작, 재시도 때 부작용 중복)를 먼저 정한 뒤 연다.
 - JSON 에 Jackson·kotlinx 를 들이는 길. picasso main 의존은 계약과 계약 소비자뿐이다(P3 스펙의 결정 (차)).
 - 작업 응답·로봇 계약에 임무 버전 칸을 두는 길과 `missionVersion` 을 내보내기에 싣는 길. 읽는 쪽이 없다(ADR 9, §15.202 와 같은 처리). 내보내기 쪽은 감사 내보내기 묶음(§15.322)이 버전 8 에서 실었다.
@@ -80,7 +80,9 @@
 | WorkMaster 를 바꾸는 리비전은 거부하고 실행은 그대로다 | `MissionVersionScenarioTest` · `리비전이 WorkMaster 를 바꾸면 거부하고 실행은 그대로다` |
 | 활성화를 통과하면 1 부터 오르는 버전이 활성이 되고 거부된 시도는 번호를 쓰지 않는다 | `InMemoryMissionCatalogTest` · `통과하면 1 부터 오르는 버전이 활성이 되고 거부된 시도는 번호를 쓰지 않는다` |
 | 파서는 모르는 키와 빠진 칸과 형이 틀린 값을 한 번에 모은다 | `MissionDefinitionParserTest` · `모르는 키와 빠진 칸과 형이 틀린 값을 한 번에 모은다` |
+| 데이터로 옮긴 `InspectAsset`·`DeliverContainer` 가 작업 지시 모양마다 코드와 같은 계획을 칸마다 낸다(§15.325) | `DefinedCapabilityEquivalenceTest` · `점검 — 작업 지시 모양마다 데이터 정의가 코드와 같은 계획을 칸마다 낸다` · `운반 — 작업 지시 모양마다 데이터 정의가 코드와 같은 계획을 칸마다 낸다` |
+| 데이터로 옮긴 점검도 이동이 실패하면 그 대상의 점검만 건너뛰고 다음 대상이 나간다(§15.325) | `InspectAssetTest` · `데이터로 옮긴 점검도 이동이 결함 없이 실패하면 그 대상의 점검만 건너뛰고 다음 대상의 이동이 나간다` |
 
 이 표는 게이트가 이름으로 대조하지 않는다. 이름은 시험과 손으로 맞춘다.
 
-> 마지막 대조: 2026-11-14 · sha256:1a0d60a29b6f · 열림: §15.209 · 정의 둘, §15.209 · 분기, §15.209 · 스키마 파일, §15.209 · 이벤트형 신호, §15.209 · 주소
+> 마지막 대조: 2026-11-15 · sha256:26519339772a · 열림: §15.209 · 분기, §15.209 · 스키마 파일, §15.209 · 이벤트형 신호, §15.209 · 주소

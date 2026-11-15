@@ -498,7 +498,8 @@ class ExecutionUnit(
      * 이 단위보다 먼저 `DONE` 이어야 하는 단위의 id(§15.234). **널이 기본이고 그때는 앞 단위의 결과와 상관없이 나간다** — 슬롯끼리
      * 독립인 계획([PrepareSequencedRack])은 앞 슬롯이 실패해도 다음 슬롯을 낸다.
      *
-     * 채우는 것은 오늘 [InspectAsset] 하나다. 대상 하나가 단위 둘(이동과 점검)이고, 이동이 완료되지 않은 채 점검을 내면 엉뚱한 자리에서
+     * 채우는 것은 오늘 [InspectAsset] 과, 반복 그룹의 `after` 를 쓴 임무 정의(`DefinedCapability`, §15.325 — 데이터로 옮긴 InspectAsset 이
+     * 그것이다)다. 대상 하나가 단위 둘(이동과 점검)이고, 이동이 완료되지 않은 채 점검을 내면 엉뚱한 자리에서
      * 살핀 결과가 `DONE` 으로 남는다. 출발 직전에 이 값이 가리키는 단위가 종료했는데 `DONE` 이 아니면 실행은 이 단위를 태스크 없이 `FAILED` 로
      * 두고 다음 단위로 간다([Middleware.PREDECESSOR_NOT_DONE]). 순회가 종결한 뒤 사람이 낸 재작업이 이 단위와 선행을 함께 새 시도로 되돌린다
      * ([Middleware.resolve]).

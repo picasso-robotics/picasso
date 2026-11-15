@@ -6,6 +6,7 @@ import com.google.protobuf.Value
 import com.google.protobuf.util.JsonFormat
 import dev.picasso.middleware.DestinationObservation
 import dev.picasso.middleware.Evidence
+import dev.picasso.middleware.Route
 import dev.picasso.middleware.SourceObservation
 
 /** 임무 정의를 읽은 결과 — 읽었거나, 읽을 수 없는 자리를 **모두** 든다. */
@@ -53,11 +54,41 @@ sealed interface MissionParse {
  * }
  * ```
  *
- * 최상위 다섯 칸은 모두 필수다. 단위 노드는 `id`·`skill`·`forEach`·`unitId`·`parameters` 가 필수이고 나머지는 선택이며,
- * `pairWith` 와 `whenUnpaired` 는 함께 온다. `sourceObservation` 은 `REQUIRED`·`OPTIONAL` 중 하나이고, 없어도 읽는다 —
+ * 최상위 다섯 칸은 모두 필수다. 단위 노드는 `id`·`skill`·`forEach`(또는 `"once": true`)·`unitId`·`parameters` 가 필수이고
+ * 나머지는 선택이며, `pairWith` 와 `whenUnpaired` 는 함께 온다. `sourceObservation` 은 `REQUIRED`·`OPTIONAL` 중 하나이고, 없어도 읽는다 —
  * 신원을 대는 출발 자리에 선언이 없는 것은 검증기가 거부한다. `destinationObservation` 도 같은 두 값이고 없어도 읽는다 —
  * 식별 정보를 대는 목적지에 선언이 없는 것은 검증기가 거부한다. 대기 노드는 `id`·`signal`·`expect` 가 필수이고 `deadlineSeconds`·`onDeadline`
  * 은 형만 본다(없음은 검증기가 거부한다).
+ *
+ * ## 버전 1 에 더한 칸(§15.325)
+ *
+ * 아래 칸을 안 쓰는 문서는 전과 같은 뜻으로 읽힌다.
+ *
+ * ```json
+ * { "kind": "each", "id": "visit", "forEach": "inspection_target",
+ *   "requires": [ { "from": "ITEM_PROPERTY", "property": "location" } ],
+ *   "whenMissing": { "failureClass": "NO_LOCATION_FOR_TARGET", "unit": "inspect", "parameters": ["target"] },
+ *   "steps": [
+ *     { "kind": "unit", "id": "travel", "skill": "navigate_to",
+ *       "unitId": { "from": "ITEM_ID", "suffix": ".travel" }, "parameters": { … } },
+ *     { "kind": "unit", "id": "inspect", "skill": "inspect", "after": "travel",
+ *       "unitId": { "from": "ITEM_ID" },
+ *       "parameters": { "mode": { "from": "ORDER_PARAMETER", "parameter": "mode" } } } ] }
+ *
+ * { "kind": "unit", "id": "deliver", "once": true, "route": "FLEET", "skill": "transport",
+ *   "unitId": { "from": "FIRST_PROPERTY", "equipmentUse": "source", "property": "container", "else": { "from": "ORDER_ID" } }, … }
+ * ```
+ *
+ * - **반복 그룹** `kind: "each"` — `id`·`forEach`·`steps`(단위 노드 1개 이상)가 필수다. 안쪽 단위 노드는 `forEach`·`once`·`pairWith`·
+ *   `whenUnpaired`·`requires`·`whenMissing` 을 갖지 않는다. 그룹 안에는 대기 노드와 그룹이 오지 않는다
+ * - **`once`** — 참거짓. 참이면 `forEach` 가 오지 않고 `pairWith` 도 오지 않는다
+ * - **`route`** — `ROBOT`·`FLEET`. 없으면 `ROBOT` 이다. `after` — 문자열(참조가 맞는지는 검증기가 본다)
+ * - **`requires`·`whenMissing`** — 함께 온다. `requires` 는 값 출처 1개 이상, `whenMissing` 은 `failureClass`(비지 않음)·`parameters`
+ *   (문자열 배열, 빈 배열 가능)가 필수이고 `unit` 은 그룹에만 온다
+ * - **값 출처** — `ORDER_ID`, `ORDER_PARAMETER`(`parameter` 필수), `FIRST_ID`(`equipmentUse` 필수), `FIRST_PROPERTY`(`equipmentUse`·
+ *   `property` 필수)를 더했다. `FIRST_*` 는 `once` 노드에만, `ITEM_*`·`PAIRED_ID` 는 `once` 가 아닌 노드에만 온다
+ * - **`unitId` 전용** — `suffix`(비지 않은 문자열)와 `else`(한 단계, `ITEM_ID`·`ORDER_ID`). 단위 id 는 반드시 값을 내야 하므로
+ *   출처가 `ITEM_ID`·`ORDER_ID` 가 아니면 `else` 가 있어야 한다
  */
 object MissionDefinitionParser {
 
@@ -82,11 +113,32 @@ object MissionDefinitionParser {
     private val UNIT = setOf(
         "kind", "id", "skill", "forEach", "unitId", "parameters",
         "expectedIdentity", "source", "destination", "pairWith", "whenUnpaired", "sourceObservation",
-        "destinationObservation",
+        "destinationObservation", "once", "route", "requires", "whenMissing", "after",
     )
+
+    /** 그룹이 쥐는 칸 — 그룹 안 단위 노드에는 오지 않는다. */
+    private val GROUP_OWNED = listOf("forEach", "once", "pairWith", "whenUnpaired", "requires", "whenMissing")
+    private val EACH = setOf("kind", "id", "forEach", "requires", "whenMissing", "steps")
     private val WAIT = setOf("kind", "id", "signal", "expect", "deadlineSeconds", "onDeadline")
     private val PAIRING = setOf("equipmentUse", "property")
-    private val VALUE_SOURCE = setOf("from", "property", "otherwise")
+    private val VALUE_SOURCE = setOf("from", "property", "otherwise", "equipmentUse", "parameter", "suffix", "else")
+    private val WHEN_MISSING = setOf("failureClass", "unit", "parameters")
+
+    /** 단위 노드가 받는 경로. 설비 대기([Route.SIGNAL])는 대기 노드의 몫이다. */
+    private val ROUTES = listOf(Route.ROBOT, Route.FLEET)
+
+    /** 언제나 값을 내는 출처 — 단위 id 는 이것이거나 `else` 가 이것이어야 한다. */
+    private val ALWAYS = setOf(ValueFrom.ITEM_ID, ValueFrom.ORDER_ID)
+    /** 반복 노드의 단위 id 가 시작할 출처 — 설비마다 다른 값이다. */
+    private val LOOP_IDS = setOf(ValueFrom.ITEM_ID, ValueFrom.ITEM_PROPERTY)
+    private val PROPERTY_SOURCES = setOf(ValueFrom.ITEM_PROPERTY, ValueFrom.FIRST_PROPERTY)
+    private val FIRST_SOURCES = setOf(ValueFrom.FIRST_ID, ValueFrom.FIRST_PROPERTY)
+
+    /** 반복 중인 설비(또는 그 짝)를 읽는 출처 — `once` 노드에는 반복 중인 설비가 없다. */
+    private val ITEM_SOURCES = setOf(ValueFrom.ITEM_ID, ValueFrom.ITEM_PROPERTY, ValueFrom.PAIRED_ID)
+
+    /** 값 출처를 읽는 자리 — 짝이 있는 노드인가, 작업 지시마다 한 번인 노드인가. */
+    private data class Scope(val paired: Boolean, val once: Boolean)
 
     /** 정의가 낼 수 있는 등급. E3(업무 확인)은 상위의 ack 이라 케이퍼빌리티가 약속할 수 없다. */
     private val EVIDENCE = listOf(Evidence.E0, Evidence.E1, Evidence.E2)
@@ -139,6 +191,24 @@ object MissionDefinitionParser {
             return n.toLong()
         }
 
+        fun bool(fields: Map<String, Value>, key: String, path: String): Boolean? {
+            val value = present(fields, key, path, required = false) ?: return null
+            if (!value.hasBoolValue()) {
+                problem("$path.$key", "참거짓이어야 한다(${kindOf(value)})")
+                return null
+            }
+            return value.boolValue
+        }
+
+        fun list(fields: Map<String, Value>, key: String, path: String, required: Boolean): List<Value>? {
+            val value = present(fields, key, path, required) ?: return null
+            if (!value.hasListValue()) {
+                problem("$path.$key", "배열이어야 한다(${kindOf(value)})")
+                return null
+            }
+            return value.listValue.valuesList
+        }
+
         fun obj(fields: Map<String, Value>, key: String, path: String, required: Boolean = true): Map<String, Value>? {
             val value = present(fields, key, path, required) ?: return null
             if (!value.hasStructValue()) {
@@ -178,6 +248,22 @@ object MissionDefinitionParser {
         }
 
         private fun steps(fields: Map<String, Value>, path: String): List<MissionStep>? {
+            val items = nodes(fields, path) ?: return null
+            return items.mapIndexedNotNull { index, item ->
+                val at = "$path.steps[$index]"
+                val node = item ?: return@mapIndexedNotNull null
+                when (val kind = string(node, "kind", at)) {
+                    null -> null
+                    "unit" -> unit(node, at, inner = false)
+                    "wait" -> wait(node, at)
+                    "each" -> each(node, at)
+                    else -> null.also { problem("$at.kind", "unit·wait·each 중 하나여야 한다($kind)") }
+                }
+            }
+        }
+
+        /** `steps` 배열을 읽는다 — 객체가 아닌 항목은 그 자리에 널을 두고 알린다. 비었으면 알린다. */
+        private fun nodes(fields: Map<String, Value>, path: String): List<Map<String, Value>?>? {
             val value = present(fields, "steps", path, required = true) ?: return null
             if (!value.hasListValue()) {
                 problem("$path.steps", "배열이어야 한다(${kindOf(value)})")
@@ -185,36 +271,48 @@ object MissionDefinitionParser {
             }
             val items = value.listValue.valuesList
             if (items.isEmpty()) problem("$path.steps", "노드가 하나도 없다")
-            return items.mapIndexedNotNull { index, item ->
-                val at = "$path.steps[$index]"
-                if (!item.hasStructValue()) {
-                    problem(at, "객체여야 한다(${kindOf(item)})")
-                    return@mapIndexedNotNull null
-                }
-                val node = item.structValue.fieldsMap
-                when (val kind = string(node, "kind", at)) {
-                    null -> null
-                    "unit" -> unit(node, at)
-                    "wait" -> wait(node, at)
-                    else -> null.also { problem("$at.kind", "unit 이나 wait 여야 한다($kind)") }
+            return items.mapIndexed { index, item ->
+                if (item.hasStructValue()) {
+                    item.structValue.fieldsMap
+                } else {
+                    null.also { problem("$path.steps[$index]", "객체여야 한다(${kindOf(item)})") }
                 }
             }
         }
 
-        private fun unit(node: Map<String, Value>, path: String): UnitStep? {
+        /**
+         * 단위 노드. [inner] 면 반복 그룹 안쪽 노드다 — 반복(`forEach`·`once`)·짝·조건은 그룹이 쥐므로 그 칸이 오면 알린다.
+         */
+        private fun unit(node: Map<String, Value>, path: String, inner: Boolean): UnitStep? {
             unknownKeys(node, UNIT, path)
+            if (inner) {
+                GROUP_OWNED.filter { it in node }.forEach { problem("$path.$it", "그룹 안 단위 노드에는 오지 않는다 — 반복과 조건은 그룹이 쥔다") }
+            }
             val id = string(node, "id", path)
             val skill = string(node, "skill", path)
-            val forEach = string(node, "forEach", path)
-            val pairWith = obj(node, "pairWith", path, required = false)?.let { pairing(it, "$path.pairWith") }
-            val whenUnpaired = string(node, "whenUnpaired", path, required = false)
-            if (("pairWith" in node) != ("whenUnpaired" in node)) {
+            val once = !inner && bool(node, "once", path) == true
+            if (once && "forEach" in node) problem(path, "once 와 forEach 는 함께 오지 않는다 — 작업 지시마다 한 번이거나 설비마다 하나다")
+            if (once && "pairWith" in node) problem("$path.pairWith", "once 노드에는 짝이 없다 — 반복 중인 설비가 없다")
+            val forEach = if (inner || once) null else string(node, "forEach", path)
+            val pairWith = if (inner) null else obj(node, "pairWith", path, required = false)?.let { pairing(it, "$path.pairWith") }
+            val whenUnpaired = if (inner) null else string(node, "whenUnpaired", path, required = false)
+            if (!inner && ("pairWith" in node) != ("whenUnpaired" in node)) {
                 problem(path, "pairWith 와 whenUnpaired 는 함께 온다 — 짝이 없을 때의 실패 분류가 없으면 그 단위를 어떻게 둘지 모른다")
             }
-            val paired = "pairWith" in node
-            val unitId = source(node, "unitId", path, required = true, paired = paired)
-            if (unitId != null && unitId.from != ValueFrom.ITEM_ID) {
-                problem("$path.unitId.from", "ITEM_ID 여야 한다(${unitId.from}) — 단위 id 는 반복 중인 설비의 id 다")
+            val scope = Scope(paired = !inner && "pairWith" in node, once = once)
+            val unitId = source(node, "unitId", path, required = true, scope = scope, unitId = true)
+            if (unitId != null && unitId.from !in ALWAYS && unitId.orElse == null) {
+                problem(
+                    "$path.unitId.from",
+                    "${ALWAYS.joinToString(" 나 ")} 여야 한다(${unitId.from}) — 단위 id 는 반드시 값을 낸다. 다른 출처는 else 로 그 둘 중 하나를 둔다",
+                )
+            }
+            // 반복 노드의 단위 id 는 설비마다 달라야 한다 — 작업 지시의 값이나 짝의 id 는 설비마다 같을 수 있다(§15.325). FIRST_* 는 위에서 막는다.
+            if (unitId != null && !once && unitId.from !in LOOP_IDS && unitId.from !in FIRST_SOURCES) {
+                problem("$path.unitId.from", "반복 노드의 단위 id 는 ${LOOP_IDS.joinToString("·")} 로 시작한다(${unitId.from}) — 설비마다 같을 수 있는 값이라 단위 id 가 겹친다")
+            }
+            if (unitId?.orElse != null && !once && unitId.orElse.from != ValueFrom.ITEM_ID) {
+                problem("$path.unitId.else.from", "반복 노드의 else 는 ${ValueFrom.ITEM_ID} 여야 한다(${unitId.orElse.from}) — 설비마다 같은 값이라 단위 id 가 겹친다")
             }
             val parameters = obj(node, "parameters", path)?.let { map ->
                 val out = linkedMapOf<String, ValueSource>()
@@ -223,14 +321,14 @@ object MissionDefinitionParser {
                     if (!v.hasStructValue()) {
                         problem(at, "값 출처 객체여야 한다(${kindOf(v)})")
                     } else {
-                        valueSource(v.structValue.fieldsMap, at, paired)?.let { out[name] = it }
+                        valueSource(v.structValue.fieldsMap, at, scope)?.let { out[name] = it }
                     }
                 }
                 out
             }
-            val expected = source(node, "expectedIdentity", path, required = false, paired = paired)
-            val source = source(node, "source", path, required = false, paired = paired)
-            val destination = source(node, "destination", path, required = false, paired = paired)
+            val expected = source(node, "expectedIdentity", path, required = false, scope = scope)
+            val source = source(node, "source", path, required = false, scope = scope)
+            val destination = source(node, "destination", path, required = false, scope = scope)
             val observation = string(node, "sourceObservation", path, required = false)?.let { name ->
                 SourceObservation.entries.firstOrNull { it.name == name }
                     ?: null.also {
@@ -246,11 +344,72 @@ object MissionDefinitionParser {
                         )
                     }
             }
-            if (id == null || skill == null || forEach == null || unitId == null || parameters == null) return null
+            val route = string(node, "route", path, required = false)?.let { name ->
+                ROUTES.firstOrNull { it.name == name }
+                    ?: null.also { problem("$path.route", "${ROUTES.joinToString("·")} 중 하나여야 한다($name) — 설비 대기는 대기 노드로 적는다") }
+            } ?: Route.ROBOT
+            // 그룹 안의 플릿 노드는 두 정의 어느 쪽도 쓰지 않고 실행 시험이 없다 — 받지 않는다(§15.325 «넣지 않은 것»).
+            if (inner && route == Route.FLEET) problem("$path.route", "그룹 안 단위 노드는 ${Route.ROBOT} 경로뿐이다 — 플릿 운반은 once 노드로 적는다")
+            val after = string(node, "after", path, required = false)
+            val (requires, whenMissing) = if (inner) emptyList<ValueSource>() to null else conditions(node, path, scope, group = false)
+            if (id == null || skill == null || (forEach == null && !inner && !once) || unitId == null || parameters == null) return null
             return UnitStep(
                 id, skill, forEach, unitId, parameters, expected, source, destination, pairWith, whenUnpaired, observation,
-                destinationObservation,
+                destinationObservation, once, route, requires, whenMissing, after,
             )
+        }
+
+        /** 반복 그룹(`kind: "each"`). 안쪽은 단위 노드만 온다 — 대기·그룹은 그룹 밖에 둔다(중첩 없음). */
+        private fun each(node: Map<String, Value>, path: String): EachStep? {
+            unknownKeys(node, EACH, path)
+            val id = string(node, "id", path)
+            val forEach = string(node, "forEach", path)
+            val (requires, whenMissing) = conditions(node, path, Scope(paired = false, once = false), group = true)
+            val steps = nodes(node, path)?.mapIndexedNotNull { index, item ->
+                val at = "$path.steps[$index]"
+                val inner = item ?: return@mapIndexedNotNull null
+                when (val kind = string(inner, "kind", at)) {
+                    null -> null
+                    "unit" -> unit(inner, at, inner = true)
+                    else -> null.also { problem("$at.kind", "그룹 안에는 unit 만 온다($kind) — 대기·그룹은 그룹 밖에 둔다") }
+                }
+            }
+            if (id == null || forEach == null || steps == null) return null
+            return EachStep(id, forEach, requires, whenMissing, steps)
+        }
+
+        /** 조건부 포함 — `requires`(값 출처 목록)와 `whenMissing` 은 함께 온다. [group] 이 아니면 `whenMissing.unit` 이 오지 않는다. */
+        private fun conditions(node: Map<String, Value>, path: String, scope: Scope, group: Boolean): Pair<List<ValueSource>, WhenMissing?> {
+            if (("requires" in node) != ("whenMissing" in node)) {
+                problem(path, "requires 와 whenMissing 은 함께 온다 — 입력이 없을 때 그 단위를 어떻게 둘지 모른다")
+            }
+            val requires = list(node, "requires", path, required = false)?.let { items ->
+                if (items.isEmpty()) problem("$path.requires", "출처가 하나도 없다")
+                items.mapIndexedNotNull { index, v ->
+                    val at = "$path.requires[$index]"
+                    if (v.hasStructValue()) {
+                        valueSource(v.structValue.fieldsMap, at, scope)?.also { required ->
+                            // 늘 값을 내는 출처는 영영 접히지 않는다 — 적은 조건이 돌지 않는다.
+                            if (required.from in ALWAYS) problem("$at.from", "늘 값이 있는 출처는 조건이 되지 않는다(${required.from})")
+                            if (required.otherwise != null) problem("$at.otherwise", "조건에는 대체값이 오지 않는다 — 대체값이 있으면 영영 접히지 않는다")
+                        }
+                    } else {
+                        null.also { problem(at, "값 출처 객체여야 한다(${kindOf(v)})") }
+                    }
+                }
+            }.orEmpty()
+            val whenMissing = obj(node, "whenMissing", path, required = false)?.let { fields ->
+                val at = "$path.whenMissing"
+                unknownKeys(fields, WHEN_MISSING, at)
+                val failureClass = string(fields, "failureClass", at)
+                if (!group && "unit" in fields) problem("$at.unit", "그룹에만 온다 — 그룹이 아닌 노드는 그 노드 하나가 남는다")
+                val unit = if (group) string(fields, "unit", at, required = false) else null
+                val parameters = list(fields, "parameters", at, required = true)?.mapIndexedNotNull { index, v ->
+                    if (v.hasStringValue()) v.stringValue else null.also { problem("$at.parameters[$index]", "문자열이어야 한다(${kindOf(v)})") }
+                }
+                if (failureClass == null || parameters == null) null else WhenMissing(failureClass, unit, parameters)
+            }
+            return requires to whenMissing
         }
 
         private fun pairing(fields: Map<String, Value>, path: String): Pairing? {
@@ -260,24 +419,59 @@ object MissionDefinitionParser {
             return if (use == null || property == null) null else Pairing(use, property)
         }
 
-        private fun source(node: Map<String, Value>, key: String, path: String, required: Boolean, paired: Boolean): ValueSource? =
-            obj(node, key, path, required)?.let { valueSource(it, "$path.$key", paired) }
+        private fun source(
+            node: Map<String, Value>,
+            key: String,
+            path: String,
+            required: Boolean,
+            scope: Scope,
+            unitId: Boolean = false,
+        ): ValueSource? = obj(node, key, path, required)?.let { valueSource(it, "$path.$key", scope, unitId) }
 
-        private fun valueSource(fields: Map<String, Value>, path: String, paired: Boolean): ValueSource? {
+        /**
+         * 값 출처 하나. [unitId] 면 `suffix`·`else` 를 받는다(단위 id 에만 온다). `else` 는 한 단계이고 `ITEM_ID`·`ORDER_ID` 뿐이다.
+         */
+        private fun valueSource(fields: Map<String, Value>, path: String, scope: Scope, unitId: Boolean = false): ValueSource? {
             unknownKeys(fields, VALUE_SOURCE, path)
             val fromName = string(fields, "from", path) ?: return null
             val from = ValueFrom.entries.firstOrNull { it.name == fromName }
                 ?: return null.also { problem("$path.from", "${ValueFrom.entries.joinToString("·")} 중 하나여야 한다($fromName)") }
-            val property = string(fields, "property", path, required = from == ValueFrom.ITEM_PROPERTY)
-            if (from != ValueFrom.ITEM_PROPERTY && "property" in fields) {
-                problem("$path.property", "${ValueFrom.ITEM_PROPERTY} 에만 온다")
-            }
-            if (from == ValueFrom.PAIRED_ID && !paired) {
+            val property = argument(fields, "property", path, from, PROPERTY_SOURCES)
+            val equipmentUse = argument(fields, "equipmentUse", path, from, FIRST_SOURCES)
+            val parameter = argument(fields, "parameter", path, from, setOf(ValueFrom.ORDER_PARAMETER))
+            if (from == ValueFrom.PAIRED_ID && !scope.paired) {
                 problem("$path.from", "${ValueFrom.PAIRED_ID} 인데 이 노드에 pairWith 가 없다")
             }
+            if (scope.once && from in ITEM_SOURCES) problem("$path.from", "once 노드에는 반복 중인 설비가 없다($from)")
+            if (!scope.once && from in FIRST_SOURCES) problem("$path.from", "${FIRST_SOURCES.joinToString("·")} 는 once 노드에만 온다($from)")
             val otherwise = string(fields, "otherwise", path, required = false)
-            if (from == ValueFrom.ITEM_PROPERTY && property == null) return null
-            return ValueSource(from, property, otherwise)
+            val suffix = if ("suffix" in fields && !unitId) {
+                null.also { problem("$path.suffix", "unitId 에만 온다") }
+            } else {
+                string(fields, "suffix", path, required = "suffix" in fields)
+            }
+            if (unitId && "else" in fields && "otherwise" in fields) {
+                problem("$path.otherwise", "else 와 함께 오지 않는다 — otherwise 가 먼저 이겨 else 가 쓰이지 않는다")
+            }
+            val orElse = if ("else" in fields && !unitId) {
+                null.also { problem("$path.else", "unitId 에만 한 단계로 온다") }
+            } else {
+                obj(fields, "else", path, required = false)?.let { valueSource(it, "$path.else", scope) }?.also { fallback ->
+                    if (fallback.from !in ALWAYS) problem("$path.else.from", "${ALWAYS.joinToString(" 나 ")} 여야 한다(${fallback.from})")
+                }
+            }
+            if ((from in PROPERTY_SOURCES && property == null) || (from in FIRST_SOURCES && equipmentUse == null)) return null
+            if (from == ValueFrom.ORDER_PARAMETER && parameter == null) return null
+            return ValueSource(from, property, otherwise, equipmentUse, parameter, suffix, orElse)
+        }
+
+        /** 출처의 인자 칸 하나 — [owners] 출처에는 필수이고 다른 출처에는 오지 않는다. */
+        private fun argument(fields: Map<String, Value>, key: String, path: String, from: ValueFrom, owners: Set<ValueFrom>): String? {
+            if (from !in owners && key in fields) {
+                problem("$path.$key", "${owners.joinToString("·")} 에만 온다")
+                return null
+            }
+            return string(fields, key, path, required = from in owners)
         }
 
         private fun wait(node: Map<String, Value>, path: String): WaitStep? {
