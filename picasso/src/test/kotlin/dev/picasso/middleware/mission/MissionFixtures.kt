@@ -155,6 +155,152 @@ object MissionFixtures {
             "\"destination\": {\"from\": \"ITEM_PROPERTY\", \"property\": \"location\"}}",
     )
 
+    // ── 접수 시점 분기(§15.328)
+
+    /**
+     * 그룹 안 분기 — 대상마다 이동 뒤, 대상의 `item` 속성으로 점검을 고른다. `thermal` 이면 열 점검(`<대상>`), `visual`·`thermal` 이면
+     * 눈 점검(`<대상>.look`) — `thermal` 은 두 갈래에 다 맞아 **앞 갈래**가 이긴다. 다른 값이면 점검 없음, `item` 이 없으면 열 점검
+     * 단위 하나가 `FAILED`(`NO_ITEM_FOR_TARGET`, 파라미터 target 뿐)다. 두 점검은 같은 대상의 이동을 선행으로 든다. 칸마다 한 줄이다.
+     */
+    val INSPECT_BY_ITEM: String = definition(
+        "InspectByItem", "E0", "{}",
+        listOf(
+            "{",
+            "\"kind\": \"each\",",
+            "\"id\": \"visit\",",
+            "\"forEach\": \"inspection_target\",",
+            "\"steps\": [",
+            "{",
+            "\"kind\": \"unit\",",
+            "\"id\": \"travel\",",
+            "\"skill\": \"navigate_to\",",
+            "\"unitId\": { \"from\": \"ITEM_ID\", \"suffix\": \".travel\" },",
+            "\"parameters\": { \"location\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"location\" } },",
+            "\"destination\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"location\" }",
+            "},",
+            "{",
+            "\"kind\": \"choice\",",
+            "\"id\": \"how\",",
+            "\"on\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"item\" },",
+            "\"arms\": [",
+            "{ \"equals\": \"thermal\", \"steps\": [",
+            "{",
+            "\"kind\": \"unit\",",
+            "\"id\": \"thermal\",",
+            "\"skill\": \"inspect\",",
+            "\"after\": \"travel\",",
+            "\"unitId\": { \"from\": \"ITEM_ID\" },",
+            "\"parameters\": { \"target\": { \"from\": \"ITEM_ID\" }, \"mode\": { \"from\": \"ORDER_PARAMETER\", \"parameter\": \"mode\" } },",
+            "\"destination\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"location\" }",
+            "}",
+            "] },",
+            "{ \"in\": [\"visual\", \"thermal\"], \"steps\": [",
+            "{",
+            "\"kind\": \"unit\",",
+            "\"id\": \"look\",",
+            "\"skill\": \"inspect\",",
+            "\"after\": \"travel\",",
+            "\"unitId\": { \"from\": \"ITEM_ID\", \"suffix\": \".look\" },",
+            "\"parameters\": { \"target\": { \"from\": \"ITEM_ID\" } },",
+            "\"destination\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"location\" }",
+            "}",
+            "] }",
+            "],",
+            "\"otherwise\": { \"steps\": [] },",
+            "\"whenMissing\": { \"failureClass\": \"NO_ITEM_FOR_TARGET\", \"unit\": \"thermal\", \"parameters\": [\"target\"] }",
+            "}",
+            "]",
+            "}",
+        ).joinToString("\n"),
+    )
+
+    /**
+     * 최상위 분기 — 작업 지시 파라미터 `carrier` 로 운반을 고른다. `fleet` 이면 플릿 운반 하나([DELIVER_CONTAINER] 의 노드), `robot` 이면
+     * 랙 도착 대기 뒤 로봇 운반 하나(`<작업 지시>.carry`), 다른 값이면 단위 없음, `carrier` 가 없으면 운반 단위 하나가
+     * `FAILED`(`NO_CARRIER`, 파라미터 없음)다. 칸마다 한 줄이다.
+     */
+    val CARRY_BY_MODE: String = definition(
+        "CarryByMode", "E2", "{}",
+        listOf(
+            "{",
+            "\"kind\": \"choice\",",
+            "\"id\": \"carrier\",",
+            "\"on\": { \"from\": \"ORDER_PARAMETER\", \"parameter\": \"carrier\" },",
+            "\"arms\": [",
+            "{ \"equals\": \"fleet\", \"steps\": [",
+            "{",
+            "\"kind\": \"unit\",",
+            "\"id\": \"deliver\",",
+            "\"once\": true,",
+            "\"route\": \"FLEET\",",
+            "\"skill\": \"transport\",",
+            "\"unitId\": { \"from\": \"FIRST_PROPERTY\", \"equipmentUse\": \"source\", \"property\": \"container\", \"else\": { \"from\": \"ORDER_ID\" } },",
+            "\"parameters\": { \"container\": $CONTAINER },",
+            "\"expectedIdentity\": $CONTAINER,",
+            "\"source\": $FIRST_SOURCE,",
+            "\"destination\": $FIRST_DESTINATION",
+            "}",
+            "] },",
+            "{ \"equals\": \"robot\", \"steps\": [",
+            "{\"kind\": \"wait\", \"id\": \"$WAIT_NODE\", \"signal\": \"$RACK_PRESENT\", \"expect\": \"true\", \"deadlineSeconds\": 120, \"onDeadline\": \"OPERATOR_HOLD\"},",
+            "{",
+            "\"kind\": \"unit\",",
+            "\"id\": \"carry\",",
+            "\"once\": true,",
+            "\"skill\": \"pick_place\",",
+            "\"unitId\": { \"from\": \"ORDER_ID\", \"suffix\": \".carry\" },",
+            "\"parameters\": { \"object_id\": $CONTAINER },",
+            "\"expectedIdentity\": $CONTAINER,",
+            "\"source\": $FIRST_SOURCE,",
+            "\"sourceObservation\": \"OPTIONAL\",",
+            "\"destinationObservation\": \"OPTIONAL\",",
+            "\"destination\": $FIRST_DESTINATION",
+            "}",
+            "] }",
+            "],",
+            "\"otherwise\": { \"steps\": [] },",
+            "\"whenMissing\": { \"failureClass\": \"NO_CARRIER\", \"unit\": \"deliver\", \"parameters\": [] }",
+            "}",
+        ).joinToString("\n"),
+    )
+
+    /**
+     * 그룹 안 분기의 목적지 관측 — 슬롯마다, 작업 지시 파라미터 `lane` 으로 둘 단위를 고른다. `main` 이면 `<슬롯>`(목적지 관측
+     * `OPTIONAL`), `check` 면 `<슬롯>.checked`(목적지 관측 `REQUIRED`). 출발 자리는 슬롯의 `bin` 속성이다. 칸마다 한 줄이다.
+     */
+    val FILL_BY_LANE: String = definition(
+        PREPARE, "E2", "{}",
+        listOf(
+            "{",
+            "\"kind\": \"each\",",
+            "\"id\": \"fill\",",
+            "\"forEach\": \"destination\",",
+            "\"steps\": [",
+            "{",
+            "\"kind\": \"choice\",",
+            "\"id\": \"lane\",",
+            "\"on\": { \"from\": \"ORDER_PARAMETER\", \"parameter\": \"lane\" },",
+            "\"arms\": [",
+            "{ \"equals\": \"main\", \"steps\": [ ${fillNode("place", "", "OPTIONAL")} ] },",
+            "{ \"equals\": \"check\", \"steps\": [ ${fillNode("place-checked", ", \"suffix\": \".checked\"", "REQUIRED")} ] }",
+            "],",
+            "\"otherwise\": { \"steps\": [] },",
+            "\"whenMissing\": { \"failureClass\": \"NO_LANE\", \"unit\": \"place\", \"parameters\": [] }",
+            "}",
+            "]",
+            "}",
+        ).joinToString("\n"),
+    )
+
+    private const val PREPARE = "PrepareSequencedRack"
+
+    private fun fillNode(id: String, suffix: String, destinationObservation: String) =
+        "{ \"kind\": \"unit\", \"id\": \"$id\", \"skill\": \"pick_place\", \"unitId\": { \"from\": \"ITEM_ID\"$suffix }, " +
+            "\"parameters\": { \"object_id\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"material\" }, \"destination\": { \"from\": \"ITEM_ID\" } }, " +
+            "\"expectedIdentity\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"material\" }, \"source\": { \"from\": \"ITEM_PROPERTY\", \"property\": \"bin\" }, " +
+            "\"sourceObservation\": \"OPTIONAL\", \"destinationObservation\": \"$destinationObservation\", \"destination\": { \"from\": \"ITEM_ID\" } }"
+
+
     /** 현장 신호 사양 — 랙 도착(자리 있음), 안전 신호 하나, 텍스트 신호 하나. */
     val SIGNALS: List<SignalSpec> = listOf(
         SignalSpec(RACK_PRESENT, location = DOCK, kind = SignalKind.BOOLEAN),

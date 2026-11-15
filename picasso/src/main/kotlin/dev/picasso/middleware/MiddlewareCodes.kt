@@ -61,6 +61,12 @@ internal object MiddlewareCodes {
     /** 보류가 아닌 단위의 재작업을 받지 않았다는 실행 자취의 종류(§15.323). 세부에 사유와, 읽었으면 손 종류·자리 신호·읽은 시각이 든다. */
     const val REWORK_REFUSED = "REWORK_REFUSED"
 
+    /**
+     * 실행을 세울 때(작업 수락·리빌드) 계획이 고른 접수 시점 분기의 갈래를 적은 실행 자취의 종류(§15.328). 세부에 분기 자리마다 고른
+     * 갈래(`arms[i]`·`otherwise`·값이 없어 접힌 `whenMissing`), 작업 지시 리비전, 임무 버전이 든다. 분기가 없으면 남기지 않는다.
+     */
+    const val BRANCH_CHOSEN = "BRANCH_CHOSEN"
+
     /** 재작업을 받았는데 판단이 붙을 인시던트가 묶음에 없었다는 실행 자취의 종류(§15.323). */
     const val REWORK_NOTED = "REWORK_NOTED"
 

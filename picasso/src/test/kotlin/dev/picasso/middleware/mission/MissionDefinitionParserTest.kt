@@ -71,7 +71,7 @@ class MissionDefinitionParserTest {
             "$.steps[0].deadlineSeconds: 정수여야",
             "$.steps[0].onDeadline: 문자열이어야",
             "$.steps[1].forEach: 빠졌다",
-            "$.steps[2].kind: unit·wait·each 중 하나여야",
+            "$.steps[2].kind: unit·wait·each·choice 중 하나여야",
         )
         expected.forEach { needle ->
             assertTrue(found.any { it.startsWith(needle) }, "'$needle' 이 안 모였다: $found")
@@ -217,7 +217,7 @@ class MissionDefinitionParserTest {
         assertEquals(listOf(ValueSource(ValueFrom.ITEM_PROPERTY, property = "location")), group.requires)
         assertEquals(WhenMissing("NO_LOCATION_FOR_TARGET", "inspect", listOf("target")), group.whenMissing)
         assertEquals(listOf("travel", "inspect"), group.steps.map { it.id })
-        val (travel, inspect) = group.steps
+        val (travel, inspect) = group.steps.map { assertIs<UnitStep>(it) }
         assertEquals(ValueSource(ValueFrom.ITEM_ID, suffix = ".travel"), travel.unitId)
         assertNull(travel.forEach)
         assertEquals("travel", inspect.after)
@@ -248,7 +248,7 @@ class MissionDefinitionParserTest {
         assertTrue(found.all { "그룹 안 단위 노드에는 오지 않는다" in it }, "$found")
 
         val wait = MissionFixtures.INSPECT_ASSET.replace("\"kind\": \"unit\",\n\"id\": \"travel\",", "\"kind\": \"wait\",\n\"id\": \"travel\",")
-        assertTrue(problems(wait).single().startsWith("$.steps[0].steps[0].kind: 그룹 안에는 unit 만 온다(wait)"), "${problems(wait)}")
+        assertTrue(problems(wait).single().startsWith("$.steps[0].steps[0].kind: 그룹 안에는 unit·choice 만 온다(wait)"), "${problems(wait)}")
 
         val empty = MissionFixtures.INSPECT_ASSET.substringBefore("\"steps\": [\n{\n\"kind\": \"unit\"") + "\"steps\": [] } ] }"
         assertTrue(problems(empty).any { it.startsWith("$.steps[0].steps: 노드가 하나도 없다") }, "${problems(empty)}")

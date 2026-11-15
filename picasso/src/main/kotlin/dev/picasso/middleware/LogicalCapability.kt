@@ -64,4 +64,69 @@ interface LogicalCapability {
 
     /** 상류 요청을 원자 단위 열로. 계획이지 실행이 아니다. */
     fun plan(order: JobOrder): List<ExecutionUnit>
+
+    /**
+     * [plan] 이 이 작업 지시로 고른 **접수 시점 분기의 갈래**(§15.328) — 분기 자리 → 갈래 이름. 데이터 정의의 `choice` 노드만
+     * 내고(`mission.DefinedCapability`), 분기가 없는 능력은 빈 맵이다.
+     *
+     * 엔진이 읽는 자리는 둘이다. 실행을 세울 때 트레이스 한 줄([MiddlewareCodes.BRANCH_CHOSEN])과, 리비전이 고른 갈래를 바꾸는지의
+     * 대조([choiceRefusal]). 판단 기록·내보내기에는 싣지 않는다 — 같은 작업 지시 리비전과 실행이 쥔 임무 버전으로 다시 계획하면
+     * 같은 갈래가 나온다.
+     */
+    fun choices(order: JobOrder): Map<String, String> = emptyMap()
+
+    /** [choices] 의 자리마다 그 자리가 낸 단위 id. 리비전이 남은 자리의 단위 id 집합을 바꾸는지 본다([choiceRefusal]). */
+    fun choiceUnits(order: JobOrder): Map<String, List<String>> = emptyMap()
+
+    /**
+     * 이 작업 지시를 계획할 수 없는 까닭 — 단위 id 겹침과 같은 결의 작업 수락 거부 사유다. 데이터 정의는 분기 자리가 겹치는 작업
+     * 지시(분기가 든 그룹의 쓰임에 같은 설비 id 가 둘)에 사유를 낸다(§15.328). 그 밖에는 널이다.
+     */
+    fun planRefusal(order: JobOrder): String? = null
+}
+
+/** 실행을 세울 때와 리비전이 자리를 더할 때 남길 트레이스 한 줄의 세부([MiddlewareCodes.BRANCH_CHOSEN], §15.328) — 고른 가지, 작업 지시 리비전, 임무 버전. 없으면 널. */
+internal fun choiceTrail(choices: Map<String, String>, order: JobOrder, missionVersion: Int?): String? =
+    if (choices.isEmpty()) {
+        null
+    } else {
+        choices.entries.joinToString { (at, arm) -> "$at=$arm" } + "; order revision ${order.version}; mission version ${missionVersion ?: "code"}"
+    }
+
+/** 리비전이 새로 연 분기 자리와 그 가지 — 옛 작업 지시에 없던 자리다(설비를 더한 리비전). 트레이스 한 줄로 남긴다. */
+internal fun addedChoices(capability: LogicalCapability, current: JobOrder, order: JobOrder): Map<String, String> =
+    capability.choices(current).keys.let { before -> capability.choices(order).filterKeys { it !in before } }
+
+/**
+ * 분기가 든 정의의 실행에서 리비전은 **분기 자리를 더하기만 한다**(§15.328). 거부하는 것은 넷이다.
+ *
+ * 1. 분기 자리가 겹치는 작업 지시([LogicalCapability.planRefusal])
+ * 2. 옛 리비전의 자리를 하나라도 없애는 것 — 그 설비를 빼거나 그룹이 조건부 포함으로 접혀 자리가 사라지는 것. 끝났는지 묻지 않는다.
+ *    없앤 자리는 비교에서 빠지므로, 다음 리비전이 같은 id 를 다른 가지로 다시 넣는 두 걸음 우회가 열린다. 끝난 자리라도 빼면
+ *    리빌드의 다시 계획에 그 완료 단위가 없어 판단 기록 대조(`RESUME_RECORD_MISMATCH`)가 실행을 다시 짓지 못한다
+ * 3. 남은 자리의 가지를 바꾸는 것 — 값이 없어 접힌 것(`whenMissing`)도 가지 하나다. 리비전은 새 계획에 없는 옛 `PENDING` 단위를
+ *    지우지 않고 남기므로([revise]) 가지를 바꾸면 두 가지의 단위가 한 실행에 함께 남는다
+ * 4. 남은 자리가 내는 단위 id 집합을 바꾸는 것 — 가지는 같아도 단위 id 가 설비 속성에서 오면 리비전이 그 값을 바꿔 옛 단위를 남긴 채
+ *    다른 id 의 단위를 들인다
+ *
+ * 새 자리(리비전이 더한 설비)만 받는다. 판정은 옛·새 작업 지시의 계획만으로 한다 — 실행 상태를 보지 않으므로 리빌드 뒤에도 같다.
+ * 돌려주는 것은 거부 사유다 — 이 파일은 바닥 층이라 `Middleware.Submission` 을 모른다(`LayeringTest`).
+ */
+internal fun choiceRefusal(capability: LogicalCapability, current: JobOrder, order: JobOrder): String? {
+    capability.planRefusal(order)?.let { return it }
+    val before = capability.choices(current)
+    val after = capability.choices(order)
+    val dropped = before.keys.filter { it !in after }
+    if (dropped.isNotEmpty()) {
+        return "리비전이 분기 자리를 없앤다: ${dropped.joinToString()} — 분기가 든 실행의 리비전은 자리를 더하기만 한다. 새 작업 지시로 낸다"
+    }
+    val changed = before.keys.filter { after[it] != before[it] }
+    if (changed.isNotEmpty()) {
+        return "리비전이 분기의 가지를 바꾼다: " + changed.joinToString { "$it 받은 값=${after[it]}, 현재=${before[it]}" } + " — 새 작업 지시로 낸다"
+    }
+    val was = capability.choiceUnits(current)
+    val now = capability.choiceUnits(order)
+    val moved = before.keys.filter { was[it].orEmpty().toSet() != now[it].orEmpty().toSet() }
+    if (moved.isEmpty()) return null
+    return "리비전이 분기 자리의 단위 id 를 바꾼다: " + moved.joinToString { "$it 받은 값=${now[it].orEmpty()}, 현재=${was[it].orEmpty()}" } + " — 새 작업 지시로 낸다"
 }

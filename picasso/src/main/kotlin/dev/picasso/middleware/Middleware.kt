@@ -286,6 +286,7 @@ class Middleware(
 
         val planned = prefix + capability.plan(order)
         duplicateUnitIdRefusal(planned)?.let { return it }
+        capability.planRefusal(order)?.let { return Submission.Rejected(it) }
         when (val admission = admits(order, robotId, planned)) {
             // 승인한 조치 열을 붙인 접수의 거절은 서 있는 제안을 바꾸지 않는다([commit]).
             is Admission.Refused -> return desk.record(
@@ -317,6 +318,8 @@ class Middleware(
         )
         execution.units.forEach { it.revision = order.version }
         execution.approvedBy = approvedBy
+        // 고른 갈래를 한 줄로 남긴다(§15.328) — 판단 기록에는 싣지 않는다. 같은 작업 지시 리비전과 임무 버전으로 다시 계획하면 같다.
+        choiceTrail(active.capability.choices(order), order, active.missionVersion)?.let { execution.trail(MiddlewareCodes.BRANCH_CHOSEN, it) }
         execution.physicalState = PhysicalState.ACCEPTED
         executions[execution.executionId] = execution
         return execution

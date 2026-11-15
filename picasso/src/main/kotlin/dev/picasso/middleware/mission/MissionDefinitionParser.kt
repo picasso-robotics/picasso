@@ -89,6 +89,26 @@ sealed interface MissionParse {
  *   `property` 필수)를 더했다. `FIRST_*` 는 `once` 노드에만, `ITEM_*`·`PAIRED_ID` 는 `once` 가 아닌 노드에만 온다
  * - **`unitId` 전용** — `suffix`(비지 않은 문자열)와 `else`(한 단계, `ITEM_ID`·`ORDER_ID`). 단위 id 는 반드시 값을 내야 하므로
  *   출처가 `ITEM_ID`·`ORDER_ID` 가 아니면 `else` 가 있어야 한다
+ *
+ * ## 버전 1 에 더한 칸 — 접수 시점 분기(§15.328)
+ *
+ * ```json
+ * { "kind": "choice", "id": "how", "on": { "from": "ITEM_PROPERTY", "property": "item" },
+ *   "arms": [ { "equals": "thermal", "steps": [ { "kind": "unit", "id": "thermal", … } ] },
+ *             { "in": ["visual", "acoustic"], "steps": [ { "kind": "unit", "id": "look", … } ] } ],
+ *   "otherwise": { "steps": [] },
+ *   "whenMissing": { "failureClass": "NO_ITEM_FOR_TARGET", "unit": "thermal", "parameters": ["target"] } }
+ * ```
+ *
+ * - **분기** `kind: "choice"` — `id`·`on`·`arms`(1개 이상)·`otherwise`·`whenMissing` 이 모두 필수다. 최상위나 반복 그룹 안에 온다
+ * - **`on`** — 값 출처 하나, 대체값(`otherwise`) 없음. 출처는 `ORDER_PARAMETER`·`ITEM_PROPERTY`·`FIRST_PROPERTY` 뿐이고, 최상위
+ *   분기는 작업 지시마다 한 번 고르므로 `once` 노드와 같은 자리 규칙(`ITEM_*` 금지), 그룹 안 분기는 그룹 안 노드와 같은 규칙(`FIRST_*` 금지)이다
+ * - **갈래** — `equals`(문자열, 빈 문자열도 값) 와 `in`(문자열 1개 이상) 중 **하나**, 그리고 `steps`(1개 이상). 갈래 사이 값이 겹쳐도
+ *   읽는다 — 선언 순서 첫 일치가 이긴다
+ * - **`otherwise`** — `{ "steps": [...] }`, 빈 배열이 «단위 없음» 이다
+ * - **`whenMissing`** — 조건부 포함의 것과 같은 칸이고 `unit`(갈래 안 단위 노드 id)이 필수다
+ * - **갈래 안 노드** — 최상위 분기는 단위 노드(최상위 단위 노드와 같은 칸)와 대기 노드, 그룹 안 분기는 그룹 안 단위 노드뿐이다.
+ *   분기·그룹은 갈래 안에 오지 않는다(중첩 없음)
  */
 object MissionDefinitionParser {
 
@@ -123,6 +143,15 @@ object MissionDefinitionParser {
     private val PAIRING = setOf("equipmentUse", "property")
     private val VALUE_SOURCE = setOf("from", "property", "otherwise", "equipmentUse", "parameter", "suffix", "else")
     private val WHEN_MISSING = setOf("failureClass", "unit", "parameters")
+    private val CHOICE = setOf("kind", "id", "on", "arms", "otherwise", "whenMissing")
+    private val ARM = setOf("equals", "in", "steps")
+    private val OTHERWISE = setOf("steps")
+
+    /**
+     * 분기 조건이 읽는 출처 — 작업 지시가 싣는 값(파라미터·설비 속성)만이다(§15.328). 늘 값이 있는 id 출처는 부재가 없어 접힘이 영영
+     * 안 돌고, 설비 id 로 갈래를 고르는 것은 작업 지시 값의 뜻이 아니다.
+     */
+    private val CHOICE_SOURCES = setOf(ValueFrom.ORDER_PARAMETER, ValueFrom.ITEM_PROPERTY, ValueFrom.FIRST_PROPERTY)
 
     /** 단위 노드가 받는 경로. 설비 대기([Route.SIGNAL])는 대기 노드의 몫이다. */
     private val ROUTES = listOf(Route.ROBOT, Route.FLEET)
@@ -257,7 +286,8 @@ object MissionDefinitionParser {
                     "unit" -> unit(node, at, inner = false)
                     "wait" -> wait(node, at)
                     "each" -> each(node, at)
-                    else -> null.also { problem("$at.kind", "unit·wait·each 중 하나여야 한다($kind)") }
+                    "choice" -> choice(node, at, inner = false)
+                    else -> null.also { problem("$at.kind", "unit·wait·each·choice 중 하나여야 한다($kind)") }
                 }
             }
         }
@@ -359,7 +389,7 @@ object MissionDefinitionParser {
             )
         }
 
-        /** 반복 그룹(`kind: "each"`). 안쪽은 단위 노드만 온다 — 대기·그룹은 그룹 밖에 둔다(중첩 없음). */
+        /** 반복 그룹(`kind: "each"`). 안쪽은 단위 노드와 분기만 온다 — 대기·그룹은 그룹 밖에 둔다(중첩 없음). */
         private fun each(node: Map<String, Value>, path: String): EachStep? {
             unknownKeys(node, EACH, path)
             val id = string(node, "id", path)
@@ -371,7 +401,8 @@ object MissionDefinitionParser {
                 when (val kind = string(inner, "kind", at)) {
                     null -> null
                     "unit" -> unit(inner, at, inner = true)
-                    else -> null.also { problem("$at.kind", "그룹 안에는 unit 만 온다($kind) — 대기·그룹은 그룹 밖에 둔다") }
+                    "choice" -> choice(inner, at, inner = true)
+                    else -> null.also { problem("$at.kind", "그룹 안에는 unit·choice 만 온다($kind) — 대기·그룹은 그룹 밖에 둔다") }
                 }
             }
             if (id == null || forEach == null || steps == null) return null
@@ -398,18 +429,81 @@ object MissionDefinitionParser {
                     }
                 }
             }.orEmpty()
-            val whenMissing = obj(node, "whenMissing", path, required = false)?.let { fields ->
-                val at = "$path.whenMissing"
-                unknownKeys(fields, WHEN_MISSING, at)
-                val failureClass = string(fields, "failureClass", at)
-                if (!group && "unit" in fields) problem("$at.unit", "그룹에만 온다 — 그룹이 아닌 노드는 그 노드 하나가 남는다")
-                val unit = if (group) string(fields, "unit", at, required = false) else null
-                val parameters = list(fields, "parameters", at, required = true)?.mapIndexedNotNull { index, v ->
-                    if (v.hasStringValue()) v.stringValue else null.also { problem("$at.parameters[$index]", "문자열이어야 한다(${kindOf(v)})") }
-                }
-                if (failureClass == null || parameters == null) null else WhenMissing(failureClass, unit, parameters)
-            }
+            val whenMissing = obj(node, "whenMissing", path, required = false)?.let { whenMissing(it, "$path.whenMissing", group, unitRequired = false) }
             return requires to whenMissing
+        }
+
+        /** 접힘 모양. [unitAllowed] 가 아니면 `unit` 이 오지 않고, [unitRequired] 면 `unit` 이 필수다(분기). */
+        private fun whenMissing(fields: Map<String, Value>, at: String, unitAllowed: Boolean, unitRequired: Boolean): WhenMissing? {
+            unknownKeys(fields, WHEN_MISSING, at)
+            val failureClass = string(fields, "failureClass", at)
+            if (!unitAllowed && "unit" in fields) problem("$at.unit", "그룹에만 온다 — 그룹이 아닌 노드는 그 노드 하나가 남는다")
+            val unit = if (unitAllowed) string(fields, "unit", at, required = unitRequired) else null
+            val parameters = list(fields, "parameters", at, required = true)?.mapIndexedNotNull { index, v ->
+                if (v.hasStringValue()) v.stringValue else null.also { problem("$at.parameters[$index]", "문자열이어야 한다(${kindOf(v)})") }
+            }
+            return if (failureClass == null || parameters == null || (unitRequired && unit == null)) null else WhenMissing(failureClass, unit, parameters)
+        }
+
+        /**
+         * 접수 시점 분기(`kind: "choice"`, §15.328). [inner] 면 반복 그룹 안이다 — 조건은 항목마다 읽고(`FIRST_*` 금지), 갈래 안에는
+         * 그룹 안 단위 노드만 온다. 최상위면 조건은 작업 지시마다 한 번이고(`ITEM_*` 금지) 갈래 안에 최상위 단위 노드와 대기 노드가 온다.
+         */
+        private fun choice(node: Map<String, Value>, path: String, inner: Boolean): ChoiceStep? {
+            unknownKeys(node, CHOICE, path)
+            val id = string(node, "id", path)
+            val on = source(node, "on", path, required = true, scope = Scope(paired = false, once = !inner))?.also { on ->
+                if (on.from !in CHOICE_SOURCES) problem("$path.on.from", "${CHOICE_SOURCES.joinToString("·")} 중 하나여야 한다(${on.from}) — 분기 조건은 작업 지시 값이다")
+                if (on.otherwise != null) problem("$path.on.otherwise", "분기 조건에는 대체값이 오지 않는다 — 대체값이 있으면 영영 접히지 않는다")
+            }
+            val arms = list(node, "arms", path, required = true)?.let { items ->
+                if (items.isEmpty()) problem("$path.arms", "갈래가 하나도 없다")
+                items.mapIndexedNotNull { index, v ->
+                    val at = "$path.arms[$index]"
+                    if (v.hasStructValue()) arm(v.structValue.fieldsMap, at, inner) else null.also { problem(at, "객체여야 한다(${kindOf(v)})") }
+                }
+            }
+            val otherwise = obj(node, "otherwise", path)?.let { fields ->
+                unknownKeys(fields, OTHERWISE, "$path.otherwise")
+                branch(fields, "$path.otherwise", inner, empty = true)
+            }
+            val whenMissing = obj(node, "whenMissing", path)?.let { whenMissing(it, "$path.whenMissing", unitAllowed = true, unitRequired = true) }
+            if (id == null || on == null || arms == null || otherwise == null || whenMissing == null) return null
+            return ChoiceStep(id, on, arms, otherwise, whenMissing)
+        }
+
+        /** 갈래 하나 — `equals`(문자열 하나) 와 `in`(문자열 목록) 중 하나와 `steps`. 빈 문자열도 값이다. */
+        private fun arm(fields: Map<String, Value>, path: String, inner: Boolean): ChoiceArm? {
+            unknownKeys(fields, ARM, path)
+            if (("equals" in fields) == ("in" in fields)) problem(path, "equals 와 in 중 하나만 온다 — 갈래가 맞는 값을 정한다")
+            val values = fields["equals"]?.let { v ->
+                if (v.hasStringValue()) listOf(v.stringValue) else null.also { problem("$path.equals", "문자열이어야 한다(${kindOf(v)})") }
+            } ?: list(fields, "in", path, required = false)?.let { items ->
+                if (items.isEmpty()) problem("$path.in", "값이 하나도 없다")
+                items.mapIndexedNotNull { index, v ->
+                    if (v.hasStringValue()) v.stringValue else null.also { problem("$path.in[$index]", "문자열이어야 한다(${kindOf(v)})") }
+                }
+            }
+            val steps = branch(fields, path, inner, empty = false)
+            return if (values == null || steps == null) null else ChoiceArm(values, steps)
+        }
+
+        /** 갈래의 `steps` — [empty] 면 빈 배열이 «단위 없음» 이다. 분기·그룹은 오지 않는다(중첩 없음). */
+        private fun branch(fields: Map<String, Value>, path: String, inner: Boolean, empty: Boolean): List<MissionStep>? {
+            val items = list(fields, "steps", path, required = true) ?: return null
+            if (items.isEmpty() && !empty) problem("$path.steps", "노드가 하나도 없다")
+            val allowed = if (inner) "unit" else "unit·wait"
+            return items.mapIndexedNotNull { index, item ->
+                val at = "$path.steps[$index]"
+                if (!item.hasStructValue()) return@mapIndexedNotNull null.also { problem(at, "객체여야 한다(${kindOf(item)})") }
+                val fieldsAt = item.structValue.fieldsMap
+                when (val kind = string(fieldsAt, "kind", at)) {
+                    null -> null
+                    "unit" -> unit(fieldsAt, at, inner = inner)
+                    "wait" -> if (inner) null.also { problem("$at.kind", "그룹 안 분기의 갈래에는 $allowed 만 온다($kind) — 대기는 그룹 밖에 둔다") } else wait(fieldsAt, at)
+                    else -> null.also { problem("$at.kind", "갈래 안에는 $allowed 만 온다($kind) — 분기·그룹은 갈래 밖에 둔다(중첩 없음)") }
+                }
+            }
         }
 
         private fun pairing(fields: Map<String, Value>, path: String): Pairing? {
