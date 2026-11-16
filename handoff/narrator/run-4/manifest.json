@@ -1,1 +1,1 @@
-{"schemaVersion":"9","runId":"run-2026-11-14T16:01:47.588211400Z-6","instanceId":"mw-fb993285-b7f5-4f25-8660-c4d5ba632855","writtenAt":"2026-11-14T16:01:47.597590400Z","virtualNow":"2026-09-06T00:00:15Z","contractSemver":"0.11.0","counts":{"incidents":3,"remedySearches":2}}
+{"schemaVersion":"10","runId":"run-2026-11-15T23:37:30.786820800Z-6","instanceId":"mw-e22ec518-a709-4260-8d71-f8196fca4737","writtenAt":"2026-11-15T23:37:30.792144300Z","virtualNow":"2026-09-06T00:00:15Z","contractSemver":"0.11.0","counts":{"incidents":3,"remedySearches":2,"revisionRemovals":0}}

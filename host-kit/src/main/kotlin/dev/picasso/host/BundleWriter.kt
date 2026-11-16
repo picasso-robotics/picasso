@@ -5,6 +5,7 @@ import dev.picasso.middleware.JobResponse
 import dev.picasso.middleware.LedgerExport
 import dev.picasso.middleware.RemedySearchRecord
 import dev.picasso.middleware.ResultExport
+import dev.picasso.middleware.RevisionRemoval
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -40,7 +41,7 @@ import java.time.Instant
  *
  * ## 한 벌은 한 인스턴스의 것이다
  *
- * 안내에 [instanceId] 를 싣는다(내보내기 판 8, §15.322). 인시던트 id 와 실행 id 는 인스턴스 안의 셈이라 재기동 뒤 같은 문자열이 다시
+ * 안내에 [instanceId] 를 싣는다(내보내기 버전 8, §15.322). 인시던트 id 와 실행 id 는 인스턴스 안의 셈이라 재기동 뒤 같은 문자열이 다시
  * 나올 수 있다 — 한 사본을 가리키는 것은 (인스턴스, 인시던트 id)이고, 재기동을 넘어 같은 사건을 잇는 것은 줄의 `incidentKey` 다.
  *
  * @param instanceId 이 벌을 내는 미들웨어 인스턴스([dev.picasso.middleware.Middleware.instanceId]).
@@ -51,25 +52,34 @@ class BundleWriter(
     private val runId: String = LedgerExport.newRunId(Instant.now()),
 ) {
 
-    /** 마지막으로 쓴 (사건 수, 탐색 수). 안 썼으면 널이다 — **0,0 과 «아직 안 썼다» 는 다르다.** */
-    private var written: Pair<Int, Int>? = null
+    /**
+     * 마지막으로 쓴 (사건 수, 탐색 수, 리비전 제거의 (수, 마지막 사건)). 안 썼으면 널이다 — **0,0,0 과 «아직 안 썼다» 는 다르다.**
+     * 제거 레지스터는 보존 상한에 차면 수가 그대로인 채 새 사건이 들어오므로 마지막 사건까지 댄다 — 수만 보면 새 사건이 파일에서 빠진다.
+     */
+    private var written: Triple<Int, Int, Pair<Int, RevisionRemoval?>>? = null
 
-    /** 썼으면 true, 대장이 안 늘어 건너뛰었으면 false. */
+    /**
+     * 썼으면 true, 대장이 안 늘어 건너뛰었으면 false.
+     *
+     * @param removals 리비전 제거 사건(버전 10, §15.329) — [dev.picasso.middleware.Middleware.revisionRemovals]. 빈 목록이어도 파일을 쓴다(빈 파일).
+     */
     fun snapshot(
         incidents: List<IncidentBundle>,
         searches: List<RemedySearchRecord>,
         virtualNow: Instant,
+        removals: List<RevisionRemoval> = emptyList(),
     ): Boolean {
-        val size = incidents.size to searches.size
+        val size = Triple(incidents.size, searches.size, removals.size to removals.lastOrNull())
         if (size == written) return false
 
         Files.createDirectories(dir)
         atomically(LedgerExport.INCIDENTS, LedgerExport.incidents(incidents))
         atomically(LedgerExport.REMEDY_SEARCHES, LedgerExport.remedySearches(searches))
+        atomically(LedgerExport.REVISION_REMOVALS, LedgerExport.revisionRemovals(removals))
         val wall = Instant.now()
         atomically(
             LedgerExport.MANIFEST,
-            LedgerExport.manifest(runId, wall, virtualNow, incidents.size, searches.size, instanceId),
+            LedgerExport.manifest(runId, wall, virtualNow, incidents.size, searches.size, instanceId, removals.size),
         )
         written = size
         return true

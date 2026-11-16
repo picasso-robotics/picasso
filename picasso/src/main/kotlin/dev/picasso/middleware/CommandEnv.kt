@@ -18,6 +18,8 @@ internal class CommandEnv(
     /** 발행 게이트(작업 허가·퇴역). [issuable] 이 묻는다. */
     val issuing: IssuingGate,
     private val notifier: (Execution) -> Unit,
+    /** 리비전 제거 사건의 레지스터(§15.329). 리비전([revise])이 적고 창구가 `Middleware.revisionRemovals` 로 읽는다. */
+    val removals: RevisionRemovals = RevisionRemovals({ Instant.now() }),
 ) {
     val views = mutableMapOf<String, RobotView>()
 

@@ -139,7 +139,7 @@ object ScenarioHost {
                         harness.advance(Duration.ofSeconds(1))
                         middleware.pump()
                     }
-                    live.snapshot(middleware.incidents(), middleware.remedySearches(), harness.clock.now())
+                    live.snapshot(middleware.incidents(), middleware.remedySearches(), harness.clock.now(), middleware.revisionRemovals())
                     // 결과 통보는 담는 쪽이 나르는 것이다 — 여기 쓰는 것은 그 모양의 참조다(ADR 48).
                     live.carry(middleware.responses(), middleware.instanceId)
                 }

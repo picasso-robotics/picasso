@@ -354,6 +354,8 @@ class LayeringTest {
             "ResultExport.kt" to Layer.FLOOR,
             "MiddlewareCodes.kt" to Layer.FLOOR,
             "RobotView.kt" to Layer.FLOOR,
+            // 리비전 제거 사건과 그 레지스터(§15.329) — 내보내기가 읽는 값이다. 실행 상태를 모른다.
+            "RevisionRemovals.kt" to Layer.FLOOR,
             // 상태 — 실행, 배정 게이트, 장부, 단위의 순수 판정
             "Execution.kt" to Layer.STATE,
             "AdmissionGate.kt" to Layer.STATE,
@@ -366,6 +368,8 @@ class LayeringTest {
             "CommandLifecycle.kt" to Layer.STATE,
             // 놓은 작업 지시 표시(§15.324) — 표·넘침 선언·셈을 제 클래스로 든다.
             "ForgottenOrders.kt" to Layer.STATE,
+            // 리비전이 뺀 단위의 판정(§15.329) — 실행·단위의 순수 판정.
+            "RevisionScope.kt" to Layer.STATE,
             // 전이 — 명령 생애와 접합부. 안의 순환은 허용한다.
             "LifecycleCancel.kt" to Layer.TRANSITION,
             "LifecycleCancelAttach.kt" to Layer.TRANSITION,

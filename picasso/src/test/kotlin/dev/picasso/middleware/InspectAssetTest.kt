@@ -913,7 +913,7 @@ class InspectAssetTest {
             assertTrue("\"decidedBy\":{\"id\":\"${OPERATOR.id}\",\"kind\":\"PERSON\"}" in line, line)
             // 판 9(§15.323) — 판단은 묶음의 뿌리(시도된 이동 실패)의 것이라 표지 근거 `{robotId, readAt}` 를 싣는다. 손·자리는 묻지 않았다(«관측 없음»).
             assertTrue("\"reworkBasis\":{\"robotId\":\"$ROBOT\",\"hold\":null,\"source\":null,\"destination\":null," in line, line)
-            assertEquals("9", LedgerExport.SCHEMA_VERSION)
+            assertEquals("10", LedgerExport.SCHEMA_VERSION)
         }
     }
 

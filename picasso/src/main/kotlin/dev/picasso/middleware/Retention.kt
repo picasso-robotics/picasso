@@ -48,10 +48,15 @@ data class Retention(
      * 지금 상태는 [CopyAck]·[Middleware.copyAcks] 가 말한다.
      */
     val copyAck: CopyAck? = null,
+    /**
+     * 리비전 제거 사건([RevisionRemoval], §15.329). 사건이 작아 상한이 탐색 기록과 같다. 사본 선언([copyAck])의 보호는 받지 않는다 — 담는 쪽은
+     * [Middleware.revisionRemovals] 를 실행의 판단 기록과 같은 자리에서 옮겨 적는다(인계 노트).
+     */
+    val revisionRemovals: Int = 10_000,
 ) {
     init {
         require(
-            incidents > 0 && remedySearches > 0 && proposals > 0 && consumedApprovals > 0 && executions > 0 && forgottenOrders > 0,
+            incidents > 0 && remedySearches > 0 && proposals > 0 && consumedApprovals > 0 && executions > 0 && forgottenOrders > 0 && revisionRemovals > 0,
         ) {
             "보존 상한은 양수여야 한다: $this"
         }
@@ -84,4 +89,6 @@ data class RetentionEvictions(
     val executions: Long,
     /** 내린 놓은 작업 지시 표시 — [ForgottenOverflow.EVICT] 일 때만 는다. 찬 표 때문에 거부한 놓기는 [Middleware.forgottenOrders] 가 센다. */
     val forgottenOrders: Long,
+    /** 내린 리비전 제거 사건([Retention.revisionRemovals], §15.329). */
+    val revisionRemovals: Long = 0,
 )

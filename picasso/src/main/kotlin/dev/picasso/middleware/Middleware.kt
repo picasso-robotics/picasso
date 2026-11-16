@@ -165,7 +165,7 @@ class Middleware(
     private val issuing = IssuingGate(permits, retirements, now)
 
     /** 생애·드라이버·접합부의 좁은 환경. 기체 뷰와 이번 라운드의 현장 시간값도 여기 있다. */
-    private val env = CommandEnv(robots, cell, fleet, now, issuing, ::notify)
+    private val env = CommandEnv(robots, cell, fleet, now, issuing, ::notify, RevisionRemovals(wallClock, retention.revisionRemovals))
     private val views get() = env.views
 
     /** 트레이스 한 줄([CommandEnv] 의 같은 이름). 창구 절차가 이 이름으로 쓴다. */
@@ -1192,7 +1192,13 @@ class Middleware(
     fun incident(incidentId: String): IncidentBundle? = incidentLog.incident(incidentId)
 
     /** 보존 상한으로 내린 기록의 수(§15.166, [Retention]). */
-    fun retentionEvictions(): RetentionEvictions = desk.evictions(incidentLog.evicted, executionsEvicted, forgotten.evicted)
+    fun retentionEvictions(): RetentionEvictions = desk.evictions(incidentLog.evicted, executionsEvicted, forgotten.evicted).copy(revisionRemovals = env.removals.evicted)
+
+    /**
+     * 리비전이 작업 지시에서 항목을 빼며 실행에서 지운 단위의 사건, 적힌 순서대로(§15.329). 감사 내보내기의 `revision-removals.jsonl` 이 이것이다.
+     * 프로세스 수명과 같다 — 담는 쪽은 받은 리비전 뒤 그 실행의 판단 기록과 함께 옮겨 적는다. 판단 기록은 지운 사실을 싣지 않는다.
+     */
+    fun revisionRemovals(): List<RevisionRemoval> = env.removals.records()
 
     /** 놓은 작업 지시 표시가 얼마나 찼는지와 그 때문에 거부한 놓기의 수(§15.324). 실제로 내린 수는 [retentionEvictions] 가 센다. */
     fun forgottenOrders(): ForgottenOrdersState = forgotten.state()

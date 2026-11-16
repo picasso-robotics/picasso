@@ -4,6 +4,7 @@ import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.middleware.Middleware.Submission
 import dev.picasso.middleware.MiddlewareCodes.ISSUE_RESUMED
 import dev.picasso.middleware.MiddlewareCodes.ISSUE_WITHHELD
+import dev.picasso.middleware.MiddlewareCodes.REVISION_REMOVED
 import dev.picasso.middleware.MiddlewareCodes.REWORK_RECHECK
 import dev.picasso.middleware.MiddlewareCodes.UPDATE_NOT_SENT
 
@@ -14,7 +15,8 @@ import dev.picasso.middleware.MiddlewareCodes.UPDATE_NOT_SENT
  * 리비전이 아직 내지 않은 단위를 새 계획의 단위([fresh])로 바꿀 때 **시도와 앞 시도의 파지를 옮긴다.** 새 계획의 단위는 시도 0 이고
  * 쥔 적이 없다. 재작업이 올린 시도를 잃으면 다음 [startUnit] 이 첫 시도의 태스크 id 로 내고, 같은 태스크 id 로 보내면 기체에 있던 첫
  * 시도의 태스크에 붙는다. 앞 시도의 파지([ExecutionUnit.heldInEarlierAttempt])를 잃으면 재할당이 반쯤 한 물리 작업을 옮긴다.
- * 새 계획에 이 단위가 없으면 그대로 둔다.
+ * 새 계획에 이 단위가 없으면 그대로 둔다 — 새 계획에서 빠진 단위는 여기 오기 전에 판정이 지웠거나([scopeCut], §15.329) 리비전을 거부했다.
+ * 그래도 없는 것은 계획 밖의 단위(승인된 조치 열의 걸음)다.
  */
 private fun ExecutionUnit.replannedAs(fresh: ExecutionUnit?): ExecutionUnit =
     fresh?.also {
@@ -49,8 +51,14 @@ internal fun CommandEnv.revise(
     if (execution.physicalState == PhysicalState.ABORTED || execution.physicalState == PhysicalState.PHYSICALLY_DONE) {
         return Submission.Rejected("종료한 실행에는 새 버전이 붙지 않는다 — 재작업은 새 주문이다(보고서 14.1)")
     }
-    // 분기 자리를 없애거나 가지·단위 id 를 바꾸는 리비전은 받지 않는다(§15.328) — 아래 교체는 새 계획에 없는 옛 단위를 남긴다.
+    // 분기 자리를 없애거나 가지·단위 id 를 바꾸는 리비전은 받지 않는다(§15.328). 일반 규칙이 받는 «손대지 않은 자리 제거» 도 분기 자리는 거부한다.
     choiceRefusal(execution.capability, execution.order, order)?.let { return Submission.Rejected(it) }
+    // **항목을 빼는 리비전은 여기서 한 번 판정한다**(§15.329) — 다시 계획·사슬 검사·도는 단위의 갱신 송신보다 앞이다. 손댄 단위가 빠지면 아무것도
+    // 바꾸지 않고 거부하고, 받으면 손대지 않은 그 단위를 아래 교체에서 지운다.
+    val cut = when (val verdict = scopeCut(execution, order, prefix)) {
+        is ScopeCut.Refused -> return Submission.Rejected(verdict.reason)
+        is ScopeCut.Removes -> verdict
+    }
 
     // 개정판도 사슬 검사를 받는다 — 단, 이 개정이 실제로 교체·추가할 단위만(리뷰 C3). 이미 끝났거나 도는 단위를
     // 다시 재단하면 끝난 일을 되돌리라는 말이 된다.
@@ -71,9 +79,10 @@ internal fun CommandEnv.revise(
     }
 
     // **확정된 단위 이후에만 붙는다.** 종착한 단위는 그대로(래치 — 계약이 이미 그렇게 한다),
-    // 아직 안 시작한 단위는 새 계획으로 교체, 도는 단위는 계약의 갱신 규칙(§4.4)을 탄다.
+    // 아직 안 시작한 단위는 새 계획으로 교체, 도는 단위는 계약의 갱신 규칙(§4.4)을 탄다. 새 계획에서 빠진 손대지 않은 단위는 지운다(§15.329) —
+    // 같은 결의 연장이다. 확정된 단위와 손댄 단위는 빠지지 못한다(위 판정).
     val replanned = fresh.associateBy { it.unitId }
-    val kept = execution.units.map { unit ->
+    val kept = execution.units.filter { it.unitId !in cut.ids }.map { unit ->
         when (unit.state) {
             UnitState.DONE, UnitState.UNVERIFIED, UnitState.ABORTED,
             UnitState.VERIFYING, UnitState.OPERATOR_HOLD -> unit
@@ -153,7 +162,8 @@ internal fun CommandEnv.revise(
     }
     val added = replanned.values.filter { fresh -> kept.none { it.unitId == fresh.unitId } }
         .onEach { it.revision = order.version }
-    val units = (kept + added).toMutableList()
+    // 남은 단위의 순서는 그대로, 새 단위는 새 계획에서 자기 뒤에 오는 남은 단위 앞에 선다(§15.329).
+    val units = inPlanOrder(kept, added, fresh).toMutableList()
     if (prefix.isNotEmpty()) {
         // **다시 계획하는 첫 단위 앞에 선다.** 보내는 중인 단위는 그 결과를 기다리므로 그 뒤다. 다시 계획할 단위가 없으면 끝에 선다.
         val replans = toPlan.map { it.unitId }.toSet() - setOfNotNull(execution.command.inFlight?.unitId, execution.command.fleetInFlight?.unitId)
@@ -166,7 +176,15 @@ internal fun CommandEnv.revise(
     execution.mutableUnits.addAll(units)
     // 리비전이 더한 분기 자리의 가지도 한 줄로 남긴다(§15.328) — 기록만 더한다.
     choiceTrail(addedChoices(execution.capability, execution.order, order), order, execution.missionVersion)?.let { execution.trail(MiddlewareCodes.BRANCH_CHOSEN, it) }
+    noteScopeCut(execution, cut, from = execution.order.version, order)
     execution.order = order
+    liftCutBlocks(execution, cut)
+    if (settlesAfterCut(execution, cut)) {
+        // **남은 단위가 모두 종착했으면 실행 중으로 되돌리지 않는다**(§15.329) — 이 자리에서 종결 상태를 정산하고 작업 응답을 한 번 낸다.
+        execution.physicalState = settledStateOf(execution.units)
+        notify(execution)
+        return Submission.Accepted(execution)
+    }
     if (execution.physicalState == PhysicalState.PARTIAL || execution.physicalState == PhysicalState.UNVERIFIED ||
         execution.physicalState == PhysicalState.FAILED
     ) {
@@ -286,3 +304,15 @@ internal fun CommandEnv.issuable(execution: Execution, unit: ExecutionUnit, with
             false
         }
     }
+
+/**
+ * 받은 제거를 남긴다 — 실행 자취 한 줄([REVISION_REMOVED])과 리비전 제거 사건([RevisionRemovals]) 하나. [from] 은 지우기 전 작업 지시 버전이다.
+ * 판단 기록에는 싣지 않는다 — 기록은 최신 작업 지시 버전과 지운 뒤의 단위를 들고, 리빌드는 그 작업 지시로 다시 계획한다.
+ */
+internal fun CommandEnv.noteScopeCut(execution: Execution, cut: ScopeCut.Removes, from: Int, order: JobOrder) {
+    if (cut.units.isEmpty()) return
+    val removed = cut.units.map { RemovedUnit(it.unitId, it.state) }
+    val at = now()
+    execution.trail(REVISION_REMOVED, "order revision ${order.version} (from $from) removed " + removed.joinToString { "${it.unitId}(${it.state.name})" }, at)
+    removals.record(execution.executionId, order.jobOrderId, execution.robotId, from, order.version, removed, at)
+}
