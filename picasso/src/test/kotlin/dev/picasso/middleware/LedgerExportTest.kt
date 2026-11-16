@@ -327,7 +327,7 @@ class LedgerExportTest {
         assertTrue(listOf("hold", "source", "destination").all { m.getValue(it).hasNullValue() })
 
         assertEquals(bundle().digest(), based.digest(), "재작업 근거가 해시에 들었다")
-        assertEquals("9", LedgerExport.SCHEMA_VERSION)
+        assertEquals("10", LedgerExport.SCHEMA_VERSION)
     }
 
     @Test

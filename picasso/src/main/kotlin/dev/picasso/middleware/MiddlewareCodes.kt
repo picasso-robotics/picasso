@@ -67,6 +67,12 @@ internal object MiddlewareCodes {
      */
     const val BRANCH_CHOSEN = "BRANCH_CHOSEN"
 
+    /**
+     * 리비전이 작업 지시에서 항목을 빼 손대지 않은 단위를 실행에서 지웠다는 실행 자취의 종류(§15.329). 세부에 옛·새 작업 지시 버전과 지운 단위·그때의
+     * 상태가 든다. 같은 사실이 감사 내보내기의 리비전 제거 사건([RevisionRemoval])으로도 남는다 — 자취는 판단 기록에 실리지 않는다.
+     */
+    const val REVISION_REMOVED = "REVISION_REMOVED"
+
     /** 재작업을 받았는데 판단이 붙을 인시던트가 묶음에 없었다는 실행 자취의 종류(§15.323). */
     const val REWORK_NOTED = "REWORK_NOTED"
 

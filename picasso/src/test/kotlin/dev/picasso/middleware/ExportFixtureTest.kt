@@ -373,7 +373,7 @@ class ExportFixtureTest {
      * 얻을 길이 없고, 건너뛰기도 새 쓰개에는 걸리지 않는다. 그래도 «안 썼다» 를 조용히 넘기지 않는다.
      */
     private fun write(w: World, dir: Path) {
-        check(BundleWriter(dir, w.mw.instanceId).snapshot(w.mw.incidents(), w.mw.remedySearches(), w.harness.clock.now())) {
+        check(BundleWriter(dir, w.mw.instanceId).snapshot(w.mw.incidents(), w.mw.remedySearches(), w.harness.clock.now(), w.mw.revisionRemovals())) {
             "$dir 에 한 벌을 안 썼다"
         }
     }
@@ -622,8 +622,8 @@ class ExportFixtureTest {
     fun `재기동 장면의 두 벌을 낸다`() {
         RestartWorld().use { w ->
             val (first, second, record) = restartScene(w)
-            check(BundleWriter(Path.of("build", "export", "run-5a"), first.instanceId).snapshot(first.incidents(), first.remedySearches(), w.harness.clock.now()))
-            check(BundleWriter(Path.of("build", "export", "run-5b"), second.instanceId).snapshot(second.incidents(), second.remedySearches(), w.harness.clock.now()))
+            check(BundleWriter(Path.of("build", "export", "run-5a"), first.instanceId).snapshot(first.incidents(), first.remedySearches(), w.harness.clock.now(), first.revisionRemovals()))
+            check(BundleWriter(Path.of("build", "export", "run-5b"), second.instanceId).snapshot(second.incidents(), second.remedySearches(), w.harness.clock.now(), second.revisionRemovals()))
 
             val held = first.incidents().single()
             val origin = assertNotNull(held.origin)

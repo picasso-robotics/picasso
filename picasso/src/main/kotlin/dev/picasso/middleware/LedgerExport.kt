@@ -62,11 +62,18 @@ object LedgerExport {
      * «관측 없음»). 이 인코더의 원칙대로 **널도 키를 싣는다** — 판단마다, 그리고 근거 안의 손·자리 칸마다. 값 조합도 는다 — 시도된 실패 인시던트
      * (`unresolved: false`)에 `REWORK` 판단이 서고, 첫 발행 직전 재검사를 못 지난 시도는 태스크 없는 실패 인시던트(`REWORK_RECHECK`)를 열며, 판단
      * 기록에서는 `DONE` 이던 이동에 `REWORK` 판단이 선다. 판단 칸이라 해시에서 빠지고 **같은 시드의 요약은 판 8 과 같다.**
+     *
+     * `10` 에서 레지스터가 하나 늘었다 — 리비전 제거 사건([REVISION_REMOVALS], §15.329). 리비전이 작업 지시에서 항목을 빼며 손대지 않은 단위를 실행에서
+     * 지운 사건 하나가 한 줄이고, 안내의 `counts` 에 `revisionRemovals` 가 붙었다. 인시던트·탐색 줄의 바이트는 그대로이고 **같은 시드의 요약은 판 9 와
+     * 같다.** 이 사건은 실패·취소·완료가 아니다 — 인시던트를 열지 않고 사람의 판단도 아니다.
      */
-    const val SCHEMA_VERSION: String = "9"
+    const val SCHEMA_VERSION: String = "10"
 
     const val INCIDENTS: String = "incidents.jsonl"
     const val REMEDY_SEARCHES: String = "remedy-searches.jsonl"
+
+    /** 리비전 제거 사건(버전 10, §15.329). 인시던트·탐색과 합치지 않는다 — 실행이 범위를 줄인 기록이지 사건도 탐색도 아니다. */
+    const val REVISION_REMOVALS: String = "revision-removals.jsonl"
 
     /** **맨 마지막에 나타난다.** 이것이 보이는 것이 «한 벌이 다 나왔다» 는 신호다. */
     const val MANIFEST: String = "manifest.json"
@@ -113,6 +120,26 @@ object LedgerExport {
      */
     fun remedySearchLine(record: RemedySearchRecord): String = line(record)
 
+    /** 리비전 제거 사건 한 줄씩, 적힌 순서대로(버전 10). 마지막 줄에도 줄바꿈이 붙는다. */
+    fun revisionRemovals(records: List<RevisionRemoval>): String =
+        records.joinToString("") { revisionRemovalLine(it) + "\n" }
+
+    /**
+     * 리비전 제거 사건 한 줄 — 줄바꿈 없이(버전 10, §15.329). 실행·작업 지시·기체, 옛·새 작업 지시 버전(`fromVersion`·`toVersion`), 지운 단위와 그때의
+     * 상태(`removed` — 실행 열의 순서), 두 시각. **줄에는 인스턴스가 없다** — 실행 id 는 인스턴스 안의 셈이라 담는 쪽이 [Middleware.instanceId] 를 곁에
+     * 적는다. 한 사본은 (인스턴스, 실행, `toVersion`)이 가리킨다 — 한 실행의 한 버전은 한 번만 받는다.
+     */
+    fun revisionRemovalLine(r: RevisionRemoval): String = Obj()
+        .str("executionId", r.executionId)
+        .str("jobOrderId", r.jobOrderId)
+        .str("robotId", r.robotId)
+        .num("fromVersion", r.fromVersion)
+        .num("toVersion", r.toVersion)
+        .raw("removed", r.removed.joinToJson { Obj().str("unitId", it.unitId).str("state", it.state.name).done() })
+        .str("at", r.at.toString())
+        .str("wallClockAt", r.wallClockAt.toString())
+        .done()
+
     /**
      * 한 벌의 안내. [instanceId] 는 이 벌을 낸 인스턴스([Middleware.instanceId])다(판 8) — 인시던트 id 와 실행 id 는 그 인스턴스 안의 셈이라
      * 이것과 함께여야 한 사본을 가리킨다. 재기동을 넘어 같은 사건을 잇는 것은 줄의 `incidentKey` 다.
@@ -124,6 +151,8 @@ object LedgerExport {
         incidents: Int,
         remedySearches: Int,
         instanceId: String,
+        /** 리비전 제거 사건 수(버전 10). */
+        revisionRemovals: Int = 0,
     ): String = Obj()
         .str("schemaVersion", SCHEMA_VERSION)
         .str("runId", runId)
@@ -131,7 +160,7 @@ object LedgerExport {
         .str("writtenAt", writtenAt.toString())
         .str("virtualNow", virtualNow.toString())
         .str("contractSemver", ContractIdentity.semver)
-        .raw("counts", Obj().num("incidents", incidents).num("remedySearches", remedySearches).done())
+        .raw("counts", Obj().num("incidents", incidents).num("remedySearches", remedySearches).num("revisionRemovals", revisionRemovals).done())
         .done()
 
     private fun line(b: IncidentBundle): String = Obj()

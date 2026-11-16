@@ -98,6 +98,11 @@ class HandoffFixtureTest {
             assertEquals(ContractIdentity.semver, m.getValue("contractSemver").stringValue, "$run 의 계약 버전이 낡았다")
             // 한 벌은 한 인스턴스의 것이다(판 8) — 인시던트 id 는 그 인스턴스 안의 셈이다.
             assertTrue(m.getValue("instanceId").stringValue.isNotBlank(), "$run 의 안내에 인스턴스가 없다")
+            // 버전 10(§15.329) — 리비전 제거 사건의 레지스터가 한 벌에 들고, 안내의 수와 줄 수가 같으며 줄은 지금 인코더의 칸을 쓴다.
+            val removals = lines(run, LedgerExport.REVISION_REMOVALS)
+            assertEquals(removals.size, m.getValue("counts").structValue.fieldsMap.getValue("revisionRemovals").numberValue.toInt(), "$run 의 제거 사건 수가 안내와 다르다")
+            val expected = keys(LedgerExport.revisionRemovalLine(RevisionRemoval("e", "j", "r", 1, 2, listOf(RemovedUnit("u", UnitState.PENDING)), AT, AT)))
+            removals.forEach { assertEquals(expected, keys(it), "$run 의 제거 사건 줄이 지금의 칸과 다르다") }
         }
     }
 
