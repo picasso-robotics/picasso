@@ -31,7 +31,11 @@ import java.util.concurrent.atomic.AtomicLong
  * **기체마다 하나다.** `event_id` 카운터가 기체 단위여야 소비자의 멱등 키가
  * 다른 기체와 섞이지 않는다.
  */
-class ResponseHeaders(private val instance: RobotInstance) {
+class ResponseHeaders(
+    private val instance: RobotInstance,
+    /** 이 기체의 제어자 세대 바닥값(ADR 54) — 응답 `controller_epoch`. 0 은 «대조 안 함». 요청값을 되울리지 않는다. */
+    private val floor: () -> Long = { 0L },
+) {
 
     /**
      * §5.5는 ULID라 하지만 [RobotInstance.sessionId]와 같은 근거로 카운터를
@@ -68,6 +72,7 @@ class ResponseHeaders(private val instance: RobotInstance) {
             .setOccurredAt(now)
             .setStateAsOf(stateAsOf ?: now)
             .also { builder -> updateIndex?.let(builder::setUpdateIndex) }
+            .setControllerEpoch(floor())
             .build()
     }
 }

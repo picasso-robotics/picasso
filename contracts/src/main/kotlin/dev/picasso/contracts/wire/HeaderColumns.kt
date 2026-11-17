@@ -22,17 +22,23 @@ object HeaderColumns {
         "event_id", "occurred_at", "state_as_of",
     )
 
-    /** gRPC 요청. `client_id`가 여기에만 있다. */
+    /** gRPC 요청. `client_id`가 여기에만 있다. `controller_epoch` 는 발신자의 세대다(0.12.0). */
     val REQUEST: Set<String> = setOf(
-        "schema_id", "contract_digest", "contract_semver", "robot_id", "client_id",
+        "schema_id", "contract_digest", "contract_semver", "robot_id", "client_id", "controller_epoch",
     )
 
     /** gRPC 응답. `sequence`와 `client_id`가 빠진다. */
     val RESPONSE: Set<String> = setOf(
         "schema_id", "contract_digest", "contract_semver", "robot_id",
         "capability_epoch", "session_id", "profile_ref",
-        "event_id", "occurred_at", "state_as_of",
+        "event_id", "occurred_at", "state_as_of", "controller_epoch",
     )
+
+    /**
+     * **0 이 값인 칸**(0.12.0). 그 방향에서 쓰는 칸이지만 0 이 뜻을 가져 비어 보일 수 있다 — 요청의 `controller_epoch` 0 은 «세대를
+     * 싣지 않음», 응답의 0 은 «대조 안 함» 이다. 표대로 채웠는지 보는 쪽은 이 칸의 비어 있음을 누락으로 읽지 않는다.
+     */
+    val ZERO_IS_VALUE: Set<String> = setOf("controller_epoch")
 
     /** `WatchTask` 스트림 응답. 응답 열에 `update_index`가 더해진다. */
     val WATCH_RESPONSE: Set<String> = RESPONSE + "update_index"

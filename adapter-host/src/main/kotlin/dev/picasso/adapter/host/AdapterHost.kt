@@ -1,7 +1,9 @@
 package dev.picasso.adapter.host
 
+import dev.picasso.contracts.v1.EventServiceGrpc
 import dev.picasso.contracts.v1.SkillServiceGrpc
 import dev.picasso.contracts.v1.TaskServiceGrpc
+import dev.picasso.contracts.wire.ControllerFence
 import dev.picasso.uplink.report.HandshakeReporter
 import io.grpc.BindableService
 import io.grpc.ForwardingServerCallListener
@@ -75,6 +77,13 @@ class AdapterHost(
      * 구동이다), 거짓이면 그 RPC 는 펌프가 마지막으로 적은 것으로 답하고 링크를 기다리지 않는다. 명령은 언제나 지난다.
      */
     val pumpOnRead: Boolean = true,
+    /**
+     * 제어자 세대 대조(ADR 54). **기본은 대조하지 않는다**(`UNFENCED`) — 오늘 거동이고 응답 바닥값은 0 이다. 대조하려면 `FENCED` 와 저장소를
+     * 준다 — 재시작을 넘으려면 [FileFenceStore], 메모리 저장은 인수 확인이 `VOLATILE` 로 답한다(한계 대장 «§15.330 · 휘발 바닥값»).
+     */
+    val fence: ControllerFence = ControllerFence(),
+    /** 인수 확인이 앞서 통과한 명령을 기다리는 한도. 넘기면 `DURABLE_PENDING` 이다. */
+    fenceWait: java.time.Duration = java.time.Duration.ofSeconds(5),
 ) {
 
     /** 기체 하나짜리 배치 — 직결 어댑터와 시험이 쓴다. */
@@ -83,7 +92,9 @@ class AdapterHost(
         builder: ServerBuilder<*>,
         reporter: HandshakeReporter = HandshakeReporter.NONE,
         pumpOnRead: Boolean = true,
-    ) : this(mapOf(robot.robotId to robot), builder, reporter, pumpOnRead)
+        fence: ControllerFence = ControllerFence(),
+        fenceWait: java.time.Duration = java.time.Duration.ofSeconds(5),
+    ) : this(mapOf(robot.robotId to robot), builder, reporter, pumpOnRead, fence, fenceWait)
 
     /**
      * 이 호스트가 드는 기체들. **동시 맵이다** — 기동 뒤에 [admit] 이 더하고, 잠금 밖에서 도는 명령 RPC 의 라우팅이 같은 맵을
@@ -110,6 +121,7 @@ class AdapterHost(
         this.robots.values.forEach {
             it.southbound = link
             it.host = lock
+            it.floor = { fence.floor(it.robotId) }
         }
     }
 
@@ -117,12 +129,12 @@ class AdapterHost(
     private fun serialized(service: BindableService): ServerServiceDefinition =
         ServerInterceptors.intercept(service, Serialized(lock, RELEASED))
 
-    private val tasks = HostTaskService(this.robots, pumpOnRead)
+    private val tasks = HostTaskService(this.robots, pumpOnRead, fence)
 
     private val server: Server = builder
-        .addService(serialized(HostSkillService(this.robots, reporter, pumpOnRead)))
+        .addService(serialized(HostSkillService(this.robots, reporter, pumpOnRead, fence)))
         .addService(serialized(tasks))
-        .addService(serialized(HostEventService(this.robots, pumpOnRead)))
+        .addService(serialized(HostEventService(this.robots, pumpOnRead, fence, fenceWait)))
         .build()
 
     val port: Int get() = server.port
@@ -152,6 +164,7 @@ class AdapterHost(
         if (robots.containsKey(robot.robotId)) return false
         robot.southbound = link
         robot.host = lock
+        robot.floor = { fence.floor(robot.robotId) }
         robot.primeLiveness()
         return exclusive {
             val map = robots as ConcurrentHashMap<String, HostedRobot>
@@ -206,7 +219,10 @@ class AdapterHost(
     }
 
     private companion object {
-        /** 본문을 호스트 잠금 밖에서 도는 메서드 — 어댑터에 보내거나 묻는 것이다(§15.269). */
+        /**
+         * 본문을 호스트 잠금 밖에서 도는 메서드 — 어댑터에 보내거나 묻는 것이다(§15.269). `GetSnapshot` 도 여기 있다 — 인수 확인이 앞서 통과한
+         * 명령을 기다리는 동안 그 명령이 장부에 적을 수 있어야 한다(ADR 54). 본문은 기록을 읽는 자리를 스스로 잠근다.
+         */
         val RELEASED: Set<String> = setOf(
             TaskServiceGrpc.getStartTaskMethod(),
             TaskServiceGrpc.getPauseTaskMethod(),
@@ -214,6 +230,7 @@ class AdapterHost(
             TaskServiceGrpc.getCancelTaskMethod(),
             TaskServiceGrpc.getRetryTaskMethod(),
             SkillServiceGrpc.getGetKnownSiteNamesMethod(),
+            EventServiceGrpc.getGetSnapshotMethod(),
         ).map { it.fullMethodName }.toSet()
     }
 }

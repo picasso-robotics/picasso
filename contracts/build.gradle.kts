@@ -41,7 +41,10 @@ plugins {
 //          든 채 쉬는 기체의 작업 지시가 계획 시점 사슬 검사를 건너뛰고 기체에서야
 //          거부되며 조치 제안이 서지 않았다(§15.150·§15.316). UNSPECIFIED 가 «말하지
 //          않음» 이라 옛 발신자의 의미는 그대로다. 추가이므로 major는 그대로다.
-val contractSemver = "0.11.0"
+// 0.12.0 — MessageHeader.controller_epoch(요청 = 발신 세대, 응답 = 그 기체의 바닥값), RejectionCode.STALE_CONTROLLER 와
+//          Rejection 의 요청 세대·바닥값, GetSnapshotResponse.fence_status(FenceStatus) 추가(ADR 54). 0 이 «싣지 않음·대조
+//          안 함» 이라 옛 발신자·수신자의 의미는 그대로다. 추가이므로 major는 그대로다.
+val contractSemver = "0.12.0"
 
 // 이 모듈은 proto 파일과 거기서 나온 것, 그리고 **그 구조를 채우는 규칙**을
 // 담는다 — §5.5의 헤더 표와 계약 신원이다. 발신자 쪽에만 두면 client가 요청

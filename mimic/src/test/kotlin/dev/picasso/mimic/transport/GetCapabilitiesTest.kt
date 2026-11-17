@@ -214,7 +214,7 @@ class GetCapabilitiesTest {
             )
             val header = response.header
 
-            HeaderColumns.RESPONSE.forEach {
+            (HeaderColumns.RESPONSE - HeaderColumns.ZERO_IS_VALUE).forEach {
                 assertTrue(HeaderColumns.isSet(header, it), "$it 가 비었다")
             }
             (HeaderColumns.ALL - HeaderColumns.RESPONSE).forEach {

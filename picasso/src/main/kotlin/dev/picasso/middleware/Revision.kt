@@ -246,7 +246,7 @@ internal fun CommandEnv.settleUpdate(execution: Execution, unit: ExecutionUnit, 
             // 갱신과 같은 자리라 다음 라운드의 [pumpRound] 가 발행 게이트를 다시 지나 보낸다. 미확정 단위면 미룰 것이 없다 — 다음 조회가
             // 새 리비전으로 나간다. 보내는 중에 개정이 또 왔어도 기체에서 도는 것은 [previous] 다.
             if (unit.state == UnitState.RUNNING) execution.command.deferredUpdate = previous
-            unit.annotateOnce(UPDATE_NOT_SENT)
+            unit.annotateOnce(if (issue.refusal != null) MiddlewareCodes.FENCE_REFUSED else UPDATE_NOT_SENT)
         }
         is Issue.InDoubt -> {
             // 갱신의 답을 못 받았다 — 적용됐는지 모른다. 도는 중이었더라도 이제는 미확정이다. 미룰 것도 없다 — 다음 조회가 단위의
@@ -272,6 +272,8 @@ internal fun CommandEnv.settleUpdate(execution: Execution, unit: ExecutionUnit, 
  * 사건을 열지 않는다. 실패가 아니라 기다림이고, 운영자가 판단할 것이 없다.
  */
 internal fun CommandEnv.issuable(execution: Execution, unit: ExecutionUnit, withheld: WithheldIssue): Boolean =
+    // 밀려남이 아닌 세대 거절을 받은 출발·개정 갱신은 조회와 같은 간격 뒤에 다시 낸다(ADR 54) — 막음이 아니라 늦춤이라 막음 표시를 세우지 않는다.
+    if (withheld != WithheldIssue.IN_DOUBT_LOOKUP && execution.command.startBackingOff(unit.unitId)) false else
     when (val verdict = issuing.check(setOf(execution.robotOf(unit)))) {
         is IssueVerdict.Issue -> {
             execution.permitBlock?.let { lifted ->

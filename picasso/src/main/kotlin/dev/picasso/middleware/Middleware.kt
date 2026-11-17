@@ -127,6 +127,11 @@ class Middleware(
      * 남긴다. 기본값은 [Retention] 의 값이다.
      */
     retention: Retention = Retention(),
+    /**
+     * 유효 권위의 출처(ADR 51 결정 6, ADR 54) — 발행 관문([IssuingGate])의 첫째 입력. **널이면 붙이지 않은 것이고 아무것도 막지 않는다** —
+     * 단일 활성 프로세스의 오늘 거동이다. 붙이면 쥐지 않은 기체(포트가 던짐 포함)로는 새 로봇 명령을 내지 않고 기다린다. 취소는 막지 않는다.
+     */
+    authority: AuthorityPort? = null,
 ) {
     // ⚠ 생성자 인자 `missions`(널 허용)가 이 속성을 가린다 — 다른 속성의 초기화식에서 `missions` 는 인자다. 거기서는 `this.missions` 로 쓴다.
     private val missions: MissionCatalog = run {
@@ -162,7 +167,7 @@ class Middleware(
      * 발행 관문(ADR 51 결정 6, ADR 52). 배정 관문([gate])과 다르다 — 배정 관문은 작업 지시를 받을 때 한 번 묻고, 이것은 새 로봇
      * 명령이 나가기 직전마다 묻는다. 허가는 받은 뒤에도 바뀌기 때문이다.
      */
-    private val issuing = IssuingGate(permits, retirements, now)
+    private val issuing = IssuingGate(permits, retirements, now, authority, robots::controllerRefusal)
 
     /** 생애·드라이버·접합부의 좁은 환경. 기체 뷰와 이번 라운드의 현장 시간값도 여기 있다. */
     private val env = CommandEnv(robots, cell, fleet, now, issuing, ::notify, RevisionRemovals(wallClock, retention.revisionRemovals))

@@ -1,11 +1,13 @@
 package dev.picasso.middleware
 
+import dev.picasso.client.ControllerEpochChanged
 import dev.picasso.client.PicassoClient
 import dev.picasso.client.TaskFollower
 import dev.picasso.contracts.v1.CancelTaskResponse
 import dev.picasso.contracts.v1.Capability
 import dev.picasso.contracts.v1.FaultObservability
 import dev.picasso.contracts.v1.HoldKind
+import dev.picasso.contracts.v1.MessageHeader
 import dev.picasso.contracts.v1.ParameterValue
 import dev.picasso.contracts.v1.RejectionCode
 import dev.picasso.contracts.v1.StartTaskResponse
@@ -13,6 +15,7 @@ import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.contracts.v1.ValueType
 import dev.picasso.contracts.v1.WatchTaskResponse
+import dev.picasso.contracts.wire.StaleReason
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import java.time.Duration
@@ -39,12 +42,75 @@ import java.time.Instant
  * @param now 창을 재는 시계. 기본은 벽시계다.
  * @param backoff 차단 창의 길이. 기본 30초는 [LogicalCapability.linkLossWindow] 와 같다 — 스냅숏을 못 읽는 창이 끝날 무렵 다시
  *   물어, 끝내 답하지 않는 기체는 미들웨어가 끊김으로 판정한다. 현장마다 바꿀 소비자가 아직 없어 현장 시간값에 넣지 않는다(ADR 9).
+ * @param onSuperseded **밀려남 신호**(ADR 54). 이 포트가 처음 밀려났음을 알 때 한 번 부른다 — 수신자가 이 세대의 명령을
+ *   `STALE_CONTROLLER` 로 거절했거나 응답 헤더의 바닥값이 이 세대보다 높다. 권위를 잃었다고 판단하는 것은 담는 쪽이다.
+ *
+ * ## 밀려남 래치 (ADR 54)
+ *
+ * **실제로 밀려났을 때만 닫는다** — 이 포트의 세대가 0 이 아니고 수신자가 알려 준 바닥값이 그보다 높을 때다(`STALE_CONTROLLER` 의
+ * [StaleReason.BELOW_FLOOR], 또는 읽기·스트림·능력 응답 머리말의 더 높은 바닥값 — 읽기를 `null` 로 접기 전에 본다). 닫으면 그 뒤의 출발·
+ * 취소는 선로에 나가지 않고 [CommandNotSent] 로 끝나고, 처음 한 번 신호를 낸다. 닫게 한 거절 응답 하나는 그대로 돌려준다(미들웨어가 일반
+ * 실패 처리 전에 소비한다). 읽기는 닫지 않는다 — 관측은 계속한다. 래치는 풀리지 않는다 — 세대가 바뀌면 포트를 새로 만든다.
+ *
+ * 밀려남이 아닌 세대 거절(세대를 싣지 않음·범위 밖·올릴 자격 없음)은 **그 명령만** 거절된 것이다 — 닫지도 알리지도 않고 응답을 그대로
+ * 돌려준다. 세대 0 인 포트가 대조하는 수신자 하나에 보낸 명령 때문에 대조하지 않는 다른 기체의 명령까지 막히지 않게 한다.
+ * 클라이언트가 붙잡은 세대와 공급자의 값이 달라 보내지 않은 명령도 [CommandNotSent] 다.
  */
 class ClientRobotPort(
     private val client: PicassoClient,
     private val now: () -> Instant = Instant::now,
     val backoff: Duration = Duration.ofSeconds(30),
+    private val onSuperseded: Superseded = Superseded.NONE,
 ) : RobotPort {
+
+    /** 밀려남 신호를 받는 쪽(ADR 54). [mine] 은 이 포트의 세대, [floor] 는 수신자가 알려 준 그 기체의 바닥값. */
+    fun interface Superseded {
+        fun superseded(robotId: String, mine: Long, floor: Long)
+
+        companion object {
+            val NONE = Superseded { _, _, _ -> }
+        }
+    }
+
+    /** 래치 — 밀려난 사실. 널이면 닫히지 않았다. */
+    @Volatile private var latch: ControllerRefusal? = null
+
+    /** 닫혔으면 그 까닭. 시험과 담는 쪽의 진단이 읽는다. */
+    val superseded: String? get() = latch?.line
+
+    /** 닫혔으면 밀려난 사실 — 어느 기체로 물어도 같다. 포트 하나는 세대 하나라 한 기체에서 밀려났으면 다른 기체에서도 그 세대가 낡았다. */
+    override fun controllerRefusal(robotId: String): ControllerRefusal? = latch
+
+    /** 바닥값이 이 세대보다 높으면 닫는다(처음 닫을 때만 신호). 세대가 0 인 포트는 닫지 않는다 — 밀려날 세대가 없다. */
+    private fun observeFloor(robotId: String, floor: Long, answeredFloor: Boolean = false) {
+        val mine = client.epoch
+        if (mine <= 0 || floor <= mine) return
+        val fact = ControllerRefusal(robotId, StaleReason.BELOW_FLOOR, mine, floor, now(), answered = answeredFloor)
+        val first = synchronized(this) {
+            if (latch != null) return@synchronized false
+            latch = fact
+            true
+        }
+        if (first) onSuperseded.superseded(robotId, mine, floor)
+    }
+
+    private fun observe(robotId: String, header: MessageHeader) = observeFloor(robotId, header.controllerEpoch)
+
+    /** 명령의 공통 — 닫혔으면 보내지 않고, 세대가 바뀌었으면 보내지 않았다고 던진다. */
+    private fun <T> command(robotId: String, send: () -> T): T {
+        latch?.let { throw CommandNotSent("밀려나 명령을 닫았다 — ${it.line}") }
+        return try {
+            send()
+        } catch (e: ControllerEpochChanged) {
+            throw CommandNotSent(e.message ?: "제어자 세대가 바뀌었다")
+        }
+    }
+
+    /** 명령 응답을 본다 — 세대 거절이면 그 바닥값으로, 아니면 머리말의 바닥값으로. 닫는 것은 밀려났을 때뿐이다. */
+    private fun answered(robotId: String, header: MessageHeader, rejection: dev.picasso.contracts.v1.Rejection?) {
+        val floor = if (rejection?.code == RejectionCode.REJECTION_CODE_STALE_CONTROLLER) maxOf(rejection.controllerEpochFloor, header.controllerEpoch) else header.controllerEpoch
+        observeFloor(robotId, floor, answeredFloor = rejection?.code == RejectionCode.REJECTION_CODE_STALE_CONTROLLER)
+    }
 
     /** 기체마다 차단 창이 끝나는 시각. 창이 지나도 남아 있다가 다음 호출이 답을 받으면 걷힌다. */
     private val backingOff = java.util.concurrent.ConcurrentHashMap<String, Instant>()
@@ -70,7 +136,10 @@ class ClientRobotPort(
     }
 
     /** `PicassoClient` 가 이미 세대별로 캐시한다 — 여기서 또 들면 두 캐시가 어긋난다. */
-    override fun capabilities(robotId: String): Capability? = runCatching { guarded(robotId) { client.capabilities(robotId) } }.getOrNull()
+    override fun capabilities(robotId: String): Capability? =
+        runCatching { guarded(robotId) { client.capabilities(robotId) } }.getOrNull()
+            // 능력만 돌려받으므로 머리말의 바닥값은 클라이언트가 본 것으로 읽는다 — 접기 전·후 어느 쪽이든 놓치지 않는다.
+            .also { observeFloor(robotId, client.floorSeen(robotId)) }
 
     /** 태스크마다 지금까지 받은 갱신과 지금 열린 팔로워. 팔로워는 끊기면 바뀌고 누적 목록은 남는다. */
     private class Followed(var follower: TaskFollower) {
@@ -87,7 +156,8 @@ class ClientRobotPort(
 
     override fun start(robotId: String, taskId: String, revision: Int, skillType: String, parameters: Map<String, String>): StartTaskResponse {
         val typed = parameters.map { (k, v) -> typed(robotId, skillType, k, v) }
-        return guarded(robotId) { client.start(robotId, taskId, revision, skillType, typed) }
+        return command(robotId) { guarded(robotId) { client.start(robotId, taskId, revision, skillType, typed) } }
+            .also { answered(robotId, it.header, it.rejection.takeIf { _ -> it.hasRejection() }) }
     }
 
     /**
@@ -140,6 +210,7 @@ class ClientRobotPort(
     /** 팔로워가 새로 받은 것을 누적 목록으로 옮긴다. */
     private fun take(f: Followed) {
         val fresh = f.follower.updates
+        fresh.drop(f.taken).forEach { observe(it.header.robotId, it.header) }
         f.updates += fresh.drop(f.taken)
         f.taken = fresh.size
     }
@@ -159,10 +230,13 @@ class ClientRobotPort(
         followed.remove(handle.taskId)
     }
 
-    override fun cancel(robotId: String, handle: TaskHandle): CancelTaskResponse = guarded(robotId) { client.cancel(robotId, handle) }
+    override fun cancel(robotId: String, handle: TaskHandle): CancelTaskResponse =
+        command(robotId) { guarded(robotId) { client.cancel(robotId, handle) } }
+            .also { answered(robotId, it.header, it.rejection.takeIf { _ -> it.hasRejection() }) }
 
     override fun snapshot(robotId: String): RobotSnapshot? = try {
         val s = guarded(robotId) { client.snapshot(robotId) }
+        observe(robotId, s.header)
         RobotSnapshot(
             sequence = s.sequence,
             faults = s.faultsList,
@@ -174,6 +248,8 @@ class ClientRobotPort(
             faultsObservable = s.faultObservability != FaultObservability.FAULT_OBSERVABILITY_NOT_OBSERVABLE,
             // 칸이 없거나 UNSPECIFIED 면 옛 발신자다 — 빈손으로 읽지 않고 «말하지 않음» 으로 둔다.
             hold = s.hold.takeIf { s.hasHold() && it.kind != HoldKind.HOLD_KIND_UNSPECIFIED },
+            controllerFloor = s.header.controllerEpoch,
+            fenceStatus = s.fenceStatus,
         )
     } catch (_: RuntimeException) {
         null
@@ -181,6 +257,7 @@ class ClientRobotPort(
 
     override fun replay(robotId: String, from: Long): Replay? = try {
         val responses = guarded(robotId) { client.replay(robotId, from) }
+        responses.forEach { observe(robotId, it.header) }
         if (responses.any { it.hasRejection() && it.rejection.code == RejectionCode.REJECTION_CODE_SEQUENCE_EVICTED }) {
             Replay.Evicted
         } else {

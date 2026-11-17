@@ -17,7 +17,7 @@ class ContractIdentityTest {
 
     @Test
     fun `계약 신원을 클래스패스에서 읽는다`() {
-        assertEquals("0.11.0", ContractIdentity.semver)
+        assertEquals("0.12.0", ContractIdentity.semver)
         assertTrue(
             ContractIdentity.digest.matches(Regex("[0-9a-f]{64}")),
             "다이제스트가 SHA-256 16진수가 아니다: ${ContractIdentity.digest}",
@@ -96,7 +96,7 @@ class HeaderColumnsTest {
             HeaderColumns.ALL,
             "MessageHeader에 §5.5의 어느 열에도 없는 필드가 있다",
         )
-        assertEquals(13, HeaderColumns.ALL.size)
+        assertEquals(14, HeaderColumns.ALL.size)
     }
 
     @Test
@@ -131,7 +131,17 @@ class HeaderColumnsTest {
         HeaderColumns.ALL.forEach { assertFalse(HeaderColumns.isSet(empty, it), "$it") }
 
         val filled = RequestHeaders.build("picasso.v1.StartTaskRequest", "r1", "c1")
-        HeaderColumns.REQUEST.forEach { assertTrue(HeaderColumns.isSet(filled, it), "$it") }
+        (HeaderColumns.REQUEST - HeaderColumns.ZERO_IS_VALUE).forEach { assertTrue(HeaderColumns.isSet(filled, it), "$it") }
+        val fenced = RequestHeaders.build("picasso.v1.StartTaskRequest", "r1", "c1", controllerEpoch = 7)
+        HeaderColumns.REQUEST.forEach { assertTrue(HeaderColumns.isSet(fenced, it), "$it") }
+    }
+
+    @Test
+    fun `0 이 값인 칸은 요청과 응답 둘 다에 있고 발행에는 없다`() {
+        // 제어자 세대는 요청이면 발신 세대, 응답이면 수신자의 바닥값이다(0.12.0). 발행 열에 들면 MQTT 소비자가 그것을 권위로 읽는다.
+        assertEquals(setOf("controller_epoch"), HeaderColumns.ZERO_IS_VALUE)
+        assertTrue(HeaderColumns.ZERO_IS_VALUE.all { it in HeaderColumns.REQUEST && it in HeaderColumns.RESPONSE })
+        assertTrue(HeaderColumns.ZERO_IS_VALUE.none { it in HeaderColumns.PUBLISH })
     }
 
     @Test
@@ -149,9 +159,12 @@ class RequestHeadersTest {
     fun `요청 헤더가 §5-5의 요청 열을 정확히 따른다`() {
         val header = RequestHeaders.build("picasso.v1.StartTaskRequest", "r1", "line-controller")
 
-        HeaderColumns.REQUEST.forEach {
+        // 세대를 안 줬으면 0 — «싣지 않음» 이다(0.12.0). 0 이 값인 칸은 비어도 누락이 아니다.
+        (HeaderColumns.REQUEST - HeaderColumns.ZERO_IS_VALUE).forEach {
             assertTrue(HeaderColumns.isSet(header, it), "$it 가 비었다 — §5.5는 요청에 싣는다")
         }
+        assertEquals(0L, header.controllerEpoch)
+        assertEquals(9L, RequestHeaders.build("picasso.v1.StartTaskRequest", "r1", "line-controller", controllerEpoch = 9).controllerEpoch)
         (HeaderColumns.ALL - HeaderColumns.REQUEST).forEach {
             assertFalse(HeaderColumns.isSet(header, it), "$it 를 요청에 실었다 — §5.5는 싣지 않는다")
         }

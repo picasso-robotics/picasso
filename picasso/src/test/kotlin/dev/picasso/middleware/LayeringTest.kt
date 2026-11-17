@@ -382,6 +382,7 @@ class LayeringTest {
             "RobotSync.kt" to Layer.TRANSITION,
             "EvidenceBinding.kt" to Layer.TRANSITION,
             "CommandPorts.kt" to Layer.TRANSITION,
+            "ControllerRefusals.kt" to Layer.TRANSITION,
             "ClockSkew.kt" to Layer.TRANSITION,
             // 발신자 거부 뒤 회복(§15.320) — 장부·관문을 쓰고 재작업의 되돌림(EvidenceBinding)을 부른다.
             "HoldRecovery.kt" to Layer.TRANSITION,

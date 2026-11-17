@@ -74,7 +74,7 @@ enum Resolution {
 //   태스크 RPC     : CAPABILITY_WITHDRAWN · CANCEL_UNSUPPORTED · PAUSE_UNSUPPORTED
 //                   · OUTDATED_REVISION · INVALID_TRANSITION · SKILL_ABSENT
 //                   · IDENTITY_MISMATCH · PARAMETER_INVALID
-//                   · UPDATE_UNSUPPORTED
+//                   · UPDATE_UNSUPPORTED · STALE_CONTROLLER
 //   ReplayEvents  : SEQUENCE_EVICTED
 //
 // 태스크 RPC가 SKILL_ABSENT를 쓰는 이유: CAPABILITY_WITHDRAWN은 "있었는데
@@ -129,6 +129,15 @@ enum RejectionCode {
   // (정준 분류 PRECONDITION_FAILED) — 선언된 주어가 없으므로 references 는 비고, detail 의
   // `[class=PRECONDITION_FAILED; vendor=…]` 가 원천을 말한다. 소비자의 다음 행동은 둘 다 같다: 기다린다.
   REJECTION_CODE_PRECONDITION_UNMET = 14;
+
+  // 요청의 제어자 세대(`MessageHeader.controller_epoch`)를 이 기체의 바닥값이 받지 않는다(0.12.0, ADR 54).
+  // 명령 다섯(Start·Retry·Pause·Resume·Cancel)만 이것으로 거절한다 — 읽기는 세대로 거절하지 않는다.
+  //
+  // 대조하는 수신자(FENCED)만 낸다. 세대를 싣지 않았거나(요청 세대 0 — 필수 누락) 바닥값보다 낮으면(다른
+  // 제어자가 넘겨받았다) 이 코드이고, 둘은 `Rejection.requested_controller_epoch` 가 0 인가로 가른다.
+  // 벤더 호출도 장부 변화도 없다. gRPC 상태로 내지 않는 것은 «받지 않았음이 확실한 것» 을 발신자가
+  // 미확정으로 읽지 않게 하려는 것이다.
+  REJECTION_CODE_STALE_CONTROLLER = 15;
 }
 
 // 거절에는 언제나 이유가 붙는다. openTCS의 ExplainedBoolean(value, reason)을
@@ -140,6 +149,12 @@ message Rejection {
 
   // 능력이 사라져 거절한 경우 소비자가 캐시를 다시 세우도록 현재 세대를 실어 준다.
   uint64 capability_epoch = 4;
+
+  // STALE_CONTROLLER 일 때만(0.12.0). 거절한 요청이 실은 제어자 세대와 그때 이 기체의 바닥값.
+  // 까닭은 두 칸으로 갈린다 — 요청 세대 0 이면 필수 누락, 2^63 이상이면 범위 밖, 바닥값보다 낮으면 밀려남(다른 제어자가
+  // 넘겨받았다), 바닥값 이상이면 그 세대로 올릴 자격이 없다. 밀려남은 셋째 하나뿐이다.
+  uint64 requested_controller_epoch = 5;
+  uint64 controller_epoch_floor = 6;
 }
 
 // 설계 §5.5. MQTT 발행, gRPC 요청, gRPC 응답 세 방향 모두에 실린다.
@@ -180,4 +195,16 @@ message MessageHeader {
 
   // gRPC 요청 전용. 권위는 이 헤더에 있고 페이로드의 같은 필드는 복사본이다.
   string client_id = 13;
+
+  // 제어자 세대(0.12.0, ADR 54). **방향마다 뜻이 다르다.**
+  //   gRPC 요청 — 발신자의 세대. 0 은 «싣지 않음» 이다.
+  //   gRPC 응답 — 수신자가 지금 든 **그 기체의 바닥값**. 요청값을 되울리지 않는다. 0 은 «대조 안 함» 이고,
+  //               대조하지 않는 수신자(UNFENCED)와 이 칸을 모르는 옛 수신자가 같은 뜻으로 0 을 낸다.
+  //   MQTT 발행   — 쓰지 않는다.
+  // 멱등 키 `(task_id, revision)` 에 들지 않는다 — 새 제어자의 같은 키 재전송은 기존 핸들에 붙는다.
+  // **값의 범위는 0..2^63-1 이다.** 칸은 uint64 지만 그 위 절반은 대조하는 수신자가 STALE_CONTROLLER 로 거절한다
+  // (부호 있는 64비트로 비교·저장하는 수신자와 같은 판정을 내기 위해서다).
+  // 대조하는 수신자도 아직 한 번도 오르지 않은 기체에는 0 을 싣는다 — «대조 안 함» 과 머리말만으로는 갈리지 않으며,
+  // 인수 확인(GetSnapshot)의 fence_status 가 그 둘을 가른다.
+  uint64 controller_epoch = 14;
 }

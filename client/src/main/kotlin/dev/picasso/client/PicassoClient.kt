@@ -57,12 +57,16 @@ import java.util.concurrent.atomic.AtomicInteger
  *   픽스처다. 둘을 함께 바꾸면 어긋나지 않는다. `Negotiate`에서만 발화한다 —
  *   태스크 RPC는 `client_id`를 싣지 않고, `GetCapabilities`는 거절 자리가
  *   없어 gRPC 상태로 나간다(§15).
+ * @param controllerEpoch 이 발신자의 제어자 세대(계약 0.12.0, ADR 54). 요청 헤더마다 싣는다. **처음 본 0 아닌 값을 붙잡고 바꾸지 않는다** —
+ *   프로세스 하나는 세대 하나다. 붙잡은 뒤 공급자가 다른 값을 내면 명령은 보내지 않고 [ControllerEpochChanged] 로 던진다(세대가 바뀌면
+ *   클라이언트와 그 위의 포트를 새로 만든다). 읽기는 붙잡은 값을 싣고 그대로 보낸다. 기본은 0 — «싣지 않음» 이다.
  */
 class PicassoClient(
     channel: Channel,
     val clientId: String,
     private val identityOverride: String? = null,
     private val deadlineSeconds: Long = 10,
+    private val controllerEpoch: () -> Long = { 0L },
 ) {
     private val skills = SkillServiceGrpc.newBlockingStub(channel)
     private val tasks = TaskServiceGrpc.newBlockingStub(channel)
@@ -83,8 +87,22 @@ class PicassoClient(
     /** 시험이 "두 번째 호출은 RPC를 안 낸다"를 확인하는 데 쓴다. */
     val capabilityRpcCount: Int get() = capabilityRpcs.get()
 
-    private fun header(schemaId: String, robotId: String): MessageHeader =
-        RequestHeaders.build(schemaId, robotId, identityOverride ?: clientId)
+    /** 붙잡은 세대. 아직 0 아닌 값을 못 봤으면 0. */
+    @Volatile private var pinned = 0L
+
+    /** 이 클라이언트의 세대 — 붙잡은 값, 아직 없으면 공급자의 지금 값. 받은 바닥값과 맞대는 쪽(포트)이 읽는다. */
+    val epoch: Long get() = pinned.takeIf { it != 0L } ?: controllerEpoch()
+
+    /** 실을 세대. 처음 본 0 아닌 값을 붙잡는다. [command] 면 붙잡은 뒤 공급자가 다른 값을 낼 때 보내지 않고 던진다. */
+    private fun epochFor(command: Boolean): Long = synchronized(this) {
+        val supplied = controllerEpoch()
+        if (pinned == 0L) pinned = supplied
+        if (command && supplied != pinned) throw ControllerEpochChanged(pinned, supplied)
+        pinned
+    }
+
+    private fun header(schemaId: String, robotId: String, command: Boolean = false): MessageHeader =
+        RequestHeaders.build(schemaId, robotId, identityOverride ?: clientId, epochFor(command))
 
     // ── 핸드셰이크 (§5.4)
 
@@ -107,7 +125,7 @@ class PicassoClient(
                 )
                 .build(),
         )
-        note(robotId, response.header.capabilityEpoch)
+        note(robotId, response.header)
         return response
     }
 
@@ -120,7 +138,7 @@ class PicassoClient(
                 .setHeader(header("picasso.v1.GetCapabilitiesRequest", robotId))
                 .build(),
         )
-        note(robotId, response.header.capabilityEpoch)
+        note(robotId, response.header)
         response.capability
     }
 
@@ -134,6 +152,20 @@ class PicassoClient(
      * 단위 시험이 본다.** 끝에서 끝까지의 증명은 런타임 축소(완료 기준 14)와
      * 함께 온다.
      */
+    /**
+     * 응답 머리말을 본다 — 능력 세대([note])와 제어자 바닥값(ADR 54). 바닥값은 기체마다 지금까지 본 가장 큰 값을 든다 —
+     * 머리말을 받는 쪽에 넘기지 않는 읽기(`capabilities` 의 능력만 돌려주는 것 따위)도 밀려남을 놓치지 않게, 포트가 [floorSeen] 으로 읽는다.
+     */
+    private fun note(robotId: String, header: MessageHeader) {
+        note(robotId, header.capabilityEpoch)
+        if (header.controllerEpoch > 0) floors.merge(robotId, header.controllerEpoch, ::maxOf)
+    }
+
+    private val floors = ConcurrentHashMap<String, Long>()
+
+    /** 이 기체의 응답 머리말에서 지금까지 본 가장 큰 제어자 바닥값. 못 봤으면 0. */
+    fun floorSeen(robotId: String): Long = floors[robotId] ?: 0L
+
     private fun note(robotId: String, epoch: Long) {
         if (epoch == 0L) return
         val previous = epochs.put(robotId, epoch)
@@ -154,7 +186,7 @@ class PicassoClient(
                 .setHeader(header("picasso.v1.GetKnownSiteNamesRequest", robotId))
                 .setRobotId(robotId)
                 .build(),
-        ).also { note(robotId, it.header.capabilityEpoch) }
+        ).also { note(robotId, it.header) }
 
     // ── 상태 (§4.8)
 
@@ -164,7 +196,7 @@ class PicassoClient(
             .setHeader(header("picasso.v1.GetSnapshotRequest", robotId))
             .setRobotId(robotId)
             .build(),
-    ).also { note(robotId, it.header.capabilityEpoch) }
+    ).also { note(robotId, it.header) }
 
     /**
      * `ReplayEvents(from_sequence)` — 재생 버퍼를 **끝까지** 읽어 돌려준다. 발신자가 스트림을 닫으므로 블로킹으로
@@ -189,11 +221,11 @@ class PicassoClient(
         parameters: List<ParameterValue>,
     ): StartTaskResponse = tasks.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS).startTask(
         StartTaskRequest.newBuilder()
-            .setHeader(header("picasso.v1.StartTaskRequest", robotId))
+            .setHeader(header("picasso.v1.StartTaskRequest", robotId, command = true))
             .setTaskId(taskId).setRevision(revision).setRobotId(robotId)
             .setSkillType(skillType).addAllParameters(parameters)
             .build(),
-    ).also { note(robotId, it.header.capabilityEpoch) }
+    ).also { note(robotId, it.header) }
 
     /**
      * 스트림을 열고 **돌려준다.** 종착까지 블로킹으로 모으지 않는다 — 시간을
@@ -215,31 +247,38 @@ class PicassoClient(
     fun pause(robotId: String, handle: TaskHandle): PauseTaskResponse =
         tasks.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS).pauseTask(
             PauseTaskRequest.newBuilder()
-                .setHeader(header("picasso.v1.PauseTaskRequest", robotId))
+                .setHeader(header("picasso.v1.PauseTaskRequest", robotId, command = true))
                 .setHandle(handle).build(),
         )
 
     fun resume(robotId: String, handle: TaskHandle): ResumeTaskResponse =
         tasks.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS).resumeTask(
             ResumeTaskRequest.newBuilder()
-                .setHeader(header("picasso.v1.ResumeTaskRequest", robotId))
+                .setHeader(header("picasso.v1.ResumeTaskRequest", robotId, command = true))
                 .setHandle(handle).build(),
         )
 
     fun cancel(robotId: String, handle: TaskHandle): CancelTaskResponse =
         tasks.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS).cancelTask(
             CancelTaskRequest.newBuilder()
-                .setHeader(header("picasso.v1.CancelTaskRequest", robotId))
+                .setHeader(header("picasso.v1.CancelTaskRequest", robotId, command = true))
                 .setHandle(handle).build(),
         )
 
     fun retry(robotId: String, handle: TaskHandle): RetryTaskResponse =
         tasks.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS).retryTask(
             RetryTaskRequest.newBuilder()
-                .setHeader(header("picasso.v1.RetryTaskRequest", robotId))
+                .setHeader(header("picasso.v1.RetryTaskRequest", robotId, command = true))
                 .setHandle(handle).build(),
         )
 }
+
+/**
+ * **세대가 바뀌어 보내지 않았다**(ADR 54). 클라이언트가 붙잡은 세대와 공급자의 지금 값이 다르다 — 명령은 선로에 나가지 않았다.
+ * 프로세스 하나는 세대 하나이므로 바뀌면 클라이언트와 그 위의 포트를 새로 만든다.
+ */
+class ControllerEpochChanged(val pinned: Long, val supplied: Long) :
+    IllegalStateException("제어자 세대가 바뀌었다: 붙잡은 값=$pinned, 지금 값=$supplied — 보내지 않았다. 클라이언트를 새로 만든다")
 
 /**
  * 열려 있는 `WatchTask` 스트림이 준 것을 모은다.

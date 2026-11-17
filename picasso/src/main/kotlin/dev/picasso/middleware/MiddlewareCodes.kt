@@ -28,6 +28,12 @@ internal object MiddlewareCodes {
     val LOOKUP_INTERVAL: Duration = Duration.ofSeconds(2)
     const val START_NOT_SENT = "start not sent; reissued after the gates"
     const val UPDATE_NOT_SENT = "revision update not sent; deferred"
+
+    /** 수신자가 세대로 거절한 출발·갱신의 단위 메모(ADR 54). [START_NOT_SENT] 와 가른다 — 하위가 답했다. */
+    const val FENCE_REFUSED = "refused by the receiver's controller-epoch fence; not applied, no failure judged"
+
+    /** 세대 거절의 자취 종류(ADR 54). 같은 실행·기체·까닭·바닥값이면 한 번만 남긴다. */
+    const val CONTROLLER_REFUSED = "CONTROLLER_REFUSED"
     const val DOUBT_ATTACHED = "DOUBT_ATTACHED"
     const val DOUBT_REVISION_AHEAD = "DOUBT_REVISION_AHEAD"
     const val WATCH_CLOSED = "WATCH_CLOSED"

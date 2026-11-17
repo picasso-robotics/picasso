@@ -386,7 +386,7 @@ class NegotiateTest {
                 .setRequirement(satisfying().setClientId("line-controller"))
                 .build(),
         )
-        HeaderColumns.RESPONSE.forEach {
+        (HeaderColumns.RESPONSE - HeaderColumns.ZERO_IS_VALUE).forEach {
             assertTrue(HeaderColumns.isSet(response.header, it), "$it 가 비었다")
         }
         (HeaderColumns.ALL - HeaderColumns.RESPONSE).forEach {

@@ -26,7 +26,8 @@ class ResponseHeadersTest {
      * 열이 실제로 서로 다른지는 거기서 본다. 여기서는 **구현이 그 열을
      * 따르는지**만 본다.
      */
-    private val required = HeaderColumns.RESPONSE
+    // 대조하지 않는 미믹의 바닥값은 0 — «대조 안 함» 이다(0.12.0). 0 이 값인 칸은 비어도 누락이 아니다.
+    private val required = HeaderColumns.RESPONSE - HeaderColumns.ZERO_IS_VALUE
 
     /** 응답에 **실으면 안 되는** 것. `sequence`는 MQTT, `client_id`는 요청 전용. */
     private val forbidden = HeaderColumns.ALL - HeaderColumns.WATCH_RESPONSE

@@ -66,6 +66,8 @@ object LedgerExport {
      * `10` 에서 레지스터가 하나 늘었다 — 리비전 제거 사건([REVISION_REMOVALS], §15.329). 리비전이 작업 지시에서 항목을 빼며 손대지 않은 단위를 실행에서
      * 지운 사건 하나가 한 줄이고, 안내의 `counts` 에 `revisionRemovals` 가 붙었다. 인시던트·탐색 줄의 바이트는 그대로이고 **같은 시드의 요약은 판 9 와
      * 같다.** 이 사건은 실패·취소·완료가 아니다 — 인시던트를 열지 않고 사람의 판단도 아니다.
+     *
+     * 판 10 그대로, 새 자취 값 둘(ADR 54) — 근거 창 `evidenceWindow[].kind` 에 `CONTROLLER_REFUSED`(그 `detail` 에 세대·바닥값), 판단의 단위 메모에 `FENCE_REFUSED` 가 실릴 수 있다. 칸은 그대로다.
      */
     const val SCHEMA_VERSION: String = "10"
 

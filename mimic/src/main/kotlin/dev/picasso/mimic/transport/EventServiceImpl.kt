@@ -22,6 +22,9 @@ class EventServiceImpl(
     ) = reply(observer) {
         val hosted = registry.require(request.header)
         val events = hosted.instance.events
+        // **인수 확인**(ADR 54) — 요청 세대가 바닥값 이상이면 올린다. 미믹은 잠금 하나로 줄 세우고 남쪽 송신이 없어 기다릴 것이 없다.
+        // 답은 받은 저장의 실제 내구성대로다(보통 메모리라 VOLATILE). 미믹에는 나갔는지 모르는 송신이 없다.
+        val confirmation = registry.fenced { registry.fence.confirm(hosted.instance.robotId, request.header.controllerEpoch, java.time.Duration.ZERO) }
 
         GetSnapshotResponse.newBuilder()
             .setHeader(hosted.headers.forResponse(GetSnapshotResponse.getDescriptor()))
@@ -38,6 +41,7 @@ class EventServiceImpl(
             .setConnectionState(events.connectionState)
             // **손도 현재값이다**(0.11.0). 접수 전 사전 조건이 보는 그 손이다 — 도는 태스크가 없어도 앞 태스크가 든 채 끝났으면 든 채다.
             .setHold(hosted.instance.tasks.hold())
+            .also { b -> confirmation?.let { b.setFenceStatus(it.status(registry.fence.durability, inDoubt = false)) } }
             .build()
     }
 

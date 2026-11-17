@@ -112,6 +112,13 @@ class HostedRobot(
     @Volatile
     internal var host: Any = Any()
 
+    /**
+     * 이 기체의 제어자 세대 바닥값(ADR 54) — 응답 머리말의 `controller_epoch`. 대조를 든 쪽([AdapterHost]·[Routing])이 단다. 기본은 0 —
+     * «대조 안 함» 이다. 발행 머리말에는 싣지 않는다.
+     */
+    @Volatile
+    internal var floor: () -> Long = { 0L }
+
     /** [host] 아래에서 [block] 을 돈다. 호스트 잠금을 쥐지 않고 들어오는 명령 RPC 가 응답 머리말과 핸들을 이것으로 읽는다. */
     internal fun <T> recorded(block: () -> T): T = synchronized(host, block)
 
@@ -250,6 +257,12 @@ class HostedRobot(
         ) : StartOutcome
         /** 계약이 답할 자리가 없는 사정 — gRPC 상태로 나간다. */
         data class Unavailable(val status: io.grpc.Status) : StartOutcome
+
+        /**
+         * 입구에서 통과했으나 벤더 호출 직전(링크 잠금 안)에 다시 대어 보니 그 세대가 더는 바닥값이 아니다(ADR 54). 벤더도 장부도 건드리지
+         * 않았다. 받는 쪽이 `STALE_CONTROLLER` 로 옮긴다.
+         */
+        data object Superseded : StartOutcome
     }
 
     fun now(): Instant = clock()
@@ -271,12 +284,23 @@ class HostedRobot(
      * 보낼 자리는 기체마다 하나다([sending]). 그 사이 같은 `(task_id, revision)` 이 또 오면 같은 결과를 기다려 받는다(합류).
      * 다른 접수는 기다리지 않고 거부한다 — 실제 하드웨어는 배타적 제어 모델이다(§4.9).
      */
-    fun start(taskId: String, revision: Int, skillType: String, parameters: Map<String, Any>): StartOutcome {
+    /**
+     * @param fenced 벤더 호출 직전에 링크 잠금 안에서 부른다 — 이 요청의 제어자 세대가 아직 그 기체의 바닥값인가(ADR 54). 거짓이면 벤더를
+     *   부르지 않고 [StartOutcome.Superseded] 다. 기본은 언제나 참(대조 안 함)이다.
+     */
+    fun start(
+        taskId: String,
+        revision: Int,
+        skillType: String,
+        parameters: Map<String, Any>,
+        fenced: () -> Boolean = { true },
+    ): StartOutcome {
         var preconditionChecked = false
         while (true) {
-            when (val step = recorded { admit(taskId, revision, skillType, parameters, preconditionChecked) }) {
+            when (val step = recorded { admit(taskId, revision, skillType, parameters, preconditionChecked, fenced) }) {
                 is Admission.Decided -> return step.outcome
-                is Admission.Join -> return joined(step.sending)
+                // 합류한 앞 송신이 세대 재대조에 걸렸으면 그 결과는 이 요청의 것이 아니다 — 자리가 비었으니 다시 본다.
+                is Admission.Join -> joined(step.sending).takeIf { it != StartOutcome.Superseded }?.let { return it }
                 Admission.Precondition -> {
                     // 사전 조건의 관측은 링크를 쓴다 — 호스트 잠금 밖에서 보고 다시 들어간다.
                     precondition(skillType)?.let { return it }
@@ -314,6 +338,33 @@ class HostedRobot(
      */
     private val inDoubt = mutableMapOf<StartKey, StartOutcome>()
 
+    /**
+     * 결과를 모르는 조작(일시정지·재개·취소·재시도의 [Refusal.LINK_IN_DOUBT]) — 태스크 id 마다 그 조작(ADR 54). 호스트 잠금 아래에서만 만진다.
+     *
+     * **걷는 근거는 해소의 증명뿐이다.** 펌프가 그 태스크의 종착을 읽었고 어댑터가 그 읽기를 벤더 관측이라 말할 때([RobotAdapter.pollObservesVendor])만
+     * 걷는다. 그 읽기를 계획할 때 이미 있던 조작만 걷는다 — 읽은 뒤에 생긴 미확정까지 지우지 않게. 뒤 조작의 거절·미지원·링크 오류는 앞 조작이
+     * 적용됐는지 알려 주지 않으므로 걷지 않는다. 증명이 없으면 남는다 — 인수 확인은 `DURABLE_PENDING` 으로 답하고 운영자 확인으로 간다.
+     *
+     * 나갔는지 모르는 접수와 갱신([inDoubt])은 걷지 않는다 — 장부에 없는 태스크의 종착을 벤더에 물을 길이 어댑터 포트에 없다(한계 대장
+     * «§15.330 · 미확정 접수»).
+     */
+    private val opsInDoubt = mutableMapOf<String, DoubtedOp>()
+
+    /** 결과를 모르는 조작 하나 — 무엇이었나와 등록 때 매긴 단조 토큰. 같은 태스크의 새 조작은 새 토큰이라, 앞 읽기가 그것을 지우지 못한다. */
+    internal data class DoubtedOp(val what: String, val token: Long)
+
+    /** [DoubtedOp.token] 의 셈. 호스트 잠금 아래에서만 만진다. */
+    private var doubtTokens = 0L
+
+    /**
+     * 적은 읽기 가운데 한 번이라도 어댑터가 벤더 관측이라 말했는가([Reading.vendorObserved]) — 한 번 참이면 계속 참이다. 호스트 잠금 아래에서만 만진다. 기본 거짓 — 거짓이면
+     * 종착으로 적힌 태스크를 미확정 때문에 다시 읽지 않는다(읽어도 걷을 근거가 안 나오고 `poll` 비용만 쌓인다).
+     */
+    private var vendorObserves = false
+
+    /** 보내는 중인 명령 뒤에서 기다리는 조작의 수. 시험이 «조작 대기» 를 잠자기 없이 확정하는 문이다. */
+    internal val waitingTurns = java.util.concurrent.atomic.AtomicInteger()
+
     /** 장부·배타·검증을 보고 다음 걸음을 정한다. 호스트 잠금 아래에서 부른다. 어댑터를 부르지 않는다. */
     private fun admit(
         taskId: String,
@@ -321,6 +372,7 @@ class HostedRobot(
         skillType: String,
         parameters: Map<String, Any>,
         preconditionChecked: Boolean,
+        fenced: () -> Boolean,
     ): Admission {
         val key = StartKey(taskId, revision)
         sending?.takeIf { it.key == key }?.let { return Admission.Join(it) }
@@ -341,7 +393,7 @@ class HostedRobot(
                         "${existing.taskId} 은 이미 ${existing.last.state} 다 — 종료는 되돌아가지 않는다(§4.4)",
                     ),
                 )
-                else -> update(existing, key, revision, skillType, parameters)
+                else -> update(existing, key, revision, skillType, parameters, fenced)
             }
         }
 
@@ -367,7 +419,7 @@ class HostedRobot(
         binding(skillType, parameters)?.let { return Admission.Decided(it) }
 
         val reserved = reserve(key)
-        return Admission.Send { sendStart(reserved, taskId, revision, skillType, parameters) }
+        return Admission.Send { sendStart(reserved, taskId, revision, skillType, parameters, fenced) }
     }
 
     /** 보내는 중인 명령이 있으면 거부. 기다리지 않는다 — 기다리면 그 명령의 남쪽 왕복만큼 이 RPC 도 선다. */
@@ -421,8 +473,11 @@ class HostedRobot(
         revision: Int,
         skillType: String,
         parameters: Map<String, Any>,
+        fenced: () -> Boolean,
     ): StartOutcome = sent(s) {
         val (acceptance, seen) = synchronized(southbound) {
+            // **벤더 호출 직전의 세대 재대조**(ADR 54) — 입구를 지난 뒤 바닥값이 올랐으면 보내지 않는다. 장부도 그대로다.
+            if (!fenced()) return@sent { StartOutcome.Superseded }
             val acceptance = adapter.accept(taskId, skillType, parameters, clock())
             acceptance to (acceptance as? Acceptance.Accepted)?.let {
                 val first = observe(TaskState.TASK_STATE_ACCEPTED)
@@ -465,7 +520,14 @@ class HostedRobot(
      * 하는데, 그러려면 호스트가 대기 파라미터를 들고 [RobotAdapter.resume]·[RobotAdapter.retry] 에 실어야 하고
      * 그 자리가 포트에 없다. **로봇이 못 하는 것이 아니므로 `UPDATE_UNSUPPORTED` 로 답하지 않는다.**
      */
-    private fun update(task: HostedTask, key: StartKey, revision: Int, skillType: String, parameters: Map<String, Any>): Admission {
+    private fun update(
+        task: HostedTask,
+        key: StartKey,
+        revision: Int,
+        skillType: String,
+        parameters: Map<String, Any>,
+        fenced: () -> Boolean,
+    ): Admission {
         if (skillType != task.skillType) {
             return Admission.Decided(
                 StartOutcome.Rejected(
@@ -494,13 +556,23 @@ class HostedRobot(
         return Admission.Send {
             sent(reserved) {
                 val (answer, observed) = synchronized(southbound) {
+                    // 갈아만 두는 갱신도 장부를 바꾸므로 같이 다시 댄다(ADR 54).
+                    if (!fenced()) return@sent { StartOutcome.Superseded }
                     val answer = if (deferred) Applied.Ok else adapter.update(task.taskId, skillType, parameters, clock())
                     answer to (if (answer == Applied.Ok) observe(state) else null)
                 }
                 val commit: () -> StartOutcome = {
                     when (answer) {
                         Applied.Ok -> applied(task, revision, parameters, state, checkNotNull(observed))
-                        is Applied.Refused -> StartOutcome.Rejected(RejectionCode.REJECTION_CODE_UPDATE_UNSUPPORTED, answer.detail)
+                        // **결과를 모르는 갱신은 못 든 것이 아니다**(ADR 54). 접수의 미확정과 같이 그 답을 남겨 같은 키 재전송에 다시 보내지 않고,
+                        // 인수 확인을 막는다. `UPDATE_UNSUPPORTED` 로 접으면 갱신이 실제로 적용됐는지 모르는 채 옛 리비전 장부로 확인이 나간다.
+                        is Applied.Refused -> if (answer.reason == Refusal.LINK_IN_DOUBT) {
+                            StartOutcome.Unavailable(
+                                io.grpc.Status.UNKNOWN.withDescription("${answer.detail} — 갱신이 적용됐는지 모른다. 같은 갱신은 다시 보내지 않는다(§15.220)"),
+                            ).also { inDoubt[key] = it }
+                        } else {
+                            StartOutcome.Rejected(RejectionCode.REJECTION_CODE_UPDATE_UNSUPPORTED, answer.detail)
+                        }
                     }
                 }
                 commit
@@ -526,6 +598,9 @@ class HostedRobot(
 
         /** 어댑터의 답과, 적고 난 뒤 그 태스크의 상태. */
         data class Done(val applied: Applied, val state: TaskState) : Manipulated
+
+        /** 벤더 호출 직전에 다시 대어 보니 그 세대가 더는 바닥값이 아니다(ADR 54). 벤더도 장부도 건드리지 않았다. */
+        data object Superseded : Manipulated
     }
 
     private sealed interface Turn {
@@ -541,8 +616,14 @@ class HostedRobot(
      * 어댑터가 받았거나 상태로 답할 거절이면 어댑터가 지금 말하는 상태를 같은 링크 잠금 구간에서 읽어 함께 적는다.
      *
      * @param send 지금 파라미터를 받아 어댑터에 시킨다 — 재개·재시도는 멈춘 동안 갈아 둔 파라미터로 다시 시작한다(§4.4).
+     * @param fenced 벤더 호출 직전에 링크 잠금 안에서 부른다 — [start] 의 것과 같다(ADR 54).
      */
-    internal fun manipulate(taskId: String, send: (Map<String, Any>) -> Applied): Manipulated {
+    internal fun manipulate(
+        taskId: String,
+        fenced: () -> Boolean = { true },
+        what: String = "manipulate",
+        send: (Map<String, Any>) -> Applied,
+    ): Manipulated {
         while (true) {
             val turn = recorded {
                 val task = book[taskId] ?: return@recorded Turn.Answer(Manipulated.Unknown)
@@ -558,11 +639,17 @@ class HostedRobot(
                 is Turn.Answer -> return turn.manipulated
                 // 앞 명령이 끝나기를 기다린다. 그 결과는 그 명령의 것이라 여기서 보지 않는다. 그 사이 끝난 태스크를 읽고 다시 본다.
                 is Turn.Wait -> {
-                    runCatching { turn.sending.done.get() }
+                    waitingTurns.incrementAndGet()
+                    try {
+                        runCatching { turn.sending.done.get() }
+                    } finally {
+                        waitingTurns.decrementAndGet()
+                    }
                     pumpReleased()
                 }
                 is Turn.Go -> return sent(turn.sending) {
                     val (applied, then) = synchronized(southbound) {
+                        if (!fenced()) return@sent { Manipulated.Superseded }
                         val applied = send(turn.parameters)
                         val now = if (syncsAfter(applied)) {
                             adapter.state.takeIf { it != TaskState.TASK_STATE_UNSPECIFIED && it != turn.last }
@@ -572,6 +659,8 @@ class HostedRobot(
                         applied to now?.let { it to observe(it) }
                     }
                     val commit: () -> Manipulated = {
+                        // 결과를 모르는 조작은 인수 확인을 막는다(ADR 54). 뒤 조작의 답으로는 걷지 않는다 — 앞 조작의 결과를 알려 주지 않는다.
+                        if ((applied as? Applied.Refused)?.reason == Refusal.LINK_IN_DOUBT) opsInDoubt[turn.task.taskId] = DoubtedOp(what, ++doubtTokens)
                         if (then != null && current === turn.task && !turn.task.terminal) record(turn.task, then.first, then.second)
                         Manipulated.Done(applied, turn.task.last.state)
                     }
@@ -694,7 +783,14 @@ class HostedRobot(
     }
 
     /** 펌프 한 번이 읽을 자리 — 도는 태스크와 그때의 로그 길이, 그리고 생존 보고의 내용을 함께 읽을지. */
-    internal class PumpPlan(val task: HostedTask?, val last: TaskState?, val generation: Int, val liveness: Boolean = false)
+    internal class PumpPlan(
+        val task: HostedTask?,
+        val last: TaskState?,
+        val generation: Int,
+        val liveness: Boolean = false,
+        /** 이 읽기를 계획할 때 결과를 모르던 조작 — 태스크 id 와 그 조작의 토큰(ADR 54). 이 읽기의 종착은 토큰이 같은 것만 걷는다. */
+        val doubtedOps: Map<String, Long> = emptyMap(),
+    )
 
     /** 기록할 때 상태와 함께 어댑터에서 읽는 것. [progress] 는 성공 종착이면 묻지 않는다. */
     internal class Observed(val failure: Fault?, val result: String, val progress: ProgressObservation?, val hold: HoldObservation)
@@ -711,6 +807,11 @@ class HostedRobot(
         val faults: FaultObservation,
         val liveness: LivenessFacts? = null,
         val hold: HoldState? = null,
+        /**
+         * 어댑터가 이 읽기를 벤더 관측이라 말하는가([RobotAdapter.pollObservesVendor]) — 링크 잠금 안에서 상태와 함께 읽는다. [apply] 가 호스트
+         * 잠금 아래에서 그것을 다시 물으면 다른 명령이 링크를 쥔 동안 호스트 전체가 선다.
+         */
+        val vendorObserved: Boolean = false,
     )
 
     /** 읽기에 매긴 마지막 차례. [southbound] 아래에서만 만진다. */
@@ -724,8 +825,10 @@ class HostedRobot(
      * 함께 읽는다 — 상태 발행이 생존 보고를 싣는다(`IngestBridge`).
      */
     internal fun plan(): PumpPlan {
-        val task = current?.takeIf { !it.terminal }
-        return PumpPlan(task, task?.last?.state, task?.log?.size ?: 0, liveness = liveness == null || stateDue())
+        // 결과를 모르는 조작이 남은 태스크는 종착으로 적혀도 읽는다(ADR 54) — 앞 읽기가 토큰이 달라 못 걷은 새 미확정을 다음 벤더 관측 읽기가
+        // 걷을 수 있게. 종착 태스크에는 상태를 다시 적지 않는다([apply] 의 래치 가드).
+        val task = current?.takeIf { !it.terminal || (vendorObserves && it.taskId in opsInDoubt) }
+        return PumpPlan(task, task?.last?.state, task?.log?.size ?: 0, liveness = liveness == null || stateDue(), doubtedOps = opsInDoubt.mapValues { it.value.token })
     }
 
     /**
@@ -736,7 +839,7 @@ class HostedRobot(
         val ticket = ++readTickets
         val state = plan.task?.let { adapter.poll(clock()) }
         val observed = state?.takeIf { it != plan.last }?.let(::observe)
-        Reading(plan, ticket, state, observed, adapter.faults(), if (plan.liveness) readLiveness() else null, readHold())
+        Reading(plan, ticket, state, observed, adapter.faults(), if (plan.liveness) readLiveness() else null, readHold(), adapter.pollObservesVendor)
     }
 
     /** 생존 보고의 내용을 어댑터에서 읽는다. 링크 잠금 아래로 간다 — 호스트 잠금을 쥐고 부르지 않는다. */
@@ -766,9 +869,15 @@ class HostedRobot(
         appliedTicket = reading.ticket
         reading.liveness?.let { liveness = it }
         reading.hold?.let { handHold = it }
+        // 결과를 모르던 조작의 태스크가 벤더 관측으로 종착했다 — 그 조작은 더는 효과를 내지 않는다(ADR 54). 읽기를 계획할 때 있던 것만 걷는다.
+        // 한 번 참이면 계속 참이다 — 한 번의 비관측 읽기로 꺼지면 관측이 돌아와도 종착·미확정 태스크를 다시 읽지 않아 못 걷는다. 걷기 자체는 아래처럼
+        // 그 읽기의 관측이 참일 때만이다.
+        if (reading.vendorObserved) vendorObserves = true
+        val ended = reading.plan.task?.takeIf { reading.state != null && TaskStates.isTerminal(reading.state) && reading.vendorObserved }
+        if (ended != null && opsInDoubt[ended.taskId]?.token == reading.plan.doubtedOps[ended.taskId]) opsInDoubt.remove(ended.taskId)
         val task = reading.plan.task
         val observed = reading.observed
-        if (task != null && observed != null && current === task && task.log.size == reading.plan.generation && sending == null) {
+        if (task != null && observed != null && current === task && !task.terminal && task.log.size == reading.plan.generation && sending == null) {
             record(task, checkNotNull(reading.state), observed)
         }
         when (val seen = reading.faults) {
@@ -878,7 +987,10 @@ class HostedRobot(
     private fun topic(stream: Topics.Stream): String = Topics.robot(ContractIdentity.major, site, robotId, stream)
 
     private fun publishHeader(schema: Descriptors.Descriptor, sequence: Long): MessageHeader =
-        header(schema).toBuilder().setSequence(sequence).build()
+        header(schema, rpc = false).toBuilder().setSequence(sequence).build()
+
+    /** 나갔는지 모르는 접수가 남았는가 — 장부에 없어 스냅샷에 안 보인다. 인수 확인이 이것으로 «정리 안 됨» 을 답한다(ADR 54). 호스트 잠금 아래에서 읽는다. */
+    internal val inDoubtPending: Boolean get() = inDoubt.isNotEmpty() || opsInDoubt.isNotEmpty()
 
     /** 조작 뒤 — 시간을 안 흘리고 어댑터가 지금 말하는 상태만 적는다. */
     internal fun syncCurrent() {
@@ -1017,7 +1129,8 @@ class HostedRobot(
 
     // ── 헤더 (§5.5 의 응답 열 — 미믹의 ResponseHeaders 와 같은 표)
 
-    fun header(schema: Descriptors.Descriptor, updateIndex: Long? = null, stateAsOf: Instant? = null): MessageHeader {
+    /** @param rpc gRPC 응답이면 참 — 바닥값([floor])을 싣는다. 발행 열에는 없다(§5.5, 계약 0.12.0). */
+    fun header(schema: Descriptors.Descriptor, updateIndex: Long? = null, stateAsOf: Instant? = null, rpc: Boolean = true): MessageHeader {
         val now = clock()
         return MessageHeader.newBuilder()
             .setSchemaId(schema.fullName)
@@ -1031,6 +1144,7 @@ class HostedRobot(
             .setOccurredAt(ISO.format(now))
             .setStateAsOf(ISO.format(stateAsOf ?: now))
             .also { b -> updateIndex?.let(b::setUpdateIndex) }
+            .also { b -> if (rpc) b.setControllerEpoch(floor()) }
             .build()
     }
 

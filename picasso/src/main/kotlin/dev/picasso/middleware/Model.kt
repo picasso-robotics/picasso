@@ -551,6 +551,13 @@ data class RobotSnapshot(
      * 않는다(§15.146). 널은 발신자가 말하지 않은 것(`UNSPECIFIED`, 옛 발신자)이고 빈손이 아니다. 관측 불가는 `HOLD_KIND_NOT_OBSERVABLE` 로 온다.
      */
     val hold: HoldState? = null,
+    /**
+     * 응답 머리말의 제어자 바닥값(계약 0.12.0, ADR 54). 0 은 «대조 안 함»(옛 수신자·대조하지 않는 수신자) 또는 아직 오르지 않은 기체다.
+     * 담는 쪽의 인수 판정이 읽는다 — 미들웨어는 판정에 쓰지 않는다.
+     */
+    val controllerFloor: Long = 0,
+    /** 이 스냅숏이 인수 확인이었다면 그 답(계약 `GetSnapshotResponse.fence_status`). 인수 확인이 아니면 `UNSPECIFIED`. */
+    val fenceStatus: dev.picasso.contracts.v1.FenceStatus = dev.picasso.contracts.v1.FenceStatus.FENCE_STATUS_UNSPECIFIED,
 )
 
 /**
