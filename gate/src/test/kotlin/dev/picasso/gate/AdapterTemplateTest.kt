@@ -60,8 +60,10 @@ class AdapterTemplateTest {
         assertEquals(emptyList(), absent, "기본 구현이 있는 자리가 골격에 안 적혀 있다")
 
         // 반대 방향 — 반드시 채우는 것을 "안 채워도 된다" 칸에 적어 두면 안 된다.
-        val optionalSection = skeleton.substringAfter("안 채워도 되는 일곱")
         val (must, _) = members()
+        val heading = "안 채워도 되는 ${NUMERAL[defaulted.size]}"
+        assertTrue(skeleton.contains(heading), "골격의 선택 칸 머리가 선택 자리 수(${defaulted.size})와 다르다")
+        val optionalSection = skeleton.substringAfter(heading)
         val misplaced = must.filter { optionalSection.contains("$it ·") || optionalSection.contains("· $it") }
         assertEquals(emptyList(), misplaced, "반드시 채우는 자리가 선택 목록에 들어 있다")
     }

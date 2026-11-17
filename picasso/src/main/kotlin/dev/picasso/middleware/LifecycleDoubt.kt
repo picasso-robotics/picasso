@@ -38,6 +38,12 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
         // 붙이거나 거부로 끝낼 수 있다.
         val driver = RouteDriver.of(unit.route)
         driver.settlePendingLookup(this@resolveDoubt, unit)?.let { return it }
+        // 밀려난 기체는 여기서 멈춘다(ADR 54) — 스냅숏 부착·높은 리비전의 운영자 보류·조회·관측·운영자 판단 어느 것도 밀려난 프로세스의 일이
+        // 아니다. 새 소유자가 같은 태스크를 더 높은 리비전으로 고친 스냅숏을 읽어도 보류·인시던트를 내지 않는다. 미확정인 채 둔다.
+        if (fenceHeld(execution.robotOf(unit))) {
+            execution.physicalState = PhysicalState.IN_DOUBT
+            return false
+        }
         val lookup = driver.lookupKind(env)
         // ⓪ 스냅숏 부착 — 붙었으면 이 라운드는 여기까지다. 다음 라운드의 [pumpRobotUnit] 이 처음부터 되짚는다. 기체가 더 높은
         // 리비전을 들었으면 붙지도 묻지도 않고 운영자에게 간다. 로봇 경로만 그 길이 있다([RouteDriver.resolveBeforeLookup]).
@@ -86,6 +92,8 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
         val why = when {
             unit.streamLostAt != null -> "downstream forgot the task, lookup not re-sent"
             lookup == ExecutionLookup.NONE -> "downstream has no client-reference lookup"
+            // 조회가 답을 못 받은 것이 아니라 수신자가 세대로 거절해 답했다(밀려남 아님 — 설정 오류, ADR 54). 사실대로 적는다.
+            refusedLookup?.first == unit.unitId -> "lookup answered with the receiver's controller-epoch refusal within grace (${unit.lookups} time(s)): ${refusedLookup?.second?.line}"
             else -> "lookup unanswered within grace (${unit.lookups} time(s))"
         }
         val lost = if (unit.streamLostAt != null) "task stream closed" else "response lost"
@@ -97,6 +105,7 @@ internal fun CommandLifecycle.resolveDoubt(unit: ExecutionUnit): Boolean {
             unit.annotate("IN_DOUBT: $lost; no evidence at ${unit.destination} within grace; $why — no automatic re-execution")
         }
         unit.state = UnitState.OPERATOR_HOLD
+        forgetRefusedLookup(unit)
         execution.noticed.clear(Notice.Doubt)
         // **취소가 걸렸는데 핸들이 없다** — 취소가 하위에 닿지 못했다. 이 단위를 든 채 실행을 중단으로 닫으면 기체가 응답을 잃은 그
         // 태스크를 하는 동안 실행이 기체를 내준다. 운영자 판단까지 보류에 둔다(§15.92, §15.238).
@@ -133,6 +142,7 @@ internal fun CommandLifecycle.attachFromSnapshot(unit: ExecutionUnit): Boolean {
         execution.handle = handleFor(robot, unit.taskId, unit.revision)
         unit.state = UnitState.RUNNING
         unit.streamLostAt = null
+        forgetRefusedLookup(unit)
         execution.noticed.clear(Notice.Doubt)
         unit.annotate("IN_DOUBT resolved by snapshot attach: ${unit.taskId}=${state.name} revision ${unit.revision}")
         execution.trail(DOUBT_ATTACHED, "${unit.unitId}: 스냅숏의 ${unit.taskId}=${state.name}(리비전 ${unit.revision})에 StartTask 없이 붙었다")
@@ -173,7 +183,14 @@ internal fun CommandLifecycle.settleLookup(unit: ExecutionUnit, issue: Issue): B
     with(env) {
         val found = when (issue) {
             Issue.Pending -> return false
-            is Issue.NotSent -> return lookupNotSent(unit)
+            // 밀려남이 아닌 세대 거절(설정 오류)은 하위가 답한 조회다 — 횟수를 쓰고 정상 경로(유예 → 운영자 보류)로 간다(ADR 54).
+            // 밀려남이면 관문이 그 기체를 막고 [resolveDoubt] 머리가 판단을 멈춘다. 나가지 않은 조회는 횟수를 쓰지 않는다.
+            is Issue.NotSent -> if (issue.refusal?.superseded == false) {
+                refusedLookup = unit.unitId to issue.refusal
+                false
+            } else {
+                return lookupNotSent(unit)
+            }
             is Issue.InDoubt -> false
             is Issue.Answered -> applyStartResponse(unit, issue.response)
         }
@@ -198,6 +215,7 @@ internal fun CommandLifecycle.lookupNotSent(unit: ExecutionUnit): Boolean {
 internal fun CommandLifecycle.lookupFound(unit: ExecutionUnit, found: Boolean): Boolean {
     with(env) {
         if (found) {
+            forgetRefusedLookup(unit)
             unit.state = UnitState.RUNNING
             // 풀린 것은 라운드 끝의 대조가 알린다([noteAttention]). 표시를 걷어야 재작업한 같은 단위가 다시 미확정이 될 때 알린다.
             execution.noticed.clear(Notice.Doubt)

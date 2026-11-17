@@ -23,7 +23,30 @@ internal class IssuingGate(
     /** 널이면 붙이지 않은 것이다 — 셋째 입력이 아무것도 막지 않는다. */
     private val retirements: RetirementPort?,
     private val now: () -> Instant,
+    /** 널이면 붙이지 않은 것이다 — 첫째 입력이 아무것도 막지 않는다. 오늘의 거동이다(ADR 54). */
+    private val authority: AuthorityPort? = null,
+    /** 포트가 아는 밀려남([RobotPort.controllerRefusal]). 응답 머리말로만 안 밀려남도 여기로 온다. */
+    private val portRefusal: (String) -> ControllerRefusal? = { null },
 ) {
+
+    /**
+     * 수신자가 답한 **밀려남**(`BELOW_FLOOR`) — 기체마다(ADR 54). 프로세스 하나는 세대 하나이고 세대는 되돌아가지 않으므로 걷지 않는다 — 다시 서려면
+     * 새 프로세스(새 세대)다. 밀려남이 아닌 거절은 여기 적지 않는다 — 그 명령만 거절된 설정 오류라 정상 경로를 막지 않는다.
+     */
+    private val superseded = java.util.concurrent.ConcurrentHashMap<String, ControllerRefusal>()
+
+    /** 거절을 적는다 — 밀려남만 남는다. */
+    fun noteRefusal(refusal: ControllerRefusal) {
+        if (refusal.superseded) superseded[refusal.robotId] = refusal
+    }
+
+    /**
+     * 이 기체에서 밀려났는가 — 수신자가 답한 밀려남, 아니면 포트가 아는 밀려남. 있으면 미들웨어는 그 기체의 새 발행을 막고 미확정 유예·인시던트
+     * 판단을 멈춘다. 밀려난 프로세스의 판단은 뜻이 없다.
+     */
+    fun refusalOf(robot: String): ControllerRefusal? =
+        superseded[robot] ?: runCatching { portRefusal(robot) }.getOrNull()?.takeIf { it.superseded }
+
 
     /**
      * [robots] 전부에 새 명령을 내도 되는가. 한 기체라도 막히면 막는다.
@@ -63,13 +86,44 @@ internal class IssuingGate(
     }
 
     /**
-     * **첫째 입력 — 유효 권위.** 지금은 활성 프로세스가 하나(ADR 51 결정 3)라서 언제나 유효하고, 그래서 아무것도 막지 않는다.
+     * **첫째 입력 — 유효 권위**(ADR 51 결정 6, ADR 54). 포트가 없으면 막지 않는다 — 단일 활성 프로세스(ADR 51 결정 3)의 오늘 거동이다.
      *
-     * 자리만 둔다. 소유 이전 규약(ADR 51 결정 4)을 지으면 «이 인스턴스가 그 실행과 그 기체의 권위를 쥐었는가» 가 여기서 답하고,
-     * 쥐지 않았으면 허가와 같은 모양([IssueVerdict.Withheld])으로 막는다. 리스·세대는 짓지 않는다 — 소비자가 없다(ADR 9).
+     * 붙이면 기체마다 «이 인스턴스가 그 기체의 권위를 쥐었는가» 를 묻고, 하나라도 쥐지 않았으면 허가와 같은 모양([IssueVerdict.Withheld])으로
+     * 막는다. 답에 없는 기체는 쥐지 않은 것이다. **포트가 던지면 막는다** — 권위를 모른 채 내는 것은 밀려났을지 모르는 채 내는 것이다.
+     * 새 발행만 막는다. 취소는 이 관문을 묻지 않는다 — 취소는 송신 측 권위와 수신 측 세대 대조가 막는다.
      */
-    @Suppress("UNUSED_PARAMETER", "FunctionOnlyReturningConstant")
-    private fun authorityRefusal(robots: Set<String>): IssueVerdict.Withheld? = null
+    private fun authorityRefusal(robots: Set<String>): IssueVerdict.Withheld? {
+        // 밀려난 기체는 포트를 묻기 전에 막는다 — 수신자가 이 세대를 이미 낡았다고 했다(ADR 54).
+        val superseded = robots.sorted().mapNotNull { robot ->
+            refusalOf(robot)?.takeIf { it.superseded }?.let {
+                RobotPermit(robot, WorkPermit.INHIBITED, listOf(PermitReason(null, PermitCause.AUTHORITY_NOT_HELD, it.line, "이 인스턴스가 더 높은 세대로 다시 설 때(새 프로세스)", null)))
+            }
+        }
+        if (superseded.isNotEmpty()) return IssueVerdict.Withheld(superseded)
+        val port = authority ?: return null
+        val held = try {
+            port.read(robots)
+        } catch (e: Exception) {
+            return IssueVerdict.Withheld(
+                robots.sorted().map { robot ->
+                    RobotPermit(
+                        robot, WorkPermit.UNKNOWN,
+                        listOf(PermitReason(null, PermitCause.AUTHORITY_NOT_HELD, "권위 포트를 못 읽었다: ${e.message ?: e::class.simpleName}", "권위 포트를 다시 읽을 수 있을 때", null)),
+                    )
+                },
+            )
+        }
+        val refused = robots.sorted().mapNotNull { robot ->
+            when (val answer = held[robot] ?: Authority.NotHeld("권위 포트가 이 기체를 답하지 않았다")) {
+                Authority.Held -> null
+                is Authority.NotHeld -> RobotPermit(
+                    robot, WorkPermit.INHIBITED,
+                    listOf(PermitReason(null, PermitCause.AUTHORITY_NOT_HELD, answer.reason, "이 인스턴스가 그 기체의 권위를 쥘 때", null)),
+                )
+            }
+        }
+        return if (refused.isEmpty()) null else IssueVerdict.Withheld(refused)
+    }
 
     /** **둘째 입력 — 작업 허가.** 포트가 없으면 통과, 있으면 기체마다 판정해 하나라도 `PERMITTED` 가 아니면 막는다. */
     private fun permitVerdict(robots: Set<String>): IssueVerdict {
@@ -188,6 +242,29 @@ enum class PermitCause {
 
     /** 운영자가 원장에서 이 기체를 퇴역으로 내렸다(§15.249). [PermitReason.subject] 가 퇴역 사유다. */
     RETIRED,
+
+    /**
+     * 이 인스턴스가 그 기체의 권위를 쥐지 않았다 — 권위 포트가 그렇게 답했거나 못 읽었다(ADR 54). [PermitReason.subject] 가 포트의 까닭이다.
+     * 허가와 달리 원천이 아니라 이 프로세스의 권위라 [PermitReason.source] 는 널이다.
+     */
+    AUTHORITY_NOT_HELD,
+}
+
+/**
+ * **유효 권위**의 출처 — 발행 관문([IssuingGate])의 첫째 입력(ADR 51 결정 6, ADR 54). 담는 쪽이 리스와 인수 확인으로 판단해 기체마다 답한다.
+ * picasso 는 리스도 세대도 모른다 — 답을 묻기만 한다. 부를 때마다 새로 읽는다. 던지면 관문이 막는다.
+ */
+fun interface AuthorityPort {
+    /** [robots] 마다 쥐었는가. 답에 없는 기체는 쥐지 않은 것으로 읽는다. */
+    fun read(robots: Set<String>): Map<String, Authority>
+}
+
+/** 기체 하나의 권위. */
+sealed interface Authority {
+    data object Held : Authority
+
+    /** 쥐지 않았다. [reason] 은 사람이 읽는다 — 인수 확인 대기, 밀려남 따위. */
+    data class NotHeld(val reason: String) : Authority
 }
 
 /**

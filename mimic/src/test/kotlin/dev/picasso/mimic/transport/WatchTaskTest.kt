@@ -393,7 +393,7 @@ class WatchTaskTest {
             // proto3 암묵 존재라 0은 "안 실었다"와 구별되지 않는다. 값으로
             // 본다 — capability_epoch를 1에서 시작한 것과 같은 문제이고,
             // 이쪽은 계약이 0을 못박아 피할 수 없다(§15).
-            (HeaderColumns.WATCH_RESPONSE - "update_index").forEach {
+            (HeaderColumns.WATCH_RESPONSE - "update_index" - HeaderColumns.ZERO_IS_VALUE).forEach {
                 assertTrue(HeaderColumns.isSet(response.header, it), "$it 가 비었다")
             }
         }

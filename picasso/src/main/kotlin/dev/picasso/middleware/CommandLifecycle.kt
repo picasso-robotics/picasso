@@ -33,4 +33,19 @@ internal class CommandLifecycle(internal val env: CommandEnv, internal val execu
      * 라운드가 보낸다. 그 전에 옛 리비전으로 끝나면 보통의 지연 이벤트 길(새 판의 기대에 대고 설비로 확인)을 탄다.
      */
     internal var deferredUpdate: Int? = null
+
+    /**
+     * 이 실행의 자취에 이미 남긴 세대 거절의 열쇠(기체·까닭·바닥값, ADR 54). 실행마다 따로라 실행이 끝나 버려지면 함께 사라진다 — 다음 실행으로
+     * 새지 않는다.
+     */
+    internal val refusalsTrailed = mutableSetOf<String>()
+
+    /**
+     * 밀려남이 아닌 세대 거절(세대 0·범위 밖·자격 없음)을 받은 마지막 출발 — 단위 id 와 받은 시각(ADR 54). 같은 단위의 다시 내기를 조회와 같은
+     * 간격([MiddlewareCodes.LOOKUP_INTERVAL])으로 늦춘다. 설정 오류가 라운드마다 선로에 나가지 않게 하려는 것이다.
+     */
+    internal var refusedStart: Pair<String, java.time.Instant>? = null
+
+    /** 밀려남이 아닌 세대 거절로 답한 마지막 미확정 조회 — 단위 id 와 그 거절(ADR 54). 유예 뒤 운영자 보류의 사유를 사실대로 적는다. */
+    internal var refusedLookup: Pair<String, ControllerRefusal>? = null
 }

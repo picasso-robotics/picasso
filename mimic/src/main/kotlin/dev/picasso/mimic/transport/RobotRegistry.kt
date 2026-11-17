@@ -1,6 +1,7 @@
 package dev.picasso.mimic.transport
 
 import dev.picasso.contracts.v1.MessageHeader
+import dev.picasso.contracts.wire.ControllerFence
 import dev.picasso.contracts.wire.RequestHeaders
 import dev.picasso.mimic.RobotInstance
 import io.grpc.Status
@@ -19,22 +20,37 @@ class RobotRegistry(
      */
     val registrySource: dev.picasso.mimic.RegistrySource =
         dev.picasso.mimic.RegistrySource.NONE,
+    /**
+     * 제어자 세대 대조(ADR 54). **기본은 대조하지 않는다** — 오늘 거동. 대조할 때 미믹은 보통 메모리 저장을 쓴다(시험·일회성 전용) — 미믹이
+     * 다시 뜨면 태스크 장부까지 비는 새 기체 세션이라 보존할 대조 대상이 없다. 인수 확인은 받은 저장의 실제 내구성대로 답한다(메모리면
+     * `VOLATILE`). 저장이 던지면 `FAILED_PRECONDITION` 이다 — `adapter-host` 와 같다.
+     */
+    val fence: ControllerFence = ControllerFence(),
 ) {
 
+    /** 바닥값을 올리는 [block] 을 돈다. 저장소가 던지면 `FAILED_PRECONDITION` 으로 옮긴다 — 수신자 둘이 같은 상태로 답한다. */
+    fun <T> fenced(block: () -> T): T = try {
+        block()
+    } catch (e: io.grpc.StatusRuntimeException) {
+        throw e
+    } catch (e: Exception) {
+        throw Status.FAILED_PRECONDITION.withDescription("제어자 세대 바닥값을 저장하지 못했다: ${e.message}").withCause(e).asRuntimeException()
+    }
+
     /** 기체 하나와 그 기체 전용 헤더 발급기. */
-    class Hosted(val instance: RobotInstance) {
+    class Hosted(val instance: RobotInstance, floor: () -> Long = { 0L }) {
         /**
          * **기체마다 따로다.** `event_id` 카운터가 기체 단위여야 소비자의
          * 멱등 키가 다른 기체와 섞이지 않는다.
          */
-        val headers = ResponseHeaders(instance)
+        val headers = ResponseHeaders(instance, floor)
     }
 
     private val byId: Map<String, Hosted> = buildMap {
         instances.forEach { instance ->
             require(instance.robotId.isNotBlank()) { "robot_id가 비어 있는 기체는 호스팅할 수 없다" }
             // 조용히 덮으면 두 프로파일 중 하나가 사라진 채 기동한다.
-            require(put(instance.robotId, Hosted(instance)) == null) {
+            require(put(instance.robotId, Hosted(instance) { fence.floor(instance.robotId) }) == null) {
                 "같은 robot_id를 두 번 호스팅할 수 없다: ${instance.robotId}"
             }
         }

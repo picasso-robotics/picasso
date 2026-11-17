@@ -128,11 +128,14 @@ internal fun CommandLifecycle.noteRefusal(response: CancelTaskResponse) {
 internal fun CommandLifecycle.cancelRobot(flight: CancelFlight): CancelIssue {
     with(env) {
         if (execution.cancelInFlight != null) return CancelIssue.Pending
-        val result = robots.issueCancel(flight.robot, flight.handle) ?: try {
-            CancelIssue.Answered(robots.cancel(flight.robot, flight.handle))
-        } catch (e: RuntimeException) {
-            CancelIssue.Failed(e)
-        }
+        // 세대 거절은 취소의 네 자리 모두 여기서 «닿지 않음» 으로 바꾼다(ADR 54). 잠금 밖 송신의 결과는 [pollRobotCancel] 이 같은 일을 한다.
+        val result = (
+            robots.issueCancel(flight.robot, flight.handle) ?: try {
+                CancelIssue.Answered(robots.cancel(flight.robot, flight.handle))
+            } catch (e: RuntimeException) {
+                CancelIssue.Failed(e)
+            }
+            ).let { fencedCancel(flight.robot, it) }
         if (result == CancelIssue.Pending) cancelSending = cancelSending.withRobot(flight)
         return result
     }
@@ -178,8 +181,9 @@ private fun CommandLifecycle.pollRobotCancel(): Boolean {
         val result = robots.issueCancel(flight.robot, flight.handle)
             ?: CancelIssue.Failed(IllegalStateException("robot=${flight.robot} 의 포트가 보내는 중인 취소의 결과를 주지 않는다"))
         if (result == CancelIssue.Pending) return true
+        val settled = fencedCancel(flight.robot, result)
         cancelSending = cancelSending.withRobot(null)
-        if (execution.physicalState.pumps) settleCancel(flight, result)
+        if (execution.physicalState.pumps) settleCancel(flight, settled)
         return false
     }
 }

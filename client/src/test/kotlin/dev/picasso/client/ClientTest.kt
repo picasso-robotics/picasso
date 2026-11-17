@@ -94,7 +94,8 @@ class PicassoClientTest {
         PicassoClient(channel, "line-controller").capabilities("r1")
 
         val header = seen.single()
-        HeaderColumns.REQUEST.forEach {
+        // 세대를 안 준 클라이언트는 0 — «싣지 않음» 이다(0.12.0).
+        (HeaderColumns.REQUEST - HeaderColumns.ZERO_IS_VALUE).forEach {
             assertTrue(HeaderColumns.isSet(header, it), "$it 가 비었다")
         }
         (HeaderColumns.ALL - HeaderColumns.REQUEST).forEach {

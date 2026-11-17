@@ -107,6 +107,34 @@ interface RobotPort {
      * ([PrefetchingRobotPort])만 값을 준다. 값을 주는 포트는 그 읽기에 이어 물은 재생을 [replay] 로 돌려준다.
      */
     fun prefetched(robotId: String): PrefetchedRead? = null
+
+    /**
+     * 이 포트가 **밀려났음을 안다면** 그 사실(ADR 54) — 수신자가 이 세대보다 높은 바닥값을 알려 줬다. 널이면 모르거나 밀려나지 않았다.
+     * 미들웨어는 이것이 있는 기체에 새 발행을 내지 않고(발행 관문 첫째 입력과 같은 막음) 미확정 유예·인시던트 판단을 멈춘다.
+     */
+    fun controllerRefusal(robotId: String): ControllerRefusal? = null
+}
+
+/**
+ * 수신자가 답한 **세대 거절**(`STALE_CONTROLLER`, ADR 54) 또는 응답 머리말이 알려 준 더 높은 바닥값. [reason] 이
+ * [StaleReason.BELOW_FLOOR] 일 때만 밀려남이다 — 다른 제어자가 넘겨받았다. 나머지는 그 명령이 받아들여지지 않았을 뿐이다.
+ *
+ * @param requested 거절된 요청의 세대(머리말에서 안 것이면 이 포트의 세대). @param floor 그때 그 기체의 바닥값. @param at 미들웨어가 그 답을 받아 정산한 시각(잠금 밖에서 보낸 출발이면 실제 수신보다 늦을 수 있다 — 라운드 머리). 머리말로 안 것이면 포트가 본 시각.
+ */
+data class ControllerRefusal(
+    val robotId: String,
+    val reason: dev.picasso.contracts.wire.StaleReason,
+    val requested: Long,
+    val floor: Long,
+    val at: Instant,
+    /** 수신자가 그 명령에 `STALE_CONTROLLER` 로 답했는가. 거짓이면 응답 머리말의 더 높은 바닥값으로 안 것이다. */
+    val answered: Boolean = true,
+) {
+    val superseded: Boolean get() = reason == dev.picasso.contracts.wire.StaleReason.BELOW_FLOOR
+
+    /** 사람이 읽는 한 줄 — 자취에 남긴다. */
+    val line: String get() = (if (answered) "수신자가 답한 세대 거절" else "응답 머리말의 더 높은 바닥값") +
+        ": robot=$robotId ${reason.name} 요청 세대=${java.lang.Long.toUnsignedString(requested)} 바닥값=$floor at=$at"
 }
 
 /**
@@ -146,8 +174,13 @@ sealed interface Issue {
     /** 하위가 답했다(핸들이든 거부든). */
     data class Answered(val response: StartTaskResponse, val sentAt: Instant?) : Issue
 
-    /** 하위로 나가지 않았다([CommandNotSent]). 같은 기체의 다른 출발이 보내는 중이어서 걸지 못한 것도 이것이다. */
-    data class NotSent(val reason: String) : Issue
+    /**
+     * 하위로 나가지 않았다([CommandNotSent]). 같은 기체의 다른 출발이 보내는 중이어서 걸지 못한 것도 이것이다.
+     *
+     * [refusal] 이 있으면 **수신자가 답한 세대 거절**을 미들웨어가 접은 것이다(ADR 54) — 수신자는 벤더도 장부도 건드리지 않았으므로 뜻은
+     * «보내지 않음» 과 같지만 자취는 그 거절(요청 세대·바닥값·받은 시각)을 남긴다.
+     */
+    data class NotSent(val reason: String, val refusal: ControllerRefusal? = null) : Issue
 
     /** 나갔는지 모른다 — 보낸 뒤 답을 못 받았다. */
     data class InDoubt(val failure: RuntimeException, val sentAt: Instant?) : Issue
@@ -178,7 +211,11 @@ sealed interface CancelIssue {
  * 나갔는지 모르면 던지지 않는다. 요청을 보낸 뒤 답을 못 받은 실패를 이것으로 접으면 같은 명령이 두 번 나가 물리 작업이 둘이 될 수 있다.
  * 그래서 gRPC `UNAVAILABLE` 이라는 것만으로는 이것이 아니다 — 연결이 요청을 보낸 뒤 끊겨도 같은 코드가 온다.
  */
-class CommandNotSent(message: String) : RuntimeException(message)
+class CommandNotSent(
+    message: String,
+    /** 수신자가 답한 세대 거절을 «보내지 않음» 으로 접은 것이면 그 사실(ADR 54). 미들웨어가 자취에서 둘을 가른다. */
+    val refusal: ControllerRefusal? = null,
+) : RuntimeException(message)
 
 // ── 하류(플릿) 포트 — D 수준 위임. 프로젝트용 계약이다.
 

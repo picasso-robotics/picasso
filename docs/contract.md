@@ -58,7 +58,7 @@
 | 순서 — 소비자 | 뒤섞여 와도 접은 최종 상태가 정상 순서와 같다 | `client` · `EventConsumerTest` · `재정렬 뒤 최종 상태가 정상 순서와 같다` |
 | 번호 연속 | 스냅샷이 말하는 번호가 다음에 올 이벤트 번호다 | `mimic` · `EventServiceTest` · `스냅샷의 sequence가 다음에 올 번호다` |
 | 잃은 것은 잃었다고 | 재생 버퍼를 벗어난 요청은 조용히 비지 않는다 | `adapter-host` · `AdapterHostTest` · `재생 버퍼를 벗어나면 SEQUENCE_EVICTED 다` |
-| 거부 어휘 | 어댑터와 벤더의 거부가 계약의 코드 열넷 중 하나로 옮겨진다 | `adapter-host` · `AdapterHostTest` · `어댑터의 거절이 계약의 코드로 옮겨진다 — 모르는 이름은 PARAMETER_INVALID, 표면 부재는 CAPABILITY_WITHDRAWN` |
+| 거부 어휘 | 어댑터와 벤더의 거부가 계약의 코드 열다섯 중 하나로 옮겨진다 | `adapter-host` · `AdapterHostTest` · `어댑터의 거절이 계약의 코드로 옮겨진다 — 모르는 이름은 PARAMETER_INVALID, 표면 부재는 CAPABILITY_WITHDRAWN` |
 | 선언 밖은 안 통과 | 프로파일이 허용하지 않은 값은 거절된다 | `harness` · `CapabilityDifferenceTest` · `허용 값 밖의 ENUM은 거절된다` |
 | 개정 순서 | 낮은 `revision` 은 `OUTDATED_REVISION` 이다 | `mimic` · `TaskRpcTest` · `핸들의 revision이 낮으면 OUTDATED_REVISION이다` |
 | 식별 정보의 권위 | 헤더가 권위이고 페이로드의 `robot_id` 는 복사본이다 | `mimic` · `GetCapabilitiesTest` · `헤더가 권위이고 페이로드의 robot_id는 복사본이다` |
@@ -69,6 +69,9 @@
 | 기종 불변 | 같은 `robot_id` 뒤에 다른 기종을 놓아도 오간 요청이 바이트 동일하다 | `harness` · `A1Test` · `같은 robot_id 뒤에 다른 기종을 놓아도 오간 요청이 바이트 동일하다` |
 | 사전 조건 | 프로파일이 선언한 조건을 요청 시점의 파지 관측이 안 만족하면 **사우스바운드 호출 전에** `PRECONDITION_UNMET` 으로 거절한다. 관측 불가는 통과가 아니다 | `adapter-host` · `AdapterHostTest` · `쥔 채로 온 요청은 adapter accept 를 부르지 않는다` · `adapter-host` · `AdapterHostTest` · `관측 불가는 조건이 있는 스킬만 막는다` |
 | 사전 조건 — 발신자 둘 | 미믹이든 실제 하드웨어 어댑터든 같은 코드·사유·조건 참조로 거절한다 | `harness` · `HostParityTest` · `쥔 채로 보낸 요청을 둘 다 같은 말로 거절한다` |
+| 제어자 세대 — 수신자 둘 | 대조하는 수신자(`FENCED`)는 바닥값보다 낮은 세대와 세대 0 의 명령 다섯을 `STALE_CONTROLLER` 로 거절하고 벤더·장부를 건드리지 않는다. 미믹이든 실제 하드웨어 어댑터든 같다(ADR 54, 계약 0.12.0) | `harness` · `ControllerFenceParityTest` · `낮은 세대의 명령 다섯은 둘 다 STALE_CONTROLLER 이고 벤더도 장부도 그대로다` · `harness` · `ControllerFenceParityTest` · `세대를 싣지 않은 명령은 대조하는 수신자가 거절한다 — 바닥값이 0 이어도` |
+| 제어자 세대 — 읽기 | 세대로 읽기를 거절하지 않고, 응답 머리말에 그 기체의 바닥값을 싣는다. 대조하지 않는 수신자는 0 을 싣는다 | `harness` · `ControllerFenceParityTest` · `낮은 세대의 읽기와 새 구독은 통과하고 바닥값을 싣는다 — 다른 읽기는 올리지 않고 스냅샷은 올린다` · `harness` · `ControllerFenceParityTest` · `대조하지 않는 수신자는 오늘 거동 그대로이고 바닥값 0 을 답한다` |
+| 인수 확인 | `adapter-host` 의 인수 확인 응답 뒤로는 낮은 세대의 명령이 벤더에 새로 닿지 않고, 앞서 닿은 것은 그 스냅샷에 있다(시험은 메모리 저장이라 답이 `VOLATILE` 이다). 영속 저장이면 정리가 끝난 확인이 `DURABLE_CONFIRMED`, 기한을 넘겼거나 결과를 모르는 변경 호출이 남으면 `DURABLE_PENDING` 이다 | `adapter-host` · `HostControllerFenceTest` · `벤더 호출 중인 옛 명령은 인수 확인이 장부 반영까지 기다리고 그 응답 뒤로는 옛 명령이 벤더에 새로 안 닿는다` · `adapter-host` · `HostControllerFenceTest` · `링크를 기다리던 옛 명령은 링크 잠금 안의 재대조가 막는다` · `adapter-host` · `HostControllerFenceTest` · `영속 저장이면 정리가 끝난 확인은 DURABLE_CONFIRMED 이고 기한을 넘기면 DURABLE_PENDING 이다` · `adapter-host` · `HostControllerFenceTest` · `결과를 모르는 조작은 그 태스크의 종착을 벤더 관측으로 읽을 때만 걷힌다` |
 
 본 인터페이스 계약의 궁극적 목표는 **기종을 변경하거나 대체하더라도 통신 회선 상의 메시지 포맷과 동작이 불변(Invariant)을 유지하는 것**입니다.
 
@@ -218,7 +221,7 @@
 | 순서 | 지금 코드 | 빈자리 |
 | :--- | :--- | :--- |
 | 1. 권한 획득 | 미들웨어에 잠금·리스·리더 선출이 없다. `instanceId`(`mw-` + 무작위 UUID)는 작업 응답 내보내기에만 실리고 하위로 안 나간다. 자원 소유 레지스터([`orchestration.md`](orchestration.md) §2)에 명령 발행 경로의 소유 인스턴스 행이 없다. | 지금 소유자를 정하는 장치. |
-| 2. 옛 경로 차단(수신자 쪽 세대 대조) | 헤더에 소유자·세대 칸이 없다. `client_id` 는 실리지만 두 수신자 모두 읽지 않는다. 라우팅은 계약 리비전과 `robot_id` 만 보고, 조작은 태스크 id 만 맞으면 누구의 요청이든 받는다. `capability_epoch` 는 케이퍼빌리티 에포크이지 소유 세대가 아니다. 벤더 쪽 리스는 한 기종에만 있다. | 수신자(`adapter-host`)가 세대를 대조하는 자리(벤더가 대조하지 않는 기종이 있으므로). |
+| 2. 옛 경로 차단(수신자 쪽 세대 대조) | (ADR 54, 계약 0.12.0) 헤더 `controller_epoch` 가 요청에는 발신 세대를, 응답에는 그 기체의 바닥값을 싣는다. 대조하는 수신자(`FENCED`)는 명령 다섯을 기체마다 대조해 낮은 세대·세대 0 을 `STALE_CONTROLLER` 로 거절하고, 새 소유자의 `GetSnapshot` 이 인수 확인이다(`fence_status`). `adapter-host` 는 벤더 호출 직전에 다시 대고 파일 저장(`FileFenceStore`)으로 재시작 뒤 바닥값을 보존한다. 기본은 대조하지 않는다(`UNFENCED`). `client_id` 는 여전히 두 수신자 모두 읽지 않는다. 벤더 매핑·보내기 전 기록·재시작 뒤 태스크 들이기(3~5행)는 이것으로 바뀌지 않는다. | 같은 세대의 만료 권위 차단, 세대의 인증, 한 기체를 수신자 하나로 집행하는 장치(한계 대장 «§15.330»). 기체마다 확인한 기체부터 발행을 여는 절차는 담는 쪽의 다음 단계다. |
 | 3. 보내기 전 의도 기록 | 하위 태스크 id 가 결정적이라 작업 지시만 있으면 다시 유도된다. 이것이 지금 의도 기록 노릇을 하는 유일한 것이다. 보내기 전 의도는 미들웨어 메모리에만 있고 `adapter-host` 에는 없다(벤더 호출 뒤에 장부 기록). | «벤더는 받았는데 기록 전에 죽음» 을 구분하는 보내기 전 의도 기록. |
 | 4. 벤더 매핑 영속 | `(task_id, revision)` 과 벤더 id 의 매핑이 어댑터 메모리에만 있다([`scenarios.md`](scenarios.md) §7 ⑤). | 그 매핑의 영속. |
 | 5. 재시작 뒤 진행 중 벤더 태스크 들이기 | `adapter-host` 재시작 뒤 펌프는 지금 태스크(`current`)만 어댑터에 묻는다. 벤더에서 아직 도는 태스크는 장부·스냅숏에 없고 배타 검사도 못 본다. 결함만 다시 관측된다. | 재시작 직후 벤더의 «지금 도는 것» 을 장부로 들이는 단계. |
@@ -227,4 +230,4 @@
 
 이 절의 «미검증» 과 빈자리는 [`limits.md`](limits.md) 의 해당 행이 추적한다(§15.8, §15.21, §15.166, §15.221 · 기록이 들지 않는 것).
 
-> 마지막 대조: 2026-11-14 · sha256:ab1928060fad · 열림: ADR 32 · 시나리오 5, §15.126, §15.81, §15.8, C-3, §15.1, §15.21, §15.221 · 기록이 들지 않는 것
+> 마지막 대조: 2026-11-17 · sha256:2cb29ecf41eb · 열림: ADR 32 · 시나리오 5, §15.126, §15.81, §15.8, C-3, §15.1, §15.21, §15.221 · 기록이 들지 않는 것

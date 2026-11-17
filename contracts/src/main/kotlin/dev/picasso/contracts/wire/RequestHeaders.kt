@@ -53,8 +53,11 @@ object RequestHeaders {
      * 개정판 대조가 무의미해진다. 시험이 어긋난 값을 만들 때만
      * [buildWithContract]를 쓴다.
      */
-    fun build(schemaId: String, robotId: String, clientId: String): MessageHeader =
-        buildWithContract(schemaId, robotId, clientId, ContractIdentity.semver, ContractIdentity.digest)
+    /**
+     * @param controllerEpoch 발신자의 제어자 세대(0.12.0, ADR 54). 기본 0 은 «싣지 않음» 이다 — 대조하는 수신자는 그 명령을 거절한다.
+     */
+    fun build(schemaId: String, robotId: String, clientId: String, controllerEpoch: Long = 0): MessageHeader =
+        buildWithContract(schemaId, robotId, clientId, ContractIdentity.semver, ContractIdentity.digest, controllerEpoch)
 
     /** 시험 전용 — 계약 개정판을 일부러 어긋나게 만들 때. */
     fun buildWithContract(
@@ -63,12 +66,14 @@ object RequestHeaders {
         clientId: String,
         semver: String,
         digest: String,
+        controllerEpoch: Long = 0,
     ): MessageHeader = MessageHeader.newBuilder()
         .setSchemaId(schemaId)
         .setContractDigest(digest)
         .setContractSemver(semver)
         .setRobotId(robotId)
         .setClientId(clientId)
+        .setControllerEpoch(controllerEpoch)
         .build()
 
     fun compatibility(header: MessageHeader): ContractCompatibility {

@@ -39,6 +39,8 @@ import dev.picasso.contracts.v1.WatchTaskRequest
 import dev.picasso.contracts.v1.WatchTaskResponse
 import dev.picasso.capability.Negotiation
 import dev.picasso.capability.Negotiator
+import dev.picasso.contracts.wire.ControllerFence
+import dev.picasso.contracts.wire.FencedCall
 import dev.picasso.contracts.wire.RequestHeaders
 import dev.picasso.uplink.report.HandshakeReport
 import dev.picasso.uplink.report.HandshakeReporter
@@ -73,10 +75,42 @@ internal inline fun <T> reply(observer: StreamObserver<T>, block: () -> T) {
  * 적고 열린 스트림에 민다. 명령(`read` 가 거짓인 것)은 언제나 펌프를 먼저 지난다 — 끝난 태스크를 아직 안 읽은 채 새 접수를
  * «도는 태스크가 있다» 로 거절하지 않으려고.
  */
-internal class Routing(private val robots: Map<String, HostedRobot>, private val pumpOnRead: Boolean = true) {
+internal class Routing(
+    private val robots: Map<String, HostedRobot>,
+    private val pumpOnRead: Boolean = true,
+    /** 제어자 세대 대조(ADR 54). 기본은 대조하지 않는다 — 오늘 거동. */
+    val fence: ControllerFence = ControllerFence(),
+) {
 
     /** 기체 하나짜리 배치 — 시험과 직결 어댑터가 쓴다. */
     constructor(robot: HostedRobot) : this(mapOf(robot.robotId to robot))
+
+    init {
+        // 응답 머리말의 바닥값을 이 대조에서 읽게 단다. 기동 뒤에 들어온 기체는 [AdapterHost.admit] 이 단다.
+        robots.values.forEach { r -> r.floor = { fence.floor(r.robotId) } }
+    }
+
+    /**
+     * 명령 하나를 세대로 맞대고([ControllerFence.command]) 통과하면 [block] 을 돈다 — [block] 에는 벤더 호출 직전에 다시 댈 판정이 간다.
+     * 거부면 [stale] 이 답을 짓는다. 통과 표지는 [block] 이 끝나면(장부에 적은 뒤) 닫는다 — 인수 확인이 그것을 기다린다.
+     * 바닥값을 저장하지 못하면 `FAILED_PRECONDITION` 이다 — 차단 쪽이다.
+     */
+    fun <T> fenced(robot: HostedRobot, header: MessageHeader, call: FencedCall, stale: (Rejection) -> T, block: (() -> Boolean) -> T): T {
+        val epoch = header.controllerEpoch
+        val admission = try {
+            fence.command(robot.robotId, epoch, call)
+        } catch (e: Exception) {
+            throw Status.FAILED_PRECONDITION.withDescription("제어자 세대 바닥값을 저장하지 못했다: ${e.message}").withCause(e).asRuntimeException()
+        }
+        return when (admission) {
+            is ControllerFence.Admission.Stale -> stale(admission.rejection())
+            is ControllerFence.Admission.Admitted -> admission.use { block { fence.current(robot.robotId, epoch) } }
+        }
+    }
+
+    /** 벤더 호출 직전의 재대조에 걸린 명령의 답. 그때의 바닥값을 싣는다. */
+    fun superseded(robot: HostedRobot, header: MessageHeader): Rejection =
+        ControllerFence.Admission.Stale(header.controllerEpoch, fence.floor(robot.robotId)).rejection()
 
     /** @param read 링크를 안 쓰고 기록만 읽는 RPC 인가. */
     fun enter(header: MessageHeader, read: Boolean = false): HostedRobot {
@@ -98,11 +132,15 @@ internal class Routing(private val robots: Map<String, HostedRobot>, private val
 
 // ── TaskService (§4.4)
 
-internal class HostTaskService(robots: Map<String, HostedRobot>, pumpOnRead: Boolean = true) : TaskServiceGrpc.TaskServiceImplBase() {
+internal class HostTaskService(
+    robots: Map<String, HostedRobot>,
+    pumpOnRead: Boolean = true,
+    fence: ControllerFence = ControllerFence(),
+) : TaskServiceGrpc.TaskServiceImplBase() {
 
-    constructor(robot: HostedRobot) : this(mapOf(robot.robotId to robot))
+    constructor(robot: HostedRobot, fence: ControllerFence = ControllerFence()) : this(mapOf(robot.robotId to robot), fence = fence)
 
-    private val routing = Routing(robots, pumpOnRead)
+    private val routing = Routing(robots, pumpOnRead, fence)
 
     private class Watcher(val observer: StreamObserver<WatchTaskResponse>, var nextIndex: Long) {
         /** 소비자가 스트림을 **취소했는가**. 취소된 쪽은 표에서 빠지기 전이라도 밀지 않는다. */
@@ -149,16 +187,22 @@ internal class HostTaskService(robots: Map<String, HostedRobot>, pumpOnRead: Boo
     override fun startTask(request: StartTaskRequest, observer: StreamObserver<StartTaskResponse>) = reply(observer) {
         // 호스트 잠금 없이 들어온다(§15.269) — 기록을 읽는 자리는 [HostedRobot.recorded] 로 감싼다.
         val robot = routing.enter(request.header)
-        val builder = StartTaskResponse.newBuilder().setHeader(robot.recorded { robot.header(StartTaskResponse.getDescriptor()) })
-        identity(request.header, request.robotId)?.let { return@reply builder.setRejection(it).build() }
-
-        when (val outcome = robot.start(request.taskId, request.revision, request.skillType, parametersOf(request.parametersList))) {
-            is HostedRobot.StartOutcome.Accepted -> builder.setHandle(robot.recorded { handleOf(robot, outcome.task) })
-            is HostedRobot.StartOutcome.Idempotent -> builder.setHandle(robot.recorded { handleOf(robot, outcome.task) })
-            is HostedRobot.StartOutcome.Rejected -> builder.setRejection(rejection(outcome.code, outcome.detail, outcome.references))
-            is HostedRobot.StartOutcome.Unavailable -> throw outcome.status.asRuntimeException()
+        val builder = StartTaskResponse.newBuilder()
+        identity(request.header, request.robotId)?.let {
+            return@reply builder.setHeader(robot.recorded { robot.header(StartTaskResponse.getDescriptor()) }).setRejection(it).build()
         }
-        builder.build()
+
+        // 세대 대조는 라우팅·계약·식별 정보 대조 뒤다(ADR 54). 머리말은 대조 뒤에 짓는다 — 올린 바닥값을 싣는다.
+        routing.fenced(robot, request.header, FencedCall.START, { builder.setRejection(it) }) { fenced ->
+            when (val outcome = robot.start(request.taskId, request.revision, request.skillType, parametersOf(request.parametersList), fenced)) {
+                is HostedRobot.StartOutcome.Accepted -> builder.setHandle(robot.recorded { handleOf(robot, outcome.task) })
+                is HostedRobot.StartOutcome.Idempotent -> builder.setHandle(robot.recorded { handleOf(robot, outcome.task) })
+                is HostedRobot.StartOutcome.Rejected -> builder.setRejection(rejection(outcome.code, outcome.detail, outcome.references))
+                is HostedRobot.StartOutcome.Unavailable -> throw outcome.status.asRuntimeException()
+                HostedRobot.StartOutcome.Superseded -> builder.setRejection(routing.superseded(robot, request.header))
+            }
+        }
+        builder.setHeader(robot.recorded { robot.header(StartTaskResponse.getDescriptor()) }).build()
     }
 
     /** 떠난 스트림 하나를 표에서 뺀다. 같은 태스크의 다른 스트림은 그대로 둔다. */
@@ -203,7 +247,7 @@ internal class HostTaskService(robots: Map<String, HostedRobot>, pumpOnRead: Boo
 
     override fun pauseTask(request: PauseTaskRequest, observer: StreamObserver<PauseTaskResponse>) = reply(observer) {
         val robot = routing.enter(request.header)
-        val (state, rejection) = manipulate(robot, request.handle, "pause") { robot.adapter.pause() }
+        val (state, rejection) = manipulate(robot, request.header, request.handle, FencedCall.PAUSE) { robot.adapter.pause() }
         PauseTaskResponse.newBuilder().setHeader(robot.recorded { robot.header(PauseTaskResponse.getDescriptor()) })
             .also { b -> state?.let(b::setState); rejection?.let(b::setRejection) }.build()
     }
@@ -211,21 +255,21 @@ internal class HostTaskService(robots: Map<String, HostedRobot>, pumpOnRead: Boo
     override fun resumeTask(request: ResumeTaskRequest, observer: StreamObserver<ResumeTaskResponse>) = reply(observer) {
         val robot = routing.enter(request.header)
         // **지금 파라미터로** 다시 시작한다 — 멈춘 동안 갱신이 왔으면 그것이다(§4.4).
-        val (state, rejection) = manipulate(robot, request.handle, "resume") { robot.adapter.resume(it) }
+        val (state, rejection) = manipulate(robot, request.header, request.handle, FencedCall.RESUME) { robot.adapter.resume(it) }
         ResumeTaskResponse.newBuilder().setHeader(robot.recorded { robot.header(ResumeTaskResponse.getDescriptor()) })
             .also { b -> state?.let(b::setState); rejection?.let(b::setRejection) }.build()
     }
 
     override fun cancelTask(request: CancelTaskRequest, observer: StreamObserver<CancelTaskResponse>) = reply(observer) {
         val robot = routing.enter(request.header)
-        val (state, rejection) = manipulate(robot, request.handle, "cancel") { robot.adapter.cancel() }
+        val (state, rejection) = manipulate(robot, request.header, request.handle, FencedCall.CANCEL) { robot.adapter.cancel() }
         CancelTaskResponse.newBuilder().setHeader(robot.recorded { robot.header(CancelTaskResponse.getDescriptor()) })
             .also { b -> state?.let(b::setState); rejection?.let(b::setRejection) }.build()
     }
 
     override fun retryTask(request: RetryTaskRequest, observer: StreamObserver<RetryTaskResponse>) = reply(observer) {
         val robot = routing.enter(request.header)
-        val (state, rejection) = manipulate(robot, request.handle, "retry") { robot.adapter.retry(it) }
+        val (state, rejection) = manipulate(robot, request.header, request.handle, FencedCall.RETRY) { robot.adapter.retry(it) }
         RetryTaskResponse.newBuilder().setHeader(robot.recorded { robot.header(RetryTaskResponse.getDescriptor()) })
             .also { b -> state?.let(b::setState); rejection?.let(b::setRejection) }.build()
     }
@@ -238,10 +282,25 @@ internal class HostTaskService(robots: Map<String, HostedRobot>, pumpOnRead: Boo
      */
     private fun manipulate(
         robot: HostedRobot,
+        header: MessageHeader,
+        handle: TaskHandle,
+        call: FencedCall,
+        send: (Map<String, Any>) -> Applied,
+    ): Pair<TaskState?, Rejection?> {
+        // 식별 정보 대조가 세대 대조보다 먼저다(ADR 54) — 헤더와 핸들의 기체가 다른 요청이 헤더 기체의 바닥값을 올리지 못하게. 미믹과 같다.
+        identity(header, handle.robotId)?.let { return null to it }
+        return routing.fenced(robot, header, call, { null to it }) { fenced -> manipulated(robot, header, handle, call.name.lowercase(), send, fenced) }
+    }
+
+    private fun manipulated(
+        robot: HostedRobot,
+        header: MessageHeader,
         handle: TaskHandle,
         what: String,
         send: (Map<String, Any>) -> Applied,
-    ): Pair<TaskState?, Rejection?> = when (val manipulated = robot.manipulate(handle.taskId, send)) {
+        fenced: () -> Boolean,
+    ): Pair<TaskState?, Rejection?> = when (val manipulated = robot.manipulate(handle.taskId, fenced, what, send)) {
+        HostedRobot.Manipulated.Superseded -> null to routing.superseded(robot, header)
         HostedRobot.Manipulated.Unknown ->
             throw Status.NOT_FOUND.withDescription("모르는 태스크다: ${handle.taskId}").asRuntimeException()
         is HostedRobot.Manipulated.Latched -> null to rejection(RejectionCode.REJECTION_CODE_INVALID_TRANSITION, manipulated.detail)
@@ -311,12 +370,13 @@ internal class HostSkillService(
      */
     private val reporter: HandshakeReporter = HandshakeReporter.NONE,
     pumpOnRead: Boolean = true,
+    fence: ControllerFence = ControllerFence(),
 ) : SkillServiceGrpc.SkillServiceImplBase() {
 
     constructor(robot: HostedRobot, reporter: HandshakeReporter = HandshakeReporter.NONE) :
         this(mapOf(robot.robotId to robot), reporter)
 
-    private val routing = Routing(robots, pumpOnRead)
+    private val routing = Routing(robots, pumpOnRead, fence)
 
     override fun getCapabilities(request: GetCapabilitiesRequest, observer: StreamObserver<GetCapabilitiesResponse>) = reply(observer) {
         val robot = routing.enter(request.header, read = true)
@@ -380,14 +440,39 @@ internal class HostSkillService(
 
 // ── EventService (§4.8)
 
-internal class HostEventService(robots: Map<String, HostedRobot>, pumpOnRead: Boolean = true) : EventServiceGrpc.EventServiceImplBase() {
+internal class HostEventService(
+    robots: Map<String, HostedRobot>,
+    pumpOnRead: Boolean = true,
+    fence: ControllerFence = ControllerFence(),
+    /** 인수 확인이 앞서 통과한 명령을 기다리는 한도(ADR 54). 넘기면 `DURABLE_PENDING` 이다. */
+    private val fenceWait: java.time.Duration = java.time.Duration.ofSeconds(5),
+) : EventServiceGrpc.EventServiceImplBase() {
 
-    constructor(robot: HostedRobot) : this(mapOf(robot.robotId to robot))
+    constructor(robot: HostedRobot, fence: ControllerFence = ControllerFence(), fenceWait: java.time.Duration = java.time.Duration.ofSeconds(5)) :
+        this(mapOf(robot.robotId to robot), fence = fence, fenceWait = fenceWait)
 
-    private val routing = Routing(robots, pumpOnRead)
+    private val routing = Routing(robots, pumpOnRead, fence)
 
+    /**
+     * 스냅샷. **호스트 잠금 밖에서 들어온다**([AdapterHost] 의 `RELEASED`) — 인수 확인이 앞서 통과한 명령을 기다리는 동안 그 명령이 장부에
+     * 적으려면 호스트 잠금이 있어야 한다. 그래서 기록을 읽는 자리는 [HostedRobot.recorded] 로 감싼다.
+     *
+     * **인수 확인**(ADR 54) — 요청 세대가 그 기체의 바닥값 이상이고 대조하는 배치면, 바닥값을 저장한 뒤 올려 낮은 세대의 새 진입을 막고,
+     * 그보다 낮은 세대로 이미 통과한 명령(조작 대기 포함)이 장부 반영까지 끝나기를 기다린 뒤 스냅샷을 짓는다. 답은 `fence_status` 다 —
+     * 메모리 저장이면 `VOLATILE`, 기한을 넘겼거나 나갔는지 모르는 접수가 남았으면 `DURABLE_PENDING`, 아니면 `DURABLE_CONFIRMED`.
+     * 저장하지 못하면 RPC 가 실패한다(`FAILED_PRECONDITION`).
+     */
     override fun getSnapshot(request: GetSnapshotRequest, observer: StreamObserver<GetSnapshotResponse>) = reply(observer) {
         val robot = routing.enter(request.header, read = true)
+        val confirmation = try {
+            routing.fence.confirm(robot.robotId, request.header.controllerEpoch, fenceWait)
+        } catch (e: Exception) {
+            throw Status.FAILED_PRECONDITION.withDescription("제어자 세대 바닥값을 저장하지 못했다: ${e.message}").withCause(e).asRuntimeException()
+        }
+        robot.recorded { snapshotOf(robot, confirmation) }
+    }
+
+    private fun snapshotOf(robot: HostedRobot, confirmation: dev.picasso.contracts.wire.FenceConfirmation?): GetSnapshotResponse {
         val builder = GetSnapshotResponse.newBuilder()
             .setHeader(robot.header(GetSnapshotResponse.getDescriptor()))
             .setSequence(robot.sequence)
@@ -407,7 +492,8 @@ internal class HostEventService(robots: Map<String, HostedRobot>, pumpOnRead: Bo
         } else {
             builder.setFaultObservability(FaultObservability.FAULT_OBSERVABILITY_NOT_OBSERVABLE)
         }
-        builder.build()
+        confirmation?.let { builder.setFenceStatus(it.status(routing.fence.durability, robot.inDoubtPending)) }
+        return builder.build()
     }
 
     override fun replayEvents(request: ReplayEventsRequest, observer: StreamObserver<ReplayEventsResponse>) {

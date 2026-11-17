@@ -53,6 +53,8 @@ class Harness(
      */
     reporter: dev.picasso.uplink.report.HandshakeReporter =
         dev.picasso.uplink.report.HandshakeReporter.NONE,
+    /** 제어자 세대 대조(ADR 54). **기본은 대조하지 않는다** — 오늘 거동. */
+    fence: dev.picasso.contracts.wire.ControllerFence = dev.picasso.contracts.wire.ControllerFence(),
 ) : AutoCloseable {
 
     val clock = VirtualClock(start)
@@ -78,6 +80,7 @@ class Harness(
             RobotInstance(id, source.load(path), clock, seed, outbound, site = "line-a")
         },
         registrySource,
+        fence,
     )
 
     private val name: String = InProcessServerBuilder.generateName()
@@ -110,8 +113,12 @@ class Harness(
         dev.picasso.contracts.v1.EventServiceGrpc.newBlockingStub(channel)
 
     /** [deadlineSeconds] 는 스트림에도 걸린다. 짧게 주면 기한으로 닫힌 스트림을 만들 수 있다. */
-    fun client(clientId: String = "line-controller", identityOverride: String? = null, deadlineSeconds: Long = 10) =
-        PicassoClient(channel, clientId, identityOverride, deadlineSeconds)
+    fun client(
+        clientId: String = "line-controller",
+        identityOverride: String? = null,
+        deadlineSeconds: Long = 10,
+        controllerEpoch: () -> Long = { 0L },
+    ) = PicassoClient(channel, clientId, identityOverride, deadlineSeconds, controllerEpoch)
 
     /** 시간을 흘리고 그것이 만든 전이를 열린 스트림까지 민다. */
     fun advance(duration: Duration) = server.advance(duration)

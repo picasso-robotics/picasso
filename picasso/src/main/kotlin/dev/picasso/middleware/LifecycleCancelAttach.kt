@@ -129,6 +129,8 @@ internal fun CommandLifecycle.heldCancelAnswered(unit: ExecutionUnit, stateName:
  */
 internal fun CommandLifecycle.holdUnreachedCancel(unit: ExecutionUnit): Boolean {
     with(env) {
+        // 세대 거절이 선 기체는 유예로 판단하지 않는다(ADR 54) — 밀려난 프로세스의 보류·인시던트는 뜻이 없다.
+        if (fenceHeld(execution.robotOf(unit))) return false
         val delivery = when (val d = cancelDelivery) {
             is CancelDelivery.Unsent -> d.takeIf { execution.cancelRequested && execution.linkBroken }
                 ?: run {
@@ -356,7 +358,7 @@ internal fun CommandLifecycle.waitUnattached(unit: ExecutionUnit, why: String): 
             // 보류에 묶였던 단위는 운영자가 판단했다 — 그래야 이 자리에 온다([cancelWaitsOnHeldDoubt]).
             is CancelWait.Held, CancelWait.None -> CancelWait.Attaching(now()).also { cancelWait = it }
         }
-        if (now().isBefore(waiting.since.plus(inDoubtGraceOf(execution)))) {
+        if (now().isBefore(waiting.since.plus(inDoubtGraceOf(execution))) || fenceHeld(execution.robotOf(unit))) {
             execution.physicalState = PhysicalState.CANCELING
             if (waiting.noted != why) {
                 cancelWait = waiting.copy(noted = why)

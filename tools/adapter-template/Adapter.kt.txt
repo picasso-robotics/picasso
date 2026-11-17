@@ -73,10 +73,11 @@ class <기종>Adapter(private val link: <기종>Link) : RobotAdapter {
     /** ADR 35 의 확인 질의 — **표를 어댑터가 갖지 않는다.** 로봇에게 묻는다. */
     override fun knownSiteNames(): SiteNames = TODO()
 
-    // ── 안 채워도 되는 일곱 ───────────────────────────────────────────────
+    // ── 안 채워도 되는 여덟 ───────────────────────────────────────────────
     //
     // ★ 기본값은 "없다" 이지 "된다" 가 아니다. 벤더에 그 프리미티브가 없으면 **그대로 둔다.**
     //   resume · update · retry · progress · failure · result · robotSoftware
+    //   그리고 pollObservesVendor — 폴링한 종착이 벤더에서 읽은 그 태스크의 것일 때만 참, 지역 상태면 그대로 거짓(ADR 54)
     //
     // progress 를 억지로 채우지 말 것 — 진행률은 지어낼 수 있는 유일한 값이라
     // 국면을 분수로 바꾸고 싶어지는데, 그 순간 상류가 보는 숫자에 근거가 없어진다.

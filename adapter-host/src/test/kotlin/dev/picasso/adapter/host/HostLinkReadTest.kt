@@ -218,6 +218,7 @@ class HostLinkReadTest {
         override fun result(): String? = seen("result", null)
         override fun knownSiteNames(): SiteNames = seen("knownSiteNames", SiteNames.Unsupported)
         override fun robotSoftware(): String? = seen("robotSoftware", null)
+        override val pollObservesVendor: Boolean get() = seen("getPollObservesVendor", false)
     }
 
     @Test
@@ -229,7 +230,7 @@ class HostLinkReadTest {
         val at = Instant.EPOCH
         a.state; a.accept("T", "pick_place", emptyMap(), at); a.poll(at); a.pause(); a.resume(emptyMap()); a.cancel()
         a.update("T", "pick_place", emptyMap(), at); a.retry(emptyMap()); a.hold(); a.progress(); a.faults(); a.failure()
-        a.result(); a.knownSiteNames(); a.robotSoftware()
+        a.result(); a.knownSiteNames(); a.robotSoftware(); a.pollObservesVendor
 
         // 포트에 멤버가 늘면 여기도 는다 — 껍질이 그것을 넘기지 않으면 아래 대조가 잡는다.
         val members = RobotAdapter::class.java.declaredMethods.filterNot { it.isSynthetic }

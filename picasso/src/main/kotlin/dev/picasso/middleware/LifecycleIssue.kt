@@ -70,6 +70,8 @@ internal fun CommandLifecycle.startUnit(unit: ExecutionUnit) {
             restoredUsed = execution.restoredRequests[unit.unitId]?.first == unit.attempt,
         )
         unit.taskId = taskIdOf(unit)
+        // 새 시도다 — 앞 시도의 조회가 받은 세대 거절 사유를 이 시도의 보류 사유로 쓰지 않는다(ADR 54).
+        forgetRefusedLookup(unit)
         // 재기동 뒤 다시 세운 시도는 앞 인스턴스가 다른 리비전으로 보냈을 수 있다 — 모르는 것으로 둔다.
         unit.startedRevision = unit.revision.takeIf { execution.inherited[unit.unitId] != unit.attempt }
         unit.requestedAt = requestedAtOf(unit)
@@ -89,7 +91,9 @@ internal fun CommandLifecycle.startUnit(unit: ExecutionUnit) {
  *
  * @return 단위가 이 라운드에 종료(운영자 보류 포함)했는가 — 미확정 조회([resolveDoubt])만 쓴다.
  */
-internal fun CommandLifecycle.settleIssue(flight: InFlight, issue: Issue): Boolean {
+internal fun CommandLifecycle.settleIssue(flight: InFlight, answered: Issue): Boolean {
+    // 세대 거절은 출발·개정 갱신·미확정 조회 셋 모두 여기서 «보내지 않음» 으로 바꾼다(ADR 54) — 일반 실패 처리보다 먼저다.
+    val issue = fenced(flight.robot, flight.unitId, answered)
     with(env) {
         if (issue is Issue.Pending) {
             inFlight = flight
@@ -122,7 +126,7 @@ private fun CommandLifecycle.settleStart(unit: ExecutionUnit, flight: InFlight, 
             Issue.Pending -> Unit
             is Issue.NotSent -> {
                 deferredUpdate = null
-                startNotSent(unit, restore)
+                startNotSent(unit, restore, issue.refusal)
             }
             is Issue.InDoubt -> {
                 if (!restore.restoredUsed) issue.sentAt?.let { unit.requestedAt = it }
@@ -215,14 +219,15 @@ private fun CommandLifecycle.settleFleetStart(unit: ExecutionUnit, restore: Star
  * **보내지 않았다**(§15.237) — 포트가 하위로 보내지 않은 것을 안다. 미확정이 아니다. 단위는 `PENDING` 그대로 두고 도는 단위를
  * 비운다. 다음 라운드가 결함·허가 게이트를 다시 지나 처음부터 낸다 — 요청 시각도 그때 다시 찍혀 실제로 보낸 시각이 된다.
  */
-private fun CommandLifecycle.startNotSent(unit: ExecutionUnit, restore: StartRestore) {
+private fun CommandLifecycle.startNotSent(unit: ExecutionUnit, restore: StartRestore, refusal: ControllerRefusal? = null) {
     with(env) {
         execution.active = null
         unit.taskId = restore.taskId
         unit.requestedAt = restore.requestedAt
         restore.restored?.let { execution.restoredRequests[unit.unitId] = it }
         restore.unattached?.let { execution.unattached[unit.unitId] = it }
-        unit.annotateOnce(START_NOT_SENT)
+        // 수신자가 세대로 답한 것은 «보내지 않음» 과 갈라 적는다(ADR 54) — 자취에는 그 거절이 실려 있다([fenced]).
+        unit.annotateOnce(if (refusal != null) MiddlewareCodes.FENCE_REFUSED else START_NOT_SENT)
     }
 }
 

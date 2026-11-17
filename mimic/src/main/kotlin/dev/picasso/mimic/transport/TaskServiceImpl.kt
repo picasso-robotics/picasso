@@ -21,6 +21,8 @@ import dev.picasso.contracts.v1.TaskHandle
 import dev.picasso.contracts.v1.TaskServiceGrpc
 import dev.picasso.contracts.v1.WatchTaskRequest
 import dev.picasso.contracts.v1.WatchTaskResponse
+import dev.picasso.contracts.wire.ControllerFence
+import dev.picasso.contracts.wire.FencedCall
 import dev.picasso.mimic.engine.StartOutcome
 import dev.picasso.mimic.engine.toProto
 import dev.picasso.mimic.engine.TaskCommand
@@ -72,6 +74,15 @@ class TaskServiceImpl(
                 .setHeader(header(hosted, StartTaskResponse.getDescriptor()))
                 .setRejection(rejection).build()
         }
+        // 세대 대조는 라우팅·계약·식별 정보 대조 뒤다(ADR 54). 거부면 엔진도 장부도 건드리지 않는다.
+        val admission = when (val a = registry.fenced { registry.fence.command(hosted.instance.robotId, request.header.controllerEpoch, FencedCall.START) }) {
+            is ControllerFence.Admission.Stale -> return@reply StartTaskResponse.newBuilder()
+                .setHeader(header(hosted, StartTaskResponse.getDescriptor()))
+                .setRejection(a.rejection()).build()
+            is ControllerFence.Admission.Admitted -> a
+        }
+        // 미믹은 잠금 하나로 줄 세우므로 이 RPC 안에서 처리가 끝난다 — 통과 표지는 여기서 닫는다.
+        admission.close()
 
         val before = hosted.instance.tasks.find(request.taskId)?.log?.size
         val outcome = hosted.instance.tasks.start(
@@ -276,6 +287,12 @@ class TaskServiceImpl(
         val hosted = enter(header)
 
         identity(header, handle.robotId)?.let { return hosted to CommandResult(null, it) }
+
+        // 세대 대조(ADR 54) — 식별 정보 대조 뒤, 태스크를 찾기 전이다. 거부면 엔진을 건드리지 않는다.
+        when (val a = registry.fenced { registry.fence.command(hosted.instance.robotId, header.controllerEpoch, FencedCall.valueOf(command.name)) }) {
+            is ControllerFence.Admission.Stale -> return hosted to CommandResult(null, a.rejection())
+            is ControllerFence.Admission.Admitted -> a.close()
+        }
 
         val task = hosted.instance.tasks.find(handle.taskId)
             ?: throw Status.NOT_FOUND

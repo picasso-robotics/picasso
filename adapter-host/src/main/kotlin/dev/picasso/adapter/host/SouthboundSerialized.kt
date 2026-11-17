@@ -57,4 +57,6 @@ internal class SouthboundSerialized(private val delegate: RobotAdapter, private 
     override fun knownSiteNames(): SiteNames = link { delegate.knownSiteNames() }
 
     override fun robotSoftware(): String? = link { delegate.robotSoftware() }
+
+    override val pollObservesVendor: Boolean get() = link { delegate.pollObservesVendor }
 }

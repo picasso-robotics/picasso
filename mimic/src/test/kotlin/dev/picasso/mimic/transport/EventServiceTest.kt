@@ -120,7 +120,7 @@ class EventServiceTest {
     @Test
     fun `응답 헤더가 §5-5를 따른다`() {
         val header = snapshot().header
-        HeaderColumns.RESPONSE.forEach { assertTrue(HeaderColumns.isSet(header, it), "$it") }
+        (HeaderColumns.RESPONSE - HeaderColumns.ZERO_IS_VALUE).forEach { assertTrue(HeaderColumns.isSet(header, it), "$it") }
         (HeaderColumns.ALL - HeaderColumns.RESPONSE).forEach {
             assertFalse(HeaderColumns.isSet(header, it), "$it 를 응답에 실었다")
         }
