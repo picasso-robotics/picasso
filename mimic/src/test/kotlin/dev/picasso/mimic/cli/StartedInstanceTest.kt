@@ -1,6 +1,10 @@
 package dev.picasso.mimic.cli
 
+import dev.picasso.contracts.v1.EventServiceGrpc
 import dev.picasso.contracts.v1.GetKnownSiteNamesRequest
+import dev.picasso.contracts.v1.GetSnapshotRequest
+import dev.picasso.contracts.wire.ControllerFence
+import dev.picasso.contracts.wire.FenceMode
 import dev.picasso.contracts.v1.SkillServiceGrpc
 import dev.picasso.contracts.wire.RequestHeaders
 import io.grpc.ManagedChannelBuilder
@@ -44,6 +48,31 @@ class StartedInstanceTest {
             assertNull(started.instance("ghost"))
         } finally {
             cli.started?.server?.shutdown()
+        }
+    }
+
+    @Test
+    fun `CLI 로 띄운 미믹에 대조를 넘기면 그 대조로 바닥값을 올리고 응답에 싣는다`() {
+        val started = checkNotNull(
+            MimicCli().start(
+                mapOf("r1" to Path.of(minimal)), Path.of(schema), 0, virtual = true, seed = 1, err = StringBuilder(),
+                fence = ControllerFence(FenceMode.FENCED),
+            ),
+        )
+        try {
+            val channel = ManagedChannelBuilder.forAddress("127.0.0.1", started.server.port).usePlaintext().build()
+            try {
+                val answer = EventServiceGrpc.newBlockingStub(channel).getSnapshot(
+                    GetSnapshotRequest.newBuilder()
+                        .setHeader(RequestHeaders.build("picasso.v1.GetSnapshotRequest", "r1", "c1", controllerEpoch = 5))
+                        .build(),
+                )
+                assertEquals(5, answer.header.controllerEpoch)
+            } finally {
+                channel.shutdownNow()
+            }
+        } finally {
+            started.server.shutdown()
         }
     }
 }
