@@ -171,6 +171,11 @@ class MimicCli {
          */
         broker: String? = null,
         site: String = "default",
+        /**
+         * 제어자 세대 대조(ADR 54). **기본은 대조하지 않는다** — 오늘 거동. 담는 쪽(현장·시험)이 대조를 켜고 저장을 고를 자리다 —
+         * 이 자리가 없으면 CLI 로 띄운 미믹은 언제나 `UNFENCED` 다.
+         */
+        fence: dev.picasso.contracts.wire.ControllerFence = dev.picasso.contracts.wire.ControllerFence(),
     ): Started? {
         val source = FileProfileSource(schema)
         val clock: Clock = if (virtual) VirtualClock(Instant.EPOCH) else RealClock()
@@ -226,7 +231,7 @@ class MimicCli {
 
         return Started(
             MimicServer(
-                RobotRegistry(instances),
+                RobotRegistry(instances, fence = fence),
                 ServerBuilder.forPort(port),
                 link.reporter,
             ).start(),
