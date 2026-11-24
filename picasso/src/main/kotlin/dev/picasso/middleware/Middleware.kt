@@ -300,7 +300,7 @@ class Middleware(
             Admission.Passed -> Unit
         }
 
-        return Submission.Accepted(create(order, robotId, active, planned, approvedBy))
+        return Submission.Accepted(create(order, robotId, active, planned))
     }
 
     /** 실행 하나를 세워 표에 넣는다. [submit] 과 [resume] 이 함께 쓴다. 판정은 부르는 쪽이 이미 끝냈다. */
@@ -309,7 +309,6 @@ class Middleware(
         robotId: String,
         active: ActiveMission,
         planned: List<ExecutionUnit>,
-        approvedBy: Approver?,
     ): Execution {
         val execution = Execution(
             executionId = "exec-${++executionSeq}",
@@ -322,7 +321,6 @@ class Middleware(
             commandOf = { CommandLifecycle(env, it) },
         )
         execution.units.forEach { it.revision = order.version }
-        execution.approvedBy = approvedBy
         // 고른 갈래를 한 줄로 남긴다(§15.328) — 판단 기록에는 싣지 않는다. 같은 작업 지시 리비전과 임무 버전으로 다시 계획하면 같다.
         choiceTrail(active.capability.choices(order), order, active.missionVersion)?.let { execution.trail(MiddlewareCodes.BRANCH_CHOSEN, it) }
         execution.physicalState = PhysicalState.ACCEPTED
@@ -422,7 +420,7 @@ class Middleware(
         staleVersionRefusal(order, snapshots)?.let { return Submission.Rejected(it) }
         evidenceRefusal(order, mission.capability)?.let { return it }
 
-        val execution = create(order, robotId, mission, planned, approvedBy = null)
+        val execution = create(order, robotId, mission, planned)
         env.rebuildFrom(execution, snapshots)
         // 회복의 몫(소모 대상·거부 주어)은 옮긴 직후 바로잡는다 — 다시 연 인시던트의 봉인과 첫 pump 보다 앞이다(§15.320). 재작업의 몫(재작업 시도는 앞선 단위가 아님·앞 시도의 태스크 표시)도 같은 자리다(§15.323).
         val reopenedAt = record?.let { r -> env.restore(execution, r, desk).also { desk.restoreRecovery(execution, r); rework.restored(execution, r) } }

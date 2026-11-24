@@ -151,7 +151,6 @@ internal class HoldRecovery(
         incidentLog.noteResolution(execution.executionId, unit.unitId, IncidentDecision.REMEDY_APPLIED, go.approver)
         val consumed = desk.settle(go, execution.executionId)
         execution.approval = RecordedApproval(go.robotId, consumed.approver, consumed.at, consumed.wallClockAt, consumed.steps, position = target)
-        execution.approvedBy = go.approver
         with(env) {
             execution.trail(
                 REMEDY_APPLIED,

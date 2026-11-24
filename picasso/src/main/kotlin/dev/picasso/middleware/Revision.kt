@@ -170,7 +170,6 @@ internal fun CommandEnv.revise(
         val at = units.indexOfFirst { it.unitId in replans }.takeIf { it >= 0 } ?: units.size
         prefix.forEach { it.revision = order.version }
         units.addAll(at, prefix)
-        execution.approvedBy = approvedBy
     }
     execution.mutableUnits.clear()
     execution.mutableUnits.addAll(units)

@@ -75,7 +75,7 @@
 | 한 번만 알림(R2) | `clockSkewNoted` | 컬렉션 | `Middleware`: Execution.noteClockSkew | — |
 | 한 번만 알림(R2) | `signalSeen` | 컬렉션 | `UnitDrivers`: pumpSignalUnit | `UnitDrivers`: pumpSignalUnit |
 | 한 번만 알림(R2) | `seenLate` | 컬렉션 | `Middleware`: noteLate | — |
-| 기록·통보 | `approvedBy` | `var` | `Middleware`: create; `Resume`: restore; `Revision`: revise | `IncidentLog`: sealIncidents |
+| 기록·통보 | `approvedBy` | 확장 속성(§15.331 부터 `approval?.approver` 를 읽음, 그 전 `var`) | `Resume`: restore(세터는 `approval` 의 승인자와 같은지만 확인; 그 전에는 `Middleware`: create, `Revision`: revise 도 적음) | `IncidentLog`: sealIncidents |
 | 기록·통보 | `approval` | `var` | `Middleware`: commit; `Resume`: restore | `Middleware`: commit, judgmentRecord; `Revision`: revise |
 | 기록·통보 | `decisions` | 컬렉션 | `EvidenceBinding`: resolveSkipped; `Middleware`: resolve; `Resume`: restore | `Middleware`: judgmentRecord |
 | 기록·통보 | `eventTrail` | 컬렉션 | `Middleware`: Execution.trail, record | `IncidentLog`: sealIncidents |

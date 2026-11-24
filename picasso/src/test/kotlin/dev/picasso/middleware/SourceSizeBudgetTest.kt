@@ -117,6 +117,8 @@ class SourceSizeBudgetTest {
         // 그 밖의 파일 최대 291(Ports.kt), 실행의 가변 필드 32, pumpRound 179줄.
         // 2026-11-15 툼스톤 넘침 선언(§15.324) 실측: Middleware.kt 689, 합 1,627. 놓은 작업 지시 표시의 표·자료형·이빅션 반복·접수 거부를 제 클래스
         // ForgottenOrders.kt(49, 그 밖의 파일 예산)로 옮겨 찬 표 거부·놓는 입구·상태 읽기의 위임 줄 자리를 냈다. 상한은 그대로 둔다.
+        // 2026-11-24 §15.298 닫음 실측: 실행의 가변 필드 12. approvedBy 를 approval 의 승인자에서 읽는 계산 속성으로 바꿨다(§15.331) —
+        // 두 필드가 늘 같은 값을 들었다. 재설계 완료 기준(약 12)에 닿아 한계 행을 닫는다.
         // 2026-11-13 의존 정비 S4c 실측: Middleware.kt 696, 합 1,670(그대로), Middleware 의 internal 멤버 0(§15.313). 창구 절차도 좁은 환경의 확장이
         // 되어 internal 로 열 까닭이 없어졌다. 리비전을 받은 뒤의 알림은 호출 자리 셋에 한 줄씩 들였다.
         // 2026-11-13 의존 정비 S4b 실측: Middleware.kt 696, 합 1,670, Middleware 의 internal 멤버 9(§15.312). 기체 뷰·라운드 시간값·트레이스·설비 관측이
@@ -141,7 +143,7 @@ class SourceSizeBudgetTest {
         const val SEAM = 500
         const val TOTAL = 1_670
         const val OTHER = 600
-        const val EXECUTION_VARS = 13
+        const val EXECUTION_VARS = 12
         const val PUMP_ROUND = 143
         const val EXECUTION_COLLECTIONS = 11
         const val UNIT_VARS = 36
