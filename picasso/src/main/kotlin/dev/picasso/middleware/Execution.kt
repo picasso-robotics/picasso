@@ -43,14 +43,6 @@ class Execution internal constructor(
     internal var assignedAt: Instant = assignedAt
 
     /**
-     * 이 실행이 **승인된 조치로 시작됐다면** 그것을 누른 쪽. 아니면 널이다.
-     *
-     * 사건이 이 실행에서 열리면 번들이 이 값을 싣고, 그래서 «에이전트가 승인한 조치의 이의율» 을
-     * 사람 승인과 따로 잴 수 있다(ADR 43 §4).
-     */
-    internal var approvedBy: Approver? = null
-
-    /**
      * 이 실행의 통보가 상류에 어디까지 확인됐는가. 통보를 내면 `SENT_UNACKED`, 그 실행의 통보가 **전부** 확인돼야 `ACKED` 다.
      * 앞 통보 하나의 확인으로 `ACKED` 가 되면 마지막 통보가 확인 전인데도 확인된 것으로 읽힌다(§15.262). 응답마다의 확인은
      * [JobResponse.ack] 에 있다.
@@ -188,3 +180,20 @@ class Execution internal constructor(
         pendingIncidents += unit.unitId
     }
 }
+
+/**
+ * 이 실행이 **승인된 조치로 시작됐다면** 그것을 누른 쪽. 아니면 널이다.
+ *
+ * 사건이 이 실행에서 열리면 번들이 이 값을 싣고, 그래서 «에이전트가 승인한 조치의 이의율» 을
+ * 사람 승인과 따로 잴 수 있다(ADR 43 §4).
+ *
+ * **상태가 아니다** — [Execution.approval] 의 승인자를 읽는다(§15.331). 따로 든 필드였을 때도 두 값은 늘 같았다. 승인을 싣는
+ * 세 자리(접수, 보류 회복, 재개)가 같은 승인자를 함께 적었고, 읽는 자리(인시던트 봉인)는 그 사이에 오지 않는다.
+ * 대입은 재개 하나에 남아 있다. 그 자리는 같은 승인의 `approval` 을 바로 앞에서 싣고 같은 승인자를 적으므로, 여기서는 그 값이
+ * `approval` 과 같은지만 본다. 다르면 두 값이 갈라진 것이라 조용히 버리지 않고 실패한다.
+ */
+internal var Execution.approvedBy: Approver?
+    get() = approval?.approver
+    set(value) {
+        check(value == approval?.approver) { "승인자가 승인 소모 기록과 다르다: $value != ${approval?.approver}" }
+    }

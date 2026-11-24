@@ -15,6 +15,7 @@ import dev.picasso.middleware.MaterialRequirement
 import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.ResultExport
+import dev.picasso.middleware.approvedBy
 import dev.picasso.middleware.leaveHolding
 import java.nio.file.Path
 import java.time.Duration

@@ -3142,6 +3142,14 @@ mimic/
 
     (의도적 제외로 옮김, §15.265) «§15.156» 행은 picasso 와 picasso-ops 어디에도 그 값을 쓰는 면이 없어 의도적 제외의 새 표 «수요 없음» 으로 옮겼다.
 
+331. **실행의 승인자를 승인 소모 기록에서 읽어 가변 필드를 12로 내리고, 명령 생애 재설계 행을 닫는다** (한계 레지스터 «§15.298» 을 닫음).
+
+    재설계(§15.299~305)와 의존 정비 뒤 «§15.298» 의 완료 기준 가운데 남은 것은 실행의 `var` 하나였다(13, 기준 약 12). 플릿 쪽 짝은 경로 드라이버로 0 이 되었고(§15.304) 분할이 연 `internal` 은 0 으로 닫혔다(§15.313).
+
+    `Execution.approvedBy` 는 `approval?.approver` 와 늘 같은 값을 들었다. 승인을 싣는 자리는 셋이다. 접수(`commit`)는 `submit` 이 실행을 세우거나 개정한 뒤 같은 승인자의 소모 기록을 `approval` 에 단다. 보류 회복(`HoldRecovery.apply`)과 재개(`Resume`)는 두 필드를 나란히 적는다. `approvedBy` 를 읽는 출하 코드는 인시던트 봉인 하나이고, 봉인은 라운드 끝과 재개 끝에서만 돈다 — 접수의 두 대입 사이에 오지 않는다. 개정에서 승인자를 조치 열이 있을 때만 적던 것도 같은 값이다. `Judgment.Go` 는 걸음이 없는 제안을 거절한 뒤에만 서고(`RemedyDesk` 의 빈 걸음 거절), 조치 열은 걸음에서 하나씩 만든다. 그래서 `approvedBy` 를 `approval` 의 승인자를 읽는 확장 속성(`Execution.kt`, 뒷받침 필드 없음)으로 바꾸고, 대입 셋(`create`·`HoldRecovery.apply`·`revise`)과 `create` 의 인자를 지웠다. 재개의 대입 하나는 남겼다. 그 파일은 공개 가드가 경로 이름으로 커밋을 막는 자리라 고칠 수 없다. 그래서 확장 속성의 세터가 받은 값이 `approval` 의 승인자와 같은지만 보고, 다르면 조용히 버리지 않고 실패한다. 재개는 같은 승인의 `approval` 을 바로 앞 줄에서 싣고 같은 승인자를 적으므로 그 확인은 늘 통과한다. 시험이 읽는 이름과 값은 그대로다.
+
+    `SourceSizeBudgetTest` 의 `EXECUTION_VARS` 를 13 에서 12 로 내렸다. 단위의 가변 필드(36)와 실행의 가변 컬렉션(11)은 이 행의 기준이 아니어서 그대로 둔다. 재설계의 성공 여부는 계획서(`docs/superpowers/plans/2026-11-12-middleware-lifecycle-redesign.md`) §1 대로 그 뒤의 fix 가 필드를 늘리지 않고 전이 한 칸을 고쳐 끝나는지로 본다 — 예산 시험이 그 숫자를 계속 잰다.
+
 330. **수신 측 제어자 세대 대조 — 수신자 둘이 기체마다 바닥값을 들고 명령 다섯을 대조하며, 새 소유자의 `GetSnapshot` 이 인수 확인이다(ADR 54, 계약 0.12.0)** (한계 레지스터 «§15.220 · 호스트 잠금 아래 남쪽 호출» 에서 세대 대조를 빼 좁힘. 행 «§15.330» 여섯을 새로 열었다. «§15.219 · 플릿 경로» 는 그대로다).
 
     ★**계약.** `MessageHeader.controller_epoch = 14`(요청 = 발신 세대, 응답 = 수신자의 그 기체 바닥값, 요청값 되울림 아님, 0 은 «싣지 않음·대조 안 함»), `REJECTION_CODE_STALE_CONTROLLER = 15` 와 `Rejection.requested_controller_epoch`·`controller_epoch_floor`(요청 세대 0 이면 필수 누락), `GetSnapshotResponse.fence_status = 9`(`FenceStatus` — `UNSPECIFIED`·`VOLATILE`·`DURABLE_PENDING`·`DURABLE_CONFIRMED`). 헤더 표는 요청·응답 열에 칸을 두고 0 이 값인 칸(`HeaderColumns.ZERO_IS_VALUE`)을 따로 적는다 — 표대로 채웠는지 보는 시험이 0 을 누락으로 읽지 않는다. `RequestHeaders.build` 에 세대 인자(기본 0). 판정은 `contracts` 의 `ControllerFence` 한 벌(모드 `UNFENCED`/`FENCED`, 주입 `EpochAdmission`·`FenceStore`).
@@ -3684,6 +3692,8 @@ mimic/
     검증. 표준 빌드는 실패 0 이다. 인계본 네 벌과의 번들 동치는 12개 파일이 같다. 다만 번들은 `run-1..4` 가 밟는 경로만 보고 옮긴 코드의 다수는 드문 경로다. 그래서 순서를 보는 이동 대조를 더했다. 빈 줄을 빼고 정규화한 옛 `Middleware.kt` 를 연속 덩어리로 잘라, 옮긴 2,108줄과 남은 줄이 원래 순서 그대로 맞는지 본다. 허용하는 차이는 선언 줄의 가시성 한정자와 수신자 `Middleware.` 뿐이다. 결함 주입: 예산 상한을 실측보다 1 낮추기, 가변 필드 상한 31, `Middleware.kt` 에 같은 이름의 멤버 두기를 해서 각 시험이 이름을 대며 빨개지는 것을 봤다.
 
     다음 blame 은 `git blame -C -C` 로 센다. `-M` 은 파일 사이의 이동을 안 쫓아, 옮긴 줄이 전부 이 변경의 새 줄로 잡힌다.
+
+    **(닫힘, §15.331)** 이 항목이 연 한계 레지스터 «§15.298» 행은 항목 331이 닫았다. 재설계 R0~R5 와 의존 정비가 완료 기준(실행의 `var` 약 12, 플릿 쪽 짝 0, 연 멤버 재봉인)을 채웠다.
 
 297. **adapter-host 세션 id 끝에 프로세스 기동 난수를 붙여 세션 겹침을 해소한다.**
 
